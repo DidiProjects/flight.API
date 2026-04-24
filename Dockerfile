@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:22-alpine3.21 AS builder
 WORKDIR /app
 
 LABEL app=flight-api
@@ -11,7 +11,7 @@ RUN npm ci --silent
 COPY . .
 RUN npm run build && npm prune --production
 
-FROM node:22-alpine
+FROM node:22-alpine3.21
 WORKDIR /app
 
 RUN apk add --no-cache curl
