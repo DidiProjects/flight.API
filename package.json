@@ -1,0 +1,36 @@
+{
+  "name": "flight-api",
+  "version": "1.0.0",
+  "description": "Flight price monitoring API",
+  "main": "build/index.js",
+  "scripts": {
+    "start": "node build/index.js",
+    "start:dev": "tsx watch src/index.ts",
+    "build": "rimraf ./build && tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^8.0.0",
+    "@types/pg": "^8.11.11",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.8.5",
+    "fastify-plugin": "^5.1.0",
+    "nodemailer": "^8.0.6",
+    "pg": "^8.14.1",
+    "uuid": "^14.0.0",
+    "zod": "^3.23.8"
+  }
+}

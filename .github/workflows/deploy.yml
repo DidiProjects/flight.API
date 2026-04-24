@@ -1,0 +1,130 @@
+name: Deploy flight.API
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t flight-api:latest .
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_CLIENT_SECRET }}
+          tags: tag:github-actions
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Push Docker image to server
+        run: |
+          docker save flight-api:latest | gzip -1 | \
+            ssh -o StrictHostKeyChecking=no -p 1024 diego@${{ vars.TAILSCALE_IP }} \
+            "gunzip | sudo docker load"
+
+      - name: Deploy container
+        run: |
+          ssh -o StrictHostKeyChecking=no -p 1024 diego@${{ vars.TAILSCALE_IP }} << 'EOF'
+
+          sudo docker network create flight-network 2>/dev/null || true
+
+          # Iniciar banco se não estiver rodando
+          if ! sudo docker ps | grep -q flight-db; then
+            echo "Aviso: flight-db não está rodando. Suba o banco manualmente com docker-compose."
+          fi
+
+          sudo docker stop flight-api 2>/dev/null || true
+          sudo docker rm   flight-api 2>/dev/null || true
+
+          sudo docker run -d --name flight-api \
+            --label app=flight-api \
+            --label project=flight \
+            -p 127.0.0.1:3011:3011 \
+            --restart=unless-stopped \
+            --network=flight-network \
+            -e NODE_ENV=production \
+            -e PORT=3011 \
+            -e POSTGRES_HOST="${{ vars.POSTGRES_HOST }}" \
+            -e POSTGRES_PORT="${{ vars.POSTGRES_PORT }}" \
+            -e POSTGRES_USER="${{ vars.POSTGRES_USER }}" \
+            -e POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            -e POSTGRES_DB="${{ vars.POSTGRES_DB }}" \
+            -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+            -e JWT_EXPIRES_IN="${{ vars.JWT_EXPIRES_IN }}" \
+            -e SCRAPE_INTERVAL_MS="${{ vars.SCRAPE_INTERVAL_MS }}" \
+            -e SCRAPE_INTERVAL_JITTER_MS="${{ vars.SCRAPE_INTERVAL_JITTER_MS }}" \
+            -e SCRAPING_API_URL="${{ vars.SCRAPING_API_URL }}" \
+            -e SCRAPING_API_KEY="${{ secrets.SCRAPING_API_KEY }}" \
+            -e FLIGHT_API_KEY="${{ secrets.FLIGHT_API_KEY }}" \
+            -e SMTP_HOST="${{ vars.SMTP_HOST }}" \
+            -e SMTP_PORT="${{ vars.SMTP_PORT }}" \
+            -e SMTP_USER="${{ vars.SMTP_USER }}" \
+            -e SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}" \
+            -e SMTP_FROM="${{ vars.SMTP_FROM }}" \
+            -e ADMIN_EMAIL="${{ vars.ADMIN_EMAIL }}" \
+            -e ADMIN_PASSWORD_INITIAL="${{ secrets.ADMIN_PASSWORD_INITIAL }}" \
+            -e API_BASE_URL="${{ vars.API_BASE_URL }}" \
+            -e FRONTEND_URL="${{ vars.FRONTEND_URL }}" \
+            -e LOG_LEVEL="${{ vars.LOG_LEVEL }}" \
+            flight-api:latest
+
+          EOF
+
+      - name: Verify deployment
+        run: |
+          ssh -o StrictHostKeyChecking=no -p 1024 diego@${{ vars.TAILSCALE_IP }} << 'EOF'
+
+          echo "Aguardando inicialização..."
+          sleep 10
+
+          if sudo docker ps | grep -q flight-api; then
+            echo "Container flight-api rodando"
+          else
+            echo "ERRO: Container não iniciou"
+            sudo docker logs --tail 30 flight-api
+            exit 1
+          fi
+
+          for i in {1..6}; do
+            STATUS=$(sudo docker inspect flight-api --format='{{.State.Health.Status}}' 2>/dev/null || echo "unknown")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Health check OK"
+              break
+            elif [ $i -eq 6 ]; then
+              echo "Health check não passou após 60s — logs:"
+              sudo docker logs --tail 20 flight-api
+            else
+              echo "Aguardando health check... ($i/6)"
+              sleep 10
+            fi
+          done
+
+          EOF
+
+      - name: Cleanup old images
+        run: |
+          ssh -o StrictHostKeyChecking=no -p 1024 diego@${{ vars.TAILSCALE_IP }} << 'EOF'
+
+          echo "=== Status final ==="
+          sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+          echo "=== Limpeza de imagens antigas ==="
+          sudo docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
+            grep "^flight-api:" | grep -v ":latest$" | awk '{print $2}' | \
+            xargs -r sudo docker rmi || true
+
+          sudo docker images --filter "dangling=true" --filter "label=app=flight-api" -q | \
+            xargs -r sudo docker rmi || true
+
+          echo "Deploy concluído!"
+
+          EOF
