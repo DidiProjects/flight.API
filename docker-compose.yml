@@ -1,28 +1,7 @@
 services:
-  flight-db:
-    image: postgres:16-alpine
-    container_name: flight-db
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    restart: unless-stopped
-    networks:
-      - flight-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   flight-api:
     build: .
     container_name: flight-api
-    depends_on:
-      flight-db:
-        condition: service_healthy
     env_file: .env
     ports:
       - "0.0.0.0:3011:3011"
@@ -33,6 +12,4 @@ services:
 networks:
   flight-network:
     name: flight-network
-
-volumes:
-  pgdata:
+    driver: bridge
