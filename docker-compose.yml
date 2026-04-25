@@ -11,5 +11,4 @@ services:
 
 networks:
   flight-network:
-    name: flight-network
-    driver: bridge
+    external: true
