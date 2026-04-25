@@ -102,6 +102,7 @@ jobs:
             elif [ $i -eq 6 ]; then
               echo "Health check não passou após 60s — logs:"
               sudo docker logs --tail 20 flight-api
+              exit 1
             else
               echo "Aguardando health check... ($i/6)"
               sleep 10
