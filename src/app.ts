@@ -65,13 +65,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.setErrorHandler(errorHandler)
 
   // ── Routes ────────────────────────────────────────────────────────────────
-  await app.register(healthRoute)
-  await app.register(authRoute(container.authSvc),                    { prefix: '/auth' })
-  await app.register(usersRoute(container.usersSvc),                  { prefix: '/users' })
-  await app.register(airlinesRoute(container.airlinesRepo),           { prefix: '/airlines' })
-  await app.register(routinesRoute(container.routinesSvc),            { prefix: '/routines' })
-  await app.register(scrapeRoute(container.scrapeSvc),                { prefix: '/scrape' })
-  await app.register(unsubscribeRoute(container.unsubSvc),            { prefix: '/unsubscribe' })
+  await app.register(async (api) => {
+    await api.register(healthRoute)
+    await api.register(authRoute(container.authSvc),                  { prefix: '/auth' })
+    await api.register(usersRoute(container.usersSvc),                { prefix: '/users' })
+    await api.register(airlinesRoute(container.airlinesRepo),         { prefix: '/airlines' })
+    await api.register(routinesRoute(container.routinesSvc),          { prefix: '/routines' })
+    await api.register(scrapeRoute(container.scrapeSvc),              { prefix: '/scrape' })
+    await api.register(unsubscribeRoute(container.unsubSvc),          { prefix: '/unsubscribe' })
+  }, { prefix: '/flight' })
 
   return app
 }
