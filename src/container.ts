@@ -3,6 +3,7 @@ import { env } from './config/env'
 
 // Repositories
 import { AuthRepository }             from './modules/auth/AuthRepository'
+import { RefreshTokenRepository }     from './modules/auth/RefreshTokenRepository'
 import { UsersRepository }            from './modules/users/UsersRepository'
 import { AirlinesRepository }         from './modules/airlines/AirlinesRepository'
 import { RoutinesRepository }         from './modules/routines/RoutinesRepository'
@@ -23,6 +24,7 @@ import { SchedulerService }     from './services/scheduler/SchedulerService'
 
 // ── Repositories ──────────────────────────────────────────────────────────────
 const authRepo          = new AuthRepository(pool)
+const refreshTokenRepo  = new RefreshTokenRepository(pool)
 const usersRepo         = new UsersRepository(pool)
 const airlinesRepo      = new AirlinesRepository(pool)
 const routinesRepo      = new RoutinesRepository(pool)
@@ -44,7 +46,7 @@ const notifSvc = new NotificationsService(
   env,
 )
 
-const authSvc       = new AuthService(usersRepo, authRepo, emailSvc)
+const authSvc       = new AuthService(usersRepo, authRepo, refreshTokenRepo, emailSvc)
 const usersSvc      = new UsersService(usersRepo, emailSvc)
 const routinesSvc   = new RoutinesService(routinesRepo, airlinesRepo)
 const scrapeSvc     = new ScrapeService(routinesRepo, offersRepo, bestFaresRepo, notifSvc)

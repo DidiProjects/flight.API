@@ -14,7 +14,8 @@ const envSchema = z.object({
   POSTGRES_DB: z.string(),
 
   JWT_SECRET: z.string().min(32),
-  JWT_EXPIRES_IN: z.string().default('7d'),
+  JWT_EXPIRES_IN: z.string().default('15m'),
+  JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
   SCRAPE_INTERVAL_MS: z.coerce.number().default(3_600_000),
   SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(300_000),

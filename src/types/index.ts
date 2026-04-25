@@ -116,3 +116,13 @@ export interface PasswordResetTokenRow {
   used_at: Date | null
   created_at: Date
 }
+
+export interface RefreshTokenRow {
+  id: string
+  user_id: string
+  token: string
+  expires_at: Date
+  used_at: Date | null
+  revoked_at: Date | null
+  created_at: Date
+}

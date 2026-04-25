@@ -60,6 +60,7 @@ jobs:
             -e POSTGRES_DB="${{ vars.POSTGRES_DB }}" \
             -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
             -e JWT_EXPIRES_IN="${{ vars.JWT_EXPIRES_IN }}" \
+            -e JWT_REFRESH_EXPIRES_IN="${{ vars.JWT_REFRESH_EXPIRES_IN }}" \
             -e SCRAPE_INTERVAL_MS="${{ vars.SCRAPE_INTERVAL_MS }}" \
             -e SCRAPE_INTERVAL_JITTER_MS="${{ vars.SCRAPE_INTERVAL_JITTER_MS }}" \
             -e SCRAPING_API_URL="${{ vars.SCRAPING_API_URL }}" \
