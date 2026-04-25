@@ -1,9 +1,9 @@
 import { UserRow } from '../../../types'
 
 export interface IUsersService {
-  list(page: number, limit: number): Promise<{ users: UserRow[]; total: number }>
+  list(page: number, limit: number, status?: string): Promise<{ users: UserRow[]; total: number }>
   getById(id: string): Promise<UserRow>
-  register(email: string): Promise<void>
+  register(name: string, email: string): Promise<void>
   approve(id: string, role: 'admin' | 'user'): Promise<void>
   update(
     id: string,

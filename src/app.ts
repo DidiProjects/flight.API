@@ -10,6 +10,7 @@ import { container } from './container'
 
 import { healthRoute }      from './modules/health/route'
 import { authRoute }        from './modules/auth/route'
+import { registerRoute }    from './modules/register/route'
 import { usersRoute }       from './modules/users/route'
 import { airlinesRoute }    from './modules/airlines/route'
 import { routinesRoute }    from './modules/routines/route'
@@ -68,6 +69,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(async (api) => {
     await api.register(healthRoute)
     await api.register(authRoute(container.authSvc),                  { prefix: '/auth' })
+    await api.register(registerRoute(container.usersSvc),             { prefix: '/register' })
     await api.register(usersRoute(container.usersSvc),                { prefix: '/users' })
     await api.register(airlinesRoute(container.airlinesRepo),         { prefix: '/airlines' })
     await api.register(routinesRoute(container.routinesSvc),          { prefix: '/routines' })

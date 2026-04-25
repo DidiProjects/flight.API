@@ -201,6 +201,29 @@
       ]
     },
     {
+      "name": "Register",
+      "item": [
+        {
+          "name": "POST /register",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["register"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"email\": \"\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Users",
       "item": [
         {
@@ -212,26 +235,26 @@
               "host": ["{{baseUrl}}"],
               "path": ["users"],
               "query": [
-                { "key": "page",  "value": "1" },
-                { "key": "limit", "value": "20" }
+                { "key": "page",   "value": "1" },
+                { "key": "limit",  "value": "20" },
+                { "key": "status", "value": "", "disabled": true }
               ]
             }
           }
         },
         {
-          "name": "POST /users",
+          "name": "GET /users?status=pending",
           "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/users",
+              "raw": "{{baseUrl}}/users?page=1&limit=20&status=pending",
               "host": ["{{baseUrl}}"],
-              "path": ["users"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "path": ["users"],
+              "query": [
+                { "key": "page",   "value": "1" },
+                { "key": "limit",  "value": "20" },
+                { "key": "status", "value": "pending" }
+              ]
             }
           }
         },

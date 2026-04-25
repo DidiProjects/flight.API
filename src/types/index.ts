@@ -1,6 +1,7 @@
 export interface UserRow {
   id: string
   email: string
+  name: string | null
   password_hash: string
   role: 'admin' | 'user'
   status: 'pending' | 'active' | 'suspended'

@@ -2,7 +2,7 @@ import { UserRow } from '../../types'
 import { IUsersService } from './interfaces/IUsersService'
 import { IUsersRepository } from './interfaces/IUsersRepository'
 import { IEmailService } from '../../services/email/interfaces/IEmailService'
-import { hashPassword, generateProvisionalPassword } from '../../utils/crypto'
+import { hashPassword, generateProvisionalPassword, generateToken } from '../../utils/crypto'
 import {
   ConflictError,
   NotFoundError,
@@ -16,8 +16,8 @@ export class UsersService implements IUsersService {
     private readonly emailSvc: IEmailService,
   ) {}
 
-  async list(page: number, limit: number): Promise<{ users: UserRow[]; total: number }> {
-    return this.usersRepo.findAll(page, limit)
+  async list(page: number, limit: number, status?: string): Promise<{ users: UserRow[]; total: number }> {
+    return this.usersRepo.findAll(page, limit, status)
   }
 
   async getById(id: string): Promise<UserRow> {
@@ -26,13 +26,18 @@ export class UsersService implements IUsersService {
     return user
   }
 
-  async register(email: string): Promise<void> {
+  async register(name: string, email: string): Promise<void> {
     const existing = await this.usersRepo.findByEmail(email)
-    if (existing) throw new ConflictError('Email já cadastrado')
+    if (existing) {
+      if (existing.status === 'pending') throw new ConflictError('Cadastro aguardando aprovação')
+      throw new ConflictError('Email já cadastrado')
+    }
 
-    const provisional = generateProvisionalPassword()
-    await this.usersRepo.create(email, hashPassword(provisional))
-    await this.emailSvc.sendProvisionalPassword(email, provisional)
+    await this.usersRepo.create({
+      email,
+      name,
+      passwordHash: hashPassword(generateToken(32)),
+    })
   }
 
   async approve(id: string, role: 'admin' | 'user'): Promise<void> {
@@ -40,10 +45,11 @@ export class UsersService implements IUsersService {
     if (!user) throw new NotFoundError('Usuário não encontrado')
     if (user.status !== 'pending') throw new BadRequestError('Usuário não está pendente')
 
-    const updated = await this.usersRepo.approve(id, role)
-    if (!updated) throw new NotFoundError('Usuário não encontrado')
-
-    await this.emailSvc.sendUserApproved(user.email)
+    const provisional = generateProvisionalPassword()
+    const expiresAt   = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    await this.usersRepo.setProvisionalPassword(id, hashPassword(provisional), expiresAt)
+    await this.usersRepo.approve(id, role)
+    await this.emailSvc.sendProvisionalPassword(user.email, provisional)
   }
 
   async update(

@@ -1,21 +1,27 @@
 import { Pool } from 'pg'
 import { UserRow } from '../../types'
-import { IUsersRepository } from './interfaces/IUsersRepository'
+import { IUsersRepository, CreateUserData } from './interfaces/IUsersRepository'
 
-const COLS = `id, email, password_hash, role, status, must_change_password,
-              provisional_expires_at, created_at, updated_at`
+const COLS = `id, email, name, password_hash, role, status,
+              must_change_password, provisional_expires_at, created_at, updated_at`
 
 export class UsersRepository implements IUsersRepository {
   constructor(private readonly db: Pool) {}
 
-  async findAll(page: number, limit: number): Promise<{ users: UserRow[]; total: number }> {
+  async findAll(page: number, limit: number, status?: string): Promise<{ users: UserRow[]; total: number }> {
     const offset = (page - 1) * limit
+    const where  = status ? `WHERE status = $3` : ''
+    const params = status ? [limit, offset, status] : [limit, offset]
+
     const [{ rows: users }, { rows: count }] = await Promise.all([
       this.db.query<UserRow>(
-        `SELECT ${COLS} FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-        [limit, offset],
+        `SELECT ${COLS} FROM users ${where} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+        params,
       ),
-      this.db.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM users`),
+      this.db.query<{ total: string }>(
+        `SELECT COUNT(*)::text AS total FROM users ${where}`,
+        status ? [status] : [],
+      ),
     ])
     return { users, total: parseInt(count[0].total) }
   }
@@ -36,13 +42,13 @@ export class UsersRepository implements IUsersRepository {
     return rows[0] ?? null
   }
 
-  async create(email: string, passwordHash: string): Promise<UserRow> {
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
+  async create(data: CreateUserData): Promise<UserRow> {
+    const { email, passwordHash, name = null } = data
     const { rows } = await this.db.query<UserRow>(
-      `INSERT INTO users (email, password_hash, status, must_change_password, provisional_expires_at)
-       VALUES ($1, $2, 'pending', true, $3)
+      `INSERT INTO users (email, name, password_hash, status, must_change_password)
+       VALUES ($1, $2, $3, 'pending', true)
        RETURNING ${COLS}`,
-      [email, passwordHash, expiresAt],
+      [email, name, passwordHash],
     )
     return rows[0]
   }
@@ -79,6 +85,15 @@ export class UsersRepository implements IUsersRepository {
        SET password_hash = $1, must_change_password = false, provisional_expires_at = NULL, updated_at = now()
        WHERE id = $2`,
       [passwordHash, id],
+    )
+  }
+
+  async setProvisionalPassword(id: string, passwordHash: string, expiresAt: Date): Promise<void> {
+    await this.db.query(
+      `UPDATE users
+       SET password_hash = $1, must_change_password = true, provisional_expires_at = $2, updated_at = now()
+       WHERE id = $3`,
+      [passwordHash, expiresAt, id],
     )
   }
 

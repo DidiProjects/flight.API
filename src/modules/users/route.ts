@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { IUsersService } from './interfaces/IUsersService'
 import {
-  createUserSchema,
   approveUserSchema,
   updateUserSchema,
   listUsersQuerySchema,
@@ -14,13 +13,7 @@ export function usersRoute(usersSvc: IUsersService) {
 
     app.get('/', async (req, reply) => {
       const query = listUsersQuerySchema.parse(req.query)
-      reply.send(await usersSvc.list(query.page, query.limit))
-    })
-
-    app.post('/', async (req, reply) => {
-      const body = createUserSchema.parse(req.body)
-      await usersSvc.register(body.email)
-      reply.status(201).send({ message: 'Usuário criado. Email com senha provisória enviado.' })
+      reply.send(await usersSvc.list(query.page, query.limit, query.status))
     })
 
     app.get('/:id', async (req, reply) => {
