@@ -48,7 +48,7 @@ jobs:
           sudo docker run -d --name flight-api \
             --label app=flight-api \
             --label project=flight \
-            -p 127.0.0.1:3011:3011 \
+            -p 192.168.122.1:3011:3011 \
             --restart=unless-stopped \
             --network=flight-network \
             -e NODE_ENV=production \

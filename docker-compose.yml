@@ -23,7 +23,7 @@ services:
         condition: service_healthy
     env_file: .env
     ports:
-      - "127.0.0.1:3011:3011"
+      - "192.168.122.1:3011:3011"
     restart: unless-stopped
     networks:
       - flight-network
