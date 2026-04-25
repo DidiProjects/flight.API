@@ -45,7 +45,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true })
 
   await app.register(fastifyHelmet, { contentSecurityPolicy: false })
-  await app.register(fastifyCors,   { origin: false })
+  await app.register(fastifyCors,   { origin: env.FRONTEND_URL, credentials: true })
   await app.register(fastifyRateLimit, { global: true, max: 120, timeWindow: '1 minute', keyGenerator: (req) => req.ip })
   await app.register(fastifyJwt,    { secret: env.JWT_SECRET })
 

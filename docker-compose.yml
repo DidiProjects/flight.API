@@ -1,7 +1,34 @@
 services:
+  flight-db:
+    image: flight-db:latest
+    container_name: flight-db
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD_INITIAL: ${ADMIN_PASSWORD_INITIAL}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - flight-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   flight-api:
     build: .
     container_name: flight-api
+    depends_on:
+      flight-db:
+        condition: service_healthy
     env_file: .env
     ports:
       - "0.0.0.0:3011:3011"
@@ -11,4 +38,8 @@ services:
 
 networks:
   flight-network:
-    external: true
+    name: flight-network
+    driver: bridge
+
+volumes:
+  pgdata:
