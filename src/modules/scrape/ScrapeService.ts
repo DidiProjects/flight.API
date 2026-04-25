@@ -15,7 +15,8 @@ export class ScrapeService implements IScrapeService {
   ) {}
 
   async processCallback(data: ScrapeCallback): Promise<void> {
-    const routine = await this.routinesRepo.findByIdAdmin(data.routineId)
+    const routine = await this.routinesRepo.findByIdAdmin(data.routineId);
+    console.log('TRACE: callbackData', JSON.stringify(data), 'routine', routine);
     if (!routine) return
     if (routine.pending_request_id !== data.requestId) return
     if (this.isExpired(routine)) { await this.routinesRepo.clearPendingRequest(routine.id); return }
