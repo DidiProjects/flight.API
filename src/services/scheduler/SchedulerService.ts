@@ -55,6 +55,10 @@ export class SchedulerService implements ISchedulerService {
     }
   }
 
+  private toDateStr(v: string | Date): string {
+    return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
+  }
+
   private async dispatchRoutine(routine: RoutineRow): Promise<void> {
     const requestId = randomUUID()
     await this.routinesRepo.setPendingRequest(routine.id, requestId)
@@ -68,10 +72,10 @@ export class SchedulerService implements ISchedulerService {
           airline:       routine.airline,
           origin:        routine.origin,
           destination:   routine.destination,
-          outboundStart: String(routine.outbound_start).slice(0, 10),
-          outboundEnd:   String(routine.outbound_end).slice(0, 10),
-          ...(routine.return_start && { returnStart: String(routine.return_start).slice(0, 10) }),
-          ...(routine.return_end   && { returnEnd:   String(routine.return_end).slice(0, 10) }),
+          outboundStart: this.toDateStr(routine.outbound_start),
+          outboundEnd:   this.toDateStr(routine.outbound_end),
+          ...(routine.return_start && { returnStart: this.toDateStr(routine.return_start) }),
+          ...(routine.return_end   && { returnEnd:   this.toDateStr(routine.return_end) }),
           passengers:    routine.passengers,
         }),
         signal: AbortSignal.timeout(10_000),
