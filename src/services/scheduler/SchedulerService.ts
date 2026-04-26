@@ -76,7 +76,10 @@ export class SchedulerService implements ISchedulerService {
         }),
         signal: AbortSignal.timeout(10_000),
       })
-      if (!res.ok) throw new Error(`scraping.API ${res.status}`)
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`scraping.API ${res.status}: ${body}`)
+      }
     } catch (err) {
       await this.routinesRepo.clearPendingRequest(routine.id)
       throw err
