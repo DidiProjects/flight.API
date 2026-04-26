@@ -6,6 +6,15 @@ import { FlightOfferInput } from './schema'
 export class FlightOffersRepository implements IFlightOffersRepository {
   constructor(private readonly db: Pool) {}
 
+  private buildTimestamp(date: string, time: string, referenceTime?: string): string {
+    if (referenceTime && time < referenceTime) {
+      const d = new Date(date)
+      d.setUTCDate(d.getUTCDate() + 1)
+      return `${d.toISOString().slice(0, 10)}T${time}:00`
+    }
+    return `${date}T${time}:00`
+  }
+
   async insertMany(
     routineId: string,
     airline: string,
@@ -15,6 +24,9 @@ export class FlightOffersRepository implements IFlightOffersRepository {
   ): Promise<string[]> {
     const ids: string[] = []
     for (const offer of offers) {
+      const originTs = this.buildTimestamp(offer.date, offer.departureTime)
+      const destTs   = this.buildTimestamp(offer.date, offer.arrivalTime, offer.departureTime)
+
       const { rows } = await this.db.query<{ id: string }>(
         `INSERT INTO flight_offers (
            routine_id, airline, flight_number, date, is_return,
@@ -25,7 +37,7 @@ export class FlightOffersRepository implements IFlightOffersRepository {
          RETURNING id`,
         [
           routineId, airline, offer.flightNumber, offer.date, offer.isReturn,
-          offer.origin, offer.departureTime, offer.destination, offer.arrivalTime,
+          offer.origin, originTs, offer.destination, destTs,
           offer.durationMin, offer.stops,
           offer.fareBrl ?? null, offer.farePts ?? null,
           offer.fareHybPts ?? null, offer.fareHybBrl ?? null,
