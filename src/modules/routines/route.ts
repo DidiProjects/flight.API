@@ -1,8 +1,9 @@
 import { FastifyInstance } from 'fastify'
 import { IRoutinesService } from './interfaces/IRoutinesService'
+import { ISchedulerService } from '../../services/scheduler/interfaces/ISchedulerService'
 import { createRoutineSchema, updateRoutineSchema } from './schema'
 
-export function routinesRoute(routinesSvc: IRoutinesService) {
+export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISchedulerService) {
   return async function handler(app: FastifyInstance): Promise<void> {
     app.addHook('preHandler', app.authenticate)
     app.addHook('preHandler', app.requirePasswordChanged)
@@ -82,6 +83,12 @@ export function routinesRoute(routinesSvc: IRoutinesService) {
     app.patch('/:id/deactivate', async (req, reply) => {
       const { id } = req.params as { id: string }
       reply.send(await routinesSvc.deactivate(id, req.user.sub))
+    })
+
+    app.post('/:id/dispatch', { preHandler: [app.requireAdmin] }, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      await schedulerSvc.dispatchOne(id)
+      reply.status(202).send({ message: 'Dispatch iniciado' })
     })
   }
 }

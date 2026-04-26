@@ -432,6 +432,18 @@
               "variable": [{ "key": "id", "value": "" }]
             }
           }
+        },
+        {
+          "name": "POST /routines/:id/dispatch",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/routines/:id/dispatch",
+              "host": ["{{baseUrl}}"],
+              "path": ["routines", ":id", "dispatch"],
+              "variable": [{ "key": "id", "value": "" }]
+            }
+          }
         }
       ]
     },

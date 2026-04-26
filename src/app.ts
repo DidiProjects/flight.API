@@ -82,7 +82,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await api.register(registerRoute(container.usersSvc),             { prefix: '/register' })
     await api.register(usersRoute(container.usersSvc),                { prefix: '/users' })
     await api.register(airlinesRoute(container.airlinesRepo),         { prefix: '/airlines' })
-    await api.register(routinesRoute(container.routinesSvc),          { prefix: '/routines' })
+    await api.register(routinesRoute(container.routinesSvc, container.schedulerSvc), { prefix: '/routines' })
     await api.register(scrapeRoute(container.scrapeSvc),              { prefix: '/scrape' })
     await api.register(unsubscribeRoute(container.unsubSvc),          { prefix: '/unsubscribe' })
   }, { prefix: '/flight' })
