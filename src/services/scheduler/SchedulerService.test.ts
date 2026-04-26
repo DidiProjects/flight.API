@@ -66,7 +66,7 @@ function makeEnv(): Env {
     ADMIN_PASSWORD_INITIAL:    'changeme123',
     API_BASE_URL:              'http://localhost:3011/flight',
     FRONTEND_URL:              'http://localhost:3000',
-    LOG_LEVEL:                 'silent',
+    LOG_LEVEL:                 'info',
   } as Env
 }
 
