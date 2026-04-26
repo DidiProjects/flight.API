@@ -11,7 +11,13 @@ export function scrapeRoute(scrapeSvc: IScrapeService) {
         throw new UnauthorizedError('API key inválida')
       }
 
-      const data = scrapeCallbackSchema.parse(req.body)
+      let data
+      try {
+        data = scrapeCallbackSchema.parse(req.body)
+      } catch (err) {
+        req.log.warn({ err, body: req.body }, 'scrape callback validation failed')
+        throw err
+      }
 
       // Acknowledge immediately; process async
       scrapeSvc.processCallback(data).catch((err) =>
