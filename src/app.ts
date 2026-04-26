@@ -44,8 +44,18 @@ declare module 'fastify' {
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true })
 
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    if (!body) return done(null, undefined)
+    try { done(null, JSON.parse(body as string)) }
+    catch (e) { done(e as Error, undefined) }
+  })
+
   await app.register(fastifyHelmet, { contentSecurityPolicy: false })
-  await app.register(fastifyCors,   { origin: env.FRONTEND_URL, credentials: true })
+  await app.register(fastifyCors, {
+    origin: env.FRONTEND_URL,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  })
   await app.register(fastifyRateLimit, { global: true, max: 120, timeWindow: '1 minute', keyGenerator: (req) => req.ip })
   await app.register(fastifyJwt,    { secret: env.JWT_SECRET })
 
