@@ -127,6 +127,8 @@ export class NotificationsService implements INotificationsService {
       destination:     routine.destination,
       outboundOffer:   bestOut  ? this.toBlock(bestOut)  : null,
       returnOffer:     bestRet  ? this.toBlock(bestRet)  : null,
+      passengers:      routine.passengers,
+      fareType:        routine.priority,
     })
 
     await this.notifLogRepo.insert({

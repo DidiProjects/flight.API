@@ -79,11 +79,19 @@ export class EmailService implements IEmailService {
   // Private template helpers
   // ---------------------------------------------------------------------------
 
+  private buildAzulLink(offer: OfferBlock, passengers: number, fareType: string): string {
+    const cc = fareType === 'brl' ? 'BRL' : 'PTS'
+    const [y, m, d] = offer.date.split('-')
+    const std = `${m}/${d}/${y}`
+    return `https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds=${offer.origin}&c[0].std=${std}&c[0].as=${offer.destination}&p[0].t=ADT&p[0].c=${passengers}&p[0].cp=false&f.dl=3&f.dr=3&cc=${cc}`
+  }
+
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
-    const { routineName, origin, destination, outboundOffer, returnOffer } = params
+    const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType } = params
+
     const offers = [
-      outboundOffer ? this.renderOffer(outboundOffer, 'Ida') : '',
-      returnOffer   ? this.renderOffer(returnOffer,   'Volta') : '',
+      outboundOffer ? this.renderOffer(outboundOffer, 'Ida',   this.buildAzulLink(outboundOffer, passengers, fareType)) : '',
+      returnOffer   ? this.renderOffer(returnOffer,   'Volta', this.buildAzulLink(returnOffer,   passengers, fareType)) : '',
     ].join('')
 
     const timestamp = new Date().toLocaleString('pt-BR', {
@@ -115,7 +123,7 @@ export class EmailService implements IEmailService {
 </html>`
   }
 
-  private renderOffer(offer: OfferBlock, label: string): string {
+  private renderOffer(offer: OfferBlock, label: string, link: string): string {
     const fares: string[] = []
     if (offer.fareBrl  != null) fares.push(`<strong>${this.fmtBrl(offer.fareBrl)}</strong>`)
     if (offer.farePts  != null) fares.push(`<strong>${offer.farePts.toLocaleString('pt-BR')} pts</strong>`)
@@ -126,7 +134,6 @@ export class EmailService implements IEmailService {
     const arr  = new Date(offer.arrivalTime).toLocaleTimeString('pt-BR',   { hour: '2-digit', minute: '2-digit' })
     const dur  = `${Math.floor(offer.durationMin / 60)}h${String(offer.durationMin % 60).padStart(2, '0')}m`
     const stops = offer.stops === 0 ? 'Direto' : `${offer.stops} escala${offer.stops > 1 ? 's' : ''}`
-    const link  = `https://www.voeazul.com.br/pt-br/passagens-aereas?origin=${offer.origin}&destination=${offer.destination}&date=${offer.date}`
 
     return `
     <div style="border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin-bottom:20px;">

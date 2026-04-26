@@ -23,6 +23,8 @@ export interface FlightAlertEmailParams {
   destination: string
   outboundOffer?: OfferBlock | null
   returnOffer?: OfferBlock | null
+  passengers: number
+  fareType: string
 }
 
 export interface IEmailService {
