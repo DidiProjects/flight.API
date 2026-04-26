@@ -362,7 +362,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"\",\n  \"airline\": \"azul\",\n  \"origin\": \"\",\n  \"destination\": \"\",\n  \"outboundStart\": \"2026-01-01\",\n  \"outboundEnd\": \"2026-01-07\",\n  \"passengers\": 1,\n  \"targetBrl\": null,\n  \"targetPts\": null,\n  \"targetHybPts\": null,\n  \"targetHybBrl\": null,\n  \"margin\": 0.1,\n  \"priority\": \"brl\",\n  \"notificationMode\": \"alert_only\",\n  \"notificationFrequency\": \"hourly\",\n  \"ccEmails\": []\n}",
+              "raw": "{\n  \"name\": \"\",\n  \"airline\": \"azul\",\n  \"origin\": \"\",\n  \"destination\": \"\",\n  \"outboundStart\": \"2026-01-01\",\n  \"outboundEnd\": \"2026-01-07\",\n  \"passengers\": 1,\n  \"targetBrl\": null,\n  \"targetPts\": null,\n  \"targetHybPts\": null,\n  \"targetHybBrl\": null,\n  \"margin\": 0.1,\n  \"priority\": \"brl\",\n  \"notificationMode\": \"alert_only\",\n  \"notificationFrequency\": \"hourly\",\n  \"ccEmails\": [],\n  \"isActive\": true\n}",
               "options": { "raw": { "language": "json" } }
             }
           }

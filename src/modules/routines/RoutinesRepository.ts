@@ -79,17 +79,17 @@ export class RoutinesRepository implements IRoutinesRepository {
          user_id, name, airline, origin, destination,
          outbound_start, outbound_end, return_start, return_end, passengers,
          target_brl, target_pts, target_hyb_pts, target_hyb_brl,
-         margin, priority, notification_mode, notification_frequency, end_of_period_time, cc_emails
+         margin, priority, notification_mode, notification_frequency, end_of_period_time, cc_emails, is_active
        ) VALUES (
          $1,$2,$3,$4,$5, $6,$7,$8,$9,$10,
-         $11,$12,$13,$14, $15,$16,$17,$18,$19,$20
+         $11,$12,$13,$14, $15,$16,$17,$18,$19,$20,$21
        ) RETURNING ${COLS}`,
       [
         data.userId, data.name, data.airline, data.origin, data.destination,
         data.outboundStart, data.outboundEnd, data.returnStart ?? null, data.returnEnd ?? null, data.passengers,
         data.targetBrl ?? null, data.targetPts ?? null, data.targetHybPts ?? null, data.targetHybBrl ?? null,
         data.margin, data.priority, data.notificationMode, data.notificationFrequency,
-        data.endOfPeriodTime ?? null, ccJson,
+        data.endOfPeriodTime ?? null, ccJson, data.isActive ?? true,
       ],
     )
     return rows[0]

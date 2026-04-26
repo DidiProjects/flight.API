@@ -34,6 +34,7 @@ const routineBaseSchema = z.object({
     .optional(),
 
   ccEmails: z.array(z.string().email()).max(10).default([]),
+  isActive: z.boolean().default(true),
 })
 
 export const createRoutineSchema = routineBaseSchema

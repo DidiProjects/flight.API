@@ -21,6 +21,7 @@ export interface CreateRoutineData {
   notificationFrequency: string
   endOfPeriodTime?: string | null
   ccEmails: string[]
+  isActive?: boolean
 }
 
 export interface IRoutinesRepository {

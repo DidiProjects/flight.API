@@ -18,10 +18,10 @@ export class BestFaresRepository implements IBestFaresRepository {
     for (const { col, type } of FARE_TYPES) {
       await this.db.query(
         `INSERT INTO best_fares (routine_id, date, is_return, fare_type, amount, flight_offer_id)
-         SELECT $1, date, is_return, $2, ${col}, id
+         SELECT DISTINCT ON (date, is_return) $1, date, is_return, $2, ${col}, id
          FROM flight_offers
          WHERE id IN (${placeholders}) AND ${col} IS NOT NULL
-         ORDER BY ${col} ASC
+         ORDER BY date, is_return, ${col} ASC
          ON CONFLICT (routine_id, date, is_return, fare_type) DO UPDATE
            SET amount = EXCLUDED.amount,
                flight_offer_id = EXCLUDED.flight_offer_id,
