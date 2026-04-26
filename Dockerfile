@@ -6,7 +6,7 @@ LABEL project=flight
 LABEL maintainer=diego
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install --silent
 
 COPY . .
 RUN npm run build && npm prune --production
