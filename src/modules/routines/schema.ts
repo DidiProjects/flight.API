@@ -3,6 +3,9 @@ import { z } from 'zod'
 const iata = z.string().length(3).toUpperCase()
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado: YYYY-MM-DD')
 
+const nullableStr = <T extends z.ZodString>(schema: T) =>
+  z.union([schema, z.literal(''), z.null()]).transform((v) => (v === '' ? null : v)).optional()
+
 const routineBaseSchema = z.object({
   name: z.string().min(1).max(100),
   airline: z.string().min(1).max(10),
@@ -10,8 +13,8 @@ const routineBaseSchema = z.object({
   destination: iata,
   outboundStart: dateStr,
   outboundEnd: dateStr,
-  returnStart: dateStr.nullable().optional(),
-  returnEnd: dateStr.nullable().optional(),
+  returnStart: nullableStr(dateStr),
+  returnEnd: nullableStr(dateStr),
   passengers: z.number().int().min(1).max(9).default(1),
 
   targetBrl: z.number().positive().nullable().optional(),
@@ -27,10 +30,7 @@ const routineBaseSchema = z.object({
     'end_of_period',
   ]),
   notificationFrequency: z.enum(['hourly', 'daily', 'monthly']),
-  endOfPeriodTime: z.preprocess(
-    (v) => (v === '' || v == null ? null : v),
-    z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
-  ),
+  endOfPeriodTime: nullableStr(z.string().regex(/^\d{2}:\d{2}$/)),
 
   ccEmails: z.array(z.string().email()).max(10).default([]),
   isActive: z.boolean().default(true),
