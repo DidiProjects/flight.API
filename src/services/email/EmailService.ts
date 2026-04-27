@@ -38,7 +38,7 @@ export class EmailService implements IEmailService {
     await this.transporter.sendMail({
       from: this.env.SMTP_FROM,
       to: email,
-      subject: 'flight.API — Sua senha provisória',
+      subject: 'Monitoramento de Voos — Sua senha provisória',
       html: this.wrapLayout(`
         <p>Sua conta foi criada. Use a senha abaixo para fazer login:</p>
         <div style="background:#f5f5f5;border-radius:4px;padding:16px;font-size:20px;font-family:monospace;text-align:center;letter-spacing:2px;">${password}</div>
@@ -52,7 +52,7 @@ export class EmailService implements IEmailService {
     await this.transporter.sendMail({
       from: this.env.SMTP_FROM,
       to: email,
-      subject: 'flight.API — Redefinição de senha',
+      subject: 'Monitoramento de Voos — Redefinição de senha',
       html: this.wrapLayout(`
         <p>Recebemos uma solicitação para redefinir a sua senha.</p>
         <p style="text-align:center;">
@@ -68,7 +68,7 @@ export class EmailService implements IEmailService {
     await this.transporter.sendMail({
       from: this.env.SMTP_FROM,
       to: email,
-      subject: 'flight.API — Conta aprovada',
+      subject: 'Monitoramento de Voos — Conta aprovada',
       html: this.wrapLayout(`
         <p>Sua conta foi aprovada! Você já pode fazer login com a senha provisória recebida anteriormente.</p>
       `),
@@ -103,22 +103,34 @@ export class EmailService implements IEmailService {
     return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
-  <div style="max-width:600px;margin:0 auto;">
-    <div style="background:#1a1a2e;color:white;padding:24px 30px;">
-      <div style="font-size:20px;font-weight:bold;">flight.API</div>
-      <div style="margin-top:6px;color:#aaa;font-size:14px;">${routineName} · ${origin} → ${destination}</div>
-    </div>
-    <div style="background:white;padding:30px;">
-      ${offers || '<p style="color:#555;">Nenhuma oferta disponível neste período.</p>'}
-    </div>
-    <div style="background:#f5f5f5;padding:20px 30px;font-size:12px;color:#888;border-top:1px solid #e0e0e0;">
-      <div>Gerado em ${timestamp} (BRT)</div>
-      <div style="margin-top:8px;">
-        <a href="${unsubLink}" style="color:#888;text-decoration:underline;">Cancelar recebimento deste email</a>
-      </div>
-    </div>
-  </div>
+<body style="margin:0;padding:0;background:#f5f5f5;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f5f5f5;">
+    <tr>
+      <td align="center">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px;max-width:600px;">
+          <tr>
+            <td style="background:#1a1a2e;color:#ffffff;padding:24px 30px;font-family:Arial,sans-serif;">
+              <span style="font-size:20px;font-weight:bold;">Monitoramento de Voos</span>
+              <div style="margin-top:6px;color:#aaa;font-size:14px;">${routineName} · ${origin} → ${destination}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;padding:30px;font-family:Arial,sans-serif;">
+              ${offers || '<p style="color:#555;font-family:Arial,sans-serif;">Nenhuma oferta disponível neste período.</p>'}
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#f5f5f5;padding:20px 30px;font-size:12px;color:#888;border-top:1px solid #e0e0e0;font-family:Arial,sans-serif;">
+              <div>Gerado em ${timestamp} (BRT)</div>
+              <div style="margin-top:8px;">
+                <a href="${unsubLink}" style="color:#888;text-decoration:underline;">Cancelar recebimento deste email</a>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`
   }
@@ -136,33 +148,55 @@ export class EmailService implements IEmailService {
     const stops = offer.stops === 0 ? 'Direto' : `${offer.stops} escala${offer.stops > 1 ? 's' : ''}`
 
     return `
-    <div style="border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin-bottom:20px;">
-      <div style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">${label}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-        <div>
-          <div style="font-size:20px;font-weight:bold;color:#1a1a2e;">${dep} → ${arr}</div>
-          <div style="color:#555;margin-top:4px;">${offer.origin} → ${offer.destination} · ${offer.flightNumber}</div>
-          <div style="color:#888;font-size:13px;margin-top:4px;">${dur} · ${stops}</div>
-        </div>
-        <div style="text-align:right;">
-          ${fares.map((f) => `<div style="font-size:18px;color:#0066cc;margin-bottom:4px;">${f}</div>`).join('')}
-          <a href="${link}" style="display:inline-block;background:#0066cc;color:white;padding:8px 16px;text-decoration:none;border-radius:4px;font-size:13px;margin-top:8px;">Ver na Azul ↗</a>
-        </div>
-      </div>
-    </div>`
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #e0e0e0;border-radius:8px;margin-bottom:20px;">
+      <tr>
+        <td style="padding:20px;">
+          <div style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">${label} · ${offer.date.split('-').reverse().join('/')} · ${dep}</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+            <tr>
+              <td valign="top" style="font-family:Arial,sans-serif;">
+                <div style="font-size:20px;font-weight:bold;color:#1a1a2e;">${dep} → ${arr}</div>
+                <div style="color:#555;margin-top:4px;">${offer.origin} → ${offer.destination} · ${offer.flightNumber}</div>
+                <div style="color:#888;font-size:13px;margin-top:4px;">${dur} · ${stops}</div>
+              </td>
+              <td valign="top" align="right" style="font-family:Arial,sans-serif;">
+                ${fares.map((f) => `<div style="font-size:18px;color:#0066cc;margin-bottom:4px;">${f}</div>`).join('')}
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin-top:16px;">
+            <tr>
+              <td align="center" bgcolor="#0066cc" style="border-radius:4px;">
+                <a href="${link}" target="_blank" style="display:inline-block;padding:10px 18px;font-size:13px;color:#ffffff;text-decoration:none;font-family:Arial,sans-serif;">Ver na Azul ↗</a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>`
   }
 
   private wrapLayout(body: string): string {
     return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
-  <div style="max-width:480px;margin:0 auto;">
-    <div style="background:#1a1a2e;color:white;padding:24px 30px;">
-      <div style="font-size:20px;font-weight:bold;">flight.API</div>
-    </div>
-    <div style="background:white;padding:30px;">${body}</div>
-  </div>
+<body style="margin:0;padding:0;background:#f5f5f5;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f5f5f5;">
+    <tr>
+      <td align="center">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="480" style="width:480px;max-width:480px;">
+          <tr>
+            <td style="background:#1a1a2e;color:#ffffff;padding:24px 30px;font-family:Arial,sans-serif;">
+              <span style="font-size:20px;font-weight:bold;">Monitoramento de Voos</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;padding:30px;font-family:Arial,sans-serif;">${body}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`
   }
