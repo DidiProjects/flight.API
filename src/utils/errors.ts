@@ -56,7 +56,7 @@ export function errorHandler(
 
   if (error instanceof ZodError) {
     const issues = error.issues.map((i) => ({ path: i.path.join('.'), message: i.message }))
-    reply.log.warn({ ...ctx, issues }, 'validation_error')
+    reply.log.warn({ ...ctx, body: req.body, issues }, 'validation_error')
     reply.status(422).send({ error: 'Validation error', issues })
     return
   }
