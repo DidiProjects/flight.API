@@ -5,7 +5,7 @@ const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado: YYYY-
 
 const nullableStr = <T extends z.ZodString>(schema: T) =>
   z.union([schema, z.literal(''), z.null()])
-.transform(async (v) => (v === '' ? null : v)).optional()
+    .transform(async (v) => (v === '' ? null : v)).optional()
 
 const routineBaseSchema = z.object({
   name: z.string().min(1).max(100),
