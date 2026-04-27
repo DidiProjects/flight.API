@@ -25,6 +25,7 @@ export interface FlightAlertEmailParams {
   returnOffer?: OfferBlock | null
   passengers: number
   fareType: string
+  airline: string
 }
 
 export interface IEmailService {

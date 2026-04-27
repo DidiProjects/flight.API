@@ -87,11 +87,12 @@ export class EmailService implements IEmailService {
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
-    const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType } = params
+    const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType, airline } = params
+    const airlineName = airline.charAt(0).toUpperCase() + airline.slice(1).toLowerCase()
 
     const offers = [
-      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildAzulLink(outboundOffer, passengers, fareType)) : '',
-      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildAzulLink(returnOffer,   passengers, fareType)) : '',
+      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildAzulLink(outboundOffer, passengers, fareType), airlineName) : '',
+      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildAzulLink(returnOffer,   passengers, fareType), airlineName) : '',
     ].join('')
 
     const timestamp = new Date().toLocaleString('pt-BR', {
@@ -133,7 +134,7 @@ export class EmailService implements IEmailService {
 </html>`
   }
 
-  private renderOffer(offer: OfferBlock, label: string, link: string): string {
+  private renderOffer(offer: OfferBlock, label: string, link: string, airline: string): string {
     const dep   = new Date(offer.departureTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     const arr   = new Date(offer.arrivalTime).toLocaleTimeString('pt-BR',   { hour: '2-digit', minute: '2-digit' })
     const dur   = `${Math.floor(offer.durationMin / 60)}h${String(offer.durationMin % 60).padStart(2, '0')}m`
@@ -153,7 +154,12 @@ export class EmailService implements IEmailService {
            style="border:1px solid #e8e8e8;border-radius:8px;margin-bottom:16px;">
       <tr>
         <td style="background:#f7f9fc;padding:10px 16px;border-bottom:1px solid #e8e8e8;border-radius:8px 8px 0 0;">
-          <span style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1px;font-weight:bold;font-family:Arial,sans-serif;">${label} &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; ${dep}</span>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+            <tr>
+              <td style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1px;font-weight:bold;font-family:Arial,sans-serif;">${label} &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; ${dep}</td>
+              <td align="right" style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1px;font-weight:bold;font-family:Arial,sans-serif;">${airline}</td>
+            </tr>
+          </table>
         </td>
       </tr>
       <tr>
@@ -175,7 +181,7 @@ export class EmailService implements IEmailService {
               <td align="center" bgcolor="#0055cc" style="border-radius:5px;">
                 <a href="${link}" target="_blank"
                    style="display:block;padding:11px 0;font-size:13px;color:#ffffff;text-decoration:none;font-weight:bold;font-family:Arial,sans-serif;">
-                  Ver na Azul ↗
+                  Ver passagens ↗
                 </a>
               </td>
             </tr>
