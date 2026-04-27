@@ -90,8 +90,8 @@ export class EmailService implements IEmailService {
     const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType } = params
 
     const offers = [
-      outboundOffer ? this.renderOffer(outboundOffer, 'Ida',   this.buildAzulLink(outboundOffer, passengers, fareType)) : '',
-      returnOffer   ? this.renderOffer(returnOffer,   'Volta', this.buildAzulLink(returnOffer,   passengers, fareType)) : '',
+      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildAzulLink(outboundOffer, passengers, fareType)) : '',
+      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildAzulLink(returnOffer,   passengers, fareType)) : '',
     ].join('')
 
     const timestamp = new Date().toLocaleString('pt-BR', {
@@ -103,28 +103,26 @@ export class EmailService implements IEmailService {
     return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;">
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f5f5f5;">
+<body style="margin:0;padding:20px 0;background:#f0f0f0;font-family:Arial,sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
     <tr>
       <td align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px;max-width:600px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:480px;">
           <tr>
-            <td style="background:#1a1a2e;color:#ffffff;padding:24px 30px;font-family:Arial,sans-serif;">
-              <span style="font-size:20px;font-weight:bold;">Monitoramento de Voos</span>
-              <div style="margin-top:6px;color:#aaa;font-size:14px;">${routineName} · ${origin} → ${destination}</div>
+            <td style="background:#1a1a2e;padding:20px 24px;border-radius:8px 8px 0 0;">
+              <div style="color:#ffffff;font-size:16px;font-weight:bold;font-family:Arial,sans-serif;">Monitoramento de Voos</div>
+              <div style="color:#8899bb;font-size:12px;margin-top:4px;font-family:Arial,sans-serif;">${routineName} · ${origin} → ${destination}</div>
             </td>
           </tr>
           <tr>
-            <td style="background:#ffffff;padding:30px;font-family:Arial,sans-serif;">
-              ${offers || '<p style="color:#555;font-family:Arial,sans-serif;">Nenhuma oferta disponível neste período.</p>'}
+            <td style="background:#ffffff;padding:20px 24px;border-radius:0 0 8px 8px;font-family:Arial,sans-serif;">
+              ${offers || '<p style="color:#555;margin:0;">Nenhuma oferta disponível neste período.</p>'}
             </td>
           </tr>
           <tr>
-            <td style="background:#f5f5f5;padding:20px 30px;font-size:12px;color:#888;border-top:1px solid #e0e0e0;font-family:Arial,sans-serif;">
-              <div>Gerado em ${timestamp} (BRT)</div>
-              <div style="margin-top:8px;">
-                <a href="${unsubLink}" style="color:#888;text-decoration:underline;">Cancelar recebimento deste email</a>
-              </div>
+            <td style="padding:14px 24px;font-size:11px;color:#aaa;text-align:center;font-family:Arial,sans-serif;">
+              Gerado em ${timestamp} (BRT) &nbsp;·&nbsp;
+              <a href="${unsubLink}" style="color:#aaa;text-decoration:underline;">Cancelar recebimento</a>
             </td>
           </tr>
         </table>
@@ -136,38 +134,49 @@ export class EmailService implements IEmailService {
   }
 
   private renderOffer(offer: OfferBlock, label: string, link: string): string {
-    const fares: string[] = []
-    if (offer.fareBrl  != null) fares.push(`<strong>${this.fmtBrl(offer.fareBrl)}</strong>`)
-    if (offer.farePts  != null) fares.push(`<strong>${offer.farePts.toLocaleString('pt-BR')} pts</strong>`)
-    if (offer.fareHybPts != null && offer.fareHybBrl != null)
-      fares.push(`<strong>${offer.fareHybPts.toLocaleString('pt-BR')} pts + ${this.fmtBrl(offer.fareHybBrl)}</strong>`)
-
-    const dep  = new Date(offer.departureTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    const arr  = new Date(offer.arrivalTime).toLocaleTimeString('pt-BR',   { hour: '2-digit', minute: '2-digit' })
-    const dur  = `${Math.floor(offer.durationMin / 60)}h${String(offer.durationMin % 60).padStart(2, '0')}m`
+    const dep   = new Date(offer.departureTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const arr   = new Date(offer.arrivalTime).toLocaleTimeString('pt-BR',   { hour: '2-digit', minute: '2-digit' })
+    const dur   = `${Math.floor(offer.durationMin / 60)}h${String(offer.durationMin % 60).padStart(2, '0')}m`
     const stops = offer.stops === 0 ? 'Direto' : `${offer.stops} escala${offer.stops > 1 ? 's' : ''}`
+    const date  = offer.date.split('-').reverse().join('/')
+
+    const fareRows: string[] = []
+    if (offer.fareBrl != null)
+      fareRows.push(this.renderFareRow('BRL', this.fmtBrl(offer.fareBrl)))
+    if (offer.farePts != null)
+      fareRows.push(this.renderFareRow('Pontos', `${offer.farePts.toLocaleString('pt-BR')} pts`))
+    if (offer.fareHybPts != null && offer.fareHybBrl != null)
+      fareRows.push(this.renderFareRow('Híbrido', `${offer.fareHybPts.toLocaleString('pt-BR')} pts + ${this.fmtBrl(offer.fareHybBrl)}`))
 
     return `
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #e0e0e0;border-radius:8px;margin-bottom:20px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+           style="border:1px solid #e8e8e8;border-radius:8px;margin-bottom:16px;">
       <tr>
-        <td style="padding:20px;">
-          <div style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">${label} · ${offer.date.split('-').reverse().join('/')} · ${dep}</div>
+        <td style="background:#f7f9fc;padding:10px 16px;border-bottom:1px solid #e8e8e8;border-radius:8px 8px 0 0;">
+          <span style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1px;font-weight:bold;font-family:Arial,sans-serif;">${label} &nbsp;·&nbsp; ${date} &nbsp;·&nbsp; ${dep}</span>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:14px 16px 0 16px;font-family:Arial,sans-serif;">
+          <div style="font-size:22px;font-weight:bold;color:#1a1a2e;letter-spacing:-0.5px;">${offer.origin} &nbsp;→&nbsp; ${offer.destination}</div>
+          <div style="font-size:12px;color:#888;margin-top:4px;">${offer.flightNumber} &nbsp;·&nbsp; ${dep} – ${arr} &nbsp;·&nbsp; ${dur} &nbsp;·&nbsp; ${stops}</div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:14px 16px;font-family:Arial,sans-serif;">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-            <tr>
-              <td valign="top" style="font-family:Arial,sans-serif;">
-                <div style="font-size:20px;font-weight:bold;color:#1a1a2e;">${dep} → ${arr}</div>
-                <div style="color:#555;margin-top:4px;">${offer.origin} → ${offer.destination} · ${offer.flightNumber}</div>
-                <div style="color:#888;font-size:13px;margin-top:4px;">${dur} · ${stops}</div>
-              </td>
-              <td valign="top" align="right" style="font-family:Arial,sans-serif;">
-                ${fares.map((f) => `<div style="font-size:18px;color:#0066cc;margin-bottom:4px;">${f}</div>`).join('')}
-              </td>
-            </tr>
+            <tr><td style="border-top:1px solid #f0f0f0;padding-bottom:10px;"></td></tr>
           </table>
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin-top:16px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${fareRows.join('')}
+          </table>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:14px;">
             <tr>
-              <td align="center" bgcolor="#0066cc" style="border-radius:4px;">
-                <a href="${link}" target="_blank" style="display:inline-block;padding:10px 18px;font-size:13px;color:#ffffff;text-decoration:none;font-family:Arial,sans-serif;">Ver na Azul ↗</a>
+              <td align="center" bgcolor="#0055cc" style="border-radius:5px;">
+                <a href="${link}" target="_blank"
+                   style="display:block;padding:11px 0;font-size:13px;color:#ffffff;text-decoration:none;font-weight:bold;font-family:Arial,sans-serif;">
+                  Ver na Azul ↗
+                </a>
               </td>
             </tr>
           </table>
@@ -176,22 +185,30 @@ export class EmailService implements IEmailService {
     </table>`
   }
 
+  private renderFareRow(label: string, value: string): string {
+    return `
+    <tr>
+      <td style="padding:5px 0;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;width:70px;">${label}</td>
+      <td style="padding:5px 0;font-size:15px;font-weight:bold;color:#1a1a2e;font-family:Arial,sans-serif;" align="right">${value}</td>
+    </tr>`
+  }
+
   private wrapLayout(body: string): string {
     return `<!DOCTYPE html>
 <html lang="pt-BR">
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;">
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f5f5f5;">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:20px 0;background:#f0f0f0;font-family:Arial,sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
     <tr>
       <td align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="480" style="width:480px;max-width:480px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:480px;">
           <tr>
-            <td style="background:#1a1a2e;color:#ffffff;padding:24px 30px;font-family:Arial,sans-serif;">
-              <span style="font-size:20px;font-weight:bold;">Monitoramento de Voos</span>
+            <td style="background:#1a1a2e;color:#ffffff;padding:20px 24px;border-radius:8px 8px 0 0;font-family:Arial,sans-serif;">
+              <span style="font-size:16px;font-weight:bold;">Monitoramento de Voos</span>
             </td>
           </tr>
           <tr>
-            <td style="background:#ffffff;padding:30px;font-family:Arial,sans-serif;">${body}</td>
+            <td style="background:#ffffff;padding:24px;border-radius:0 0 8px 8px;font-family:Arial,sans-serif;">${body}</td>
           </tr>
         </table>
       </td>
