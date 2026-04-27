@@ -49,28 +49,33 @@ export class UnprocessableError extends ApiError {
 
 export function errorHandler(
   error: FastifyError | ApiError | ZodError | Error,
-  _req: FastifyRequest,
+  req: FastifyRequest,
   reply: FastifyReply,
 ): void {
+  const ctx = { method: req.method, url: req.url, reqId: req.id }
+
   if (error instanceof ZodError) {
-    reply.status(422).send({
-      error: 'Validation error',
-      issues: error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
-    })
+    const issues = error.issues.map((i) => ({ path: i.path.join('.'), message: i.message }))
+    reply.log.warn({ ...ctx, issues }, 'validation_error')
+    reply.status(422).send({ error: 'Validation error', issues })
     return
   }
 
   if (error instanceof ApiError) {
+    const level = error.statusCode >= 500 ? 'error' : 'warn'
+    reply.log[level]({ ...ctx, statusCode: error.statusCode, message: error.message }, 'api_error')
     reply.status(error.statusCode).send({ error: error.message })
     return
   }
 
   const fastifyError = error as FastifyError
   if (fastifyError.statusCode) {
+    const level = fastifyError.statusCode >= 500 ? 'error' : 'warn'
+    reply.log[level]({ ...ctx, statusCode: fastifyError.statusCode, message: fastifyError.message }, 'fastify_error')
     reply.status(fastifyError.statusCode).send({ error: fastifyError.message })
     return
   }
 
-  reply.log.error(error)
+  reply.log.error({ ...ctx, err: { message: error.message, stack: error.stack } }, 'unhandled_error')
   reply.status(500).send({ error: 'Internal server error' })
 }
