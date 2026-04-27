@@ -3,6 +3,7 @@ import { CreateRoutineData } from './IRoutinesRepository'
 
 export interface IRoutinesService {
   list(userId: string): Promise<RoutineRow[]>
+  listByUser(userId: string): Promise<RoutineRow[]>
   get(id: string, userId: string): Promise<RoutineRow>
   create(userId: string, data: Omit<CreateRoutineData, 'userId'>): Promise<RoutineRow>
   update(id: string, userId: string, fields: Partial<Omit<CreateRoutineData, 'userId'>>): Promise<RoutineRow>

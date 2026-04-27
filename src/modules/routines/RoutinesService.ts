@@ -16,6 +16,10 @@ export class RoutinesService implements IRoutinesService {
     return this.routinesRepo.findByUser(userId)
   }
 
+  async listByUser(userId: string): Promise<RoutineRow[]> {
+    return this.routinesRepo.findByUser(userId)
+  }
+
   async get(id: string, userId: string): Promise<RoutineRow> {
     const routine = await this.routinesRepo.findById(id, userId)
     if (!routine) throw new NotFoundError('Rotina não encontrada')

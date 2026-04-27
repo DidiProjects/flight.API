@@ -434,6 +434,18 @@
           }
         },
         {
+          "name": "GET /routines/admin/users/:userId",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/routines/admin/users/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["routines", "admin", "users", ":userId"],
+              "variable": [{ "key": "userId", "value": "" }]
+            }
+          }
+        },
+        {
           "name": "POST /routines/:id/dispatch",
           "request": {
             "method": "POST",

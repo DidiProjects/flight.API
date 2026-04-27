@@ -86,6 +86,11 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       reply.send(await routinesSvc.deactivate(id, req.user.sub))
     })
 
+    app.get('/admin/users/:userId', { preHandler: [app.requireAdmin] }, async (req, reply) => {
+      const { userId } = req.params as { userId: string }
+      reply.send(await routinesSvc.listByUser(userId))
+    })
+
     app.post('/:id/dispatch', { preHandler: [app.requireAdmin] }, async (req, reply) => {
       const { id } = req.params as { id: string }
       await schedulerSvc.dispatchOne(id)
