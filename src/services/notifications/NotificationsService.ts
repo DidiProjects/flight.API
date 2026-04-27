@@ -89,7 +89,9 @@ export class NotificationsService implements INotificationsService {
   ): boolean {
     if (!last) return true
     const outBetter = last.outbound_amount != null ? out.amount < last.outbound_amount : true
-    const retBetter = ret && last.return_amount != null ? ret.amount < last.return_amount : true
+    const retBetter = ret != null
+      ? (last.return_amount != null ? ret.amount < last.return_amount : true)
+      : false
     return outBetter || retBetter
   }
 
