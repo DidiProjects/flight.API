@@ -32,7 +32,11 @@ const routineBaseSchema = z.object({
     'end_of_period',
   ]),
   notificationFrequency: z.enum(['hourly', 'daily', 'monthly']),
-  endOfPeriodTime: nullableStr(z.string().regex(/^\d{2}:\d{2}$/)),
+  endOfPeriodTime: z.union([
+    z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+    z.literal(''),
+    z.null(),
+  ]).transform((v): string | null => (v == null || v === '' ? null : v.slice(0, 5))).optional(),
 
   ccEmails: z.array(z.string().email()).max(10).default([]),
   isActive: z.boolean().default(true),
