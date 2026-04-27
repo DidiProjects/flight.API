@@ -10,4 +10,7 @@ export interface IRoutinesService {
   remove(id: string, userId: string): Promise<void>
   activate(id: string, userId: string): Promise<RoutineRow>
   deactivate(id: string, userId: string): Promise<RoutineRow>
+  adminActivate(id: string): Promise<RoutineRow>
+  adminDeactivate(id: string): Promise<RoutineRow>
+  adminRemove(id: string): Promise<void>
 }

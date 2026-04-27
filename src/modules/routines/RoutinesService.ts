@@ -76,4 +76,21 @@ export class RoutinesService implements IRoutinesService {
     if (!routine) throw new NotFoundError('Rotina não encontrada')
     return routine
   }
+
+  async adminActivate(id: string): Promise<RoutineRow> {
+    const routine = await this.routinesRepo.setActiveAdmin(id, true)
+    if (!routine) throw new NotFoundError('Rotina não encontrada')
+    return routine
+  }
+
+  async adminDeactivate(id: string): Promise<RoutineRow> {
+    const routine = await this.routinesRepo.setActiveAdmin(id, false)
+    if (!routine) throw new NotFoundError('Rotina não encontrada')
+    return routine
+  }
+
+  async adminRemove(id: string): Promise<void> {
+    const deleted = await this.routinesRepo.deleteAdmin(id)
+    if (!deleted) throw new NotFoundError('Rotina não encontrada')
+  }
 }

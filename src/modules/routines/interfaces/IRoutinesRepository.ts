@@ -35,7 +35,9 @@ export interface IRoutinesRepository {
   create(data: CreateRoutineData): Promise<RoutineRow>
   update(id: string, userId: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null>
   delete(id: string, userId: string): Promise<boolean>
+  deleteAdmin(id: string): Promise<boolean>
   setActive(id: string, userId: string, active: boolean): Promise<RoutineRow | null>
+  setActiveAdmin(id: string, active: boolean): Promise<RoutineRow | null>
   setPendingRequest(id: string, requestId: string): Promise<void>
   clearPendingRequest(id: string): Promise<void>
 }

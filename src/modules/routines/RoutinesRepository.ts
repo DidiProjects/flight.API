@@ -134,11 +134,28 @@ export class RoutinesRepository implements IRoutinesRepository {
     return (rowCount ?? 0) > 0
   }
 
+  async deleteAdmin(id: string): Promise<boolean> {
+    const { rowCount } = await this.db.query(
+      `DELETE FROM routines WHERE id = $1`,
+      [id],
+    )
+    return (rowCount ?? 0) > 0
+  }
+
   async setActive(id: string, userId: string, active: boolean): Promise<RoutineRow | null> {
     const { rows } = await this.db.query<RoutineRow>(
       `UPDATE routines SET is_active = $1, updated_at = now()
        WHERE id = $2 AND user_id = $3 RETURNING ${COLS}`,
       [active, id, userId],
+    )
+    return rows[0] ?? null
+  }
+
+  async setActiveAdmin(id: string, active: boolean): Promise<RoutineRow | null> {
+    const { rows } = await this.db.query<RoutineRow>(
+      `UPDATE routines SET is_active = $1, updated_at = now()
+       WHERE id = $2 RETURNING ${COLS}`,
+      [active, id],
     )
     return rows[0] ?? null
   }

@@ -72,18 +72,30 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
 
     app.delete('/:id', async (req, reply) => {
       const { id } = req.params as { id: string }
-      await routinesSvc.remove(id, req.user.sub)
+      if (req.user.role === 'admin') {
+        await routinesSvc.adminRemove(id)
+      } else {
+        await routinesSvc.remove(id, req.user.sub)
+      }
       reply.status(204).send()
     })
 
     app.patch('/:id/activate', async (req, reply) => {
       const { id } = req.params as { id: string }
-      reply.send(await routinesSvc.activate(id, req.user.sub))
+      if (req.user.role === 'admin') {
+        reply.send(await routinesSvc.adminActivate(id))
+      } else {
+        reply.send(await routinesSvc.activate(id, req.user.sub))
+      }
     })
 
     app.patch('/:id/deactivate', async (req, reply) => {
       const { id } = req.params as { id: string }
-      reply.send(await routinesSvc.deactivate(id, req.user.sub))
+      if (req.user.role === 'admin') {
+        reply.send(await routinesSvc.adminDeactivate(id))
+      } else {
+        reply.send(await routinesSvc.deactivate(id, req.user.sub))
+      }
     })
 
     app.get('/admin/users/:userId', { preHandler: [app.requireAdmin] }, async (req, reply) => {
