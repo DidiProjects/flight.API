@@ -67,6 +67,7 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         notificationFrequency: body.notificationFrequency,
         endOfPeriodTime:       body.endOfPeriodTime ?? null,
         ccEmails:              body.ccEmails,
+        isActive:              body.isActive,
       }))
     })
 

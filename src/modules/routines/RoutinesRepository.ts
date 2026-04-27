@@ -104,7 +104,7 @@ export class RoutinesRepository implements IRoutinesRepository {
       targetHybPts: 'target_hyb_pts', targetHybBrl: 'target_hyb_brl',
       margin: 'margin', priority: 'priority',
       notificationMode: 'notification_mode', notificationFrequency: 'notification_frequency',
-      endOfPeriodTime: 'end_of_period_time',
+      endOfPeriodTime: 'end_of_period_time', isActive: 'is_active',
     }
     const updates: string[] = []
     const values: unknown[] = []
