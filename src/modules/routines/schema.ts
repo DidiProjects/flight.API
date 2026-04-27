@@ -3,9 +3,10 @@ import { z } from 'zod'
 const iata = z.string().length(3).toUpperCase()
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado: YYYY-MM-DD')
 
-const nullableStr = <T extends z.ZodString>(schema: T) =>
+const nullableStr = (schema: z.ZodString) =>
   z.union([schema, z.literal(''), z.null()])
-    .transform(async (v) => (v === '' ? null : v)).optional()
+    .transform((v): string | null => (v === '' ? null : v))
+    .optional()
 
 const routineBaseSchema = z.object({
   name: z.string().min(1).max(100),
