@@ -6,5 +6,6 @@ export interface IAirlinesRepository {
   findByCode(code: string): Promise<AirlineRow | null>
   create(code: string, name: string): Promise<AirlineRow>
   setActive(code: string, active: boolean): Promise<AirlineRow | null>
+  updateFareTypes(code: string, hasBrl: boolean, hasPts: boolean, hasHyb: boolean): Promise<AirlineRow | null>
   delete(code: string): Promise<boolean>
 }

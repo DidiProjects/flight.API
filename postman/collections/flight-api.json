@@ -387,6 +387,24 @@
           }
         },
         {
+          "name": "PATCH /airlines/:code/fare-types",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/airlines/:code/fare-types",
+              "host": ["{{baseUrl}}"],
+              "path": ["airlines", ":code", "fare-types"],
+              "variable": [{ "key": "code", "value": "" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hasBrl\": true,\n  \"hasPts\": true,\n  \"hasHyb\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
           "name": "DELETE /airlines/:code",
           "request": {
             "method": "DELETE",

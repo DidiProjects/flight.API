@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { IAirlinesService } from './interfaces/IAirlinesService'
-import { createAirlineSchema } from './schema'
+import { createAirlineSchema, updateFareTypesSchema } from './schema'
 
 export function airlinesRoute(airlinesSvc: IAirlinesService) {
   return async function handler(app: FastifyInstance): Promise<void> {
@@ -44,6 +44,16 @@ export function airlinesRoute(airlinesSvc: IAirlinesService) {
       async (req, reply) => {
         const { code } = req.params as { code: string }
         reply.send(await airlinesSvc.deactivate(code))
+      },
+    )
+
+    app.patch(
+      '/:code/fare-types',
+      { preHandler: [app.authenticate, app.requirePasswordChanged, app.requireAdmin] },
+      async (req, reply) => {
+        const { code } = req.params as { code: string }
+        const { hasBrl, hasPts, hasHyb } = updateFareTypesSchema.parse(req.body)
+        reply.send(await airlinesSvc.updateFareTypes(code, hasBrl, hasPts, hasHyb))
       },
     )
 

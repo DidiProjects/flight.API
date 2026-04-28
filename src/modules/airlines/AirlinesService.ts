@@ -32,6 +32,12 @@ export class AirlinesService implements IAirlinesService {
     return airline
   }
 
+  async updateFareTypes(code: string, hasBrl: boolean, hasPts: boolean, hasHyb: boolean): Promise<AirlineRow> {
+    const airline = await this.airlinesRepo.updateFareTypes(code, hasBrl, hasPts, hasHyb)
+    if (!airline) throw new NotFoundError('Companhia aérea não encontrada')
+    return airline
+  }
+
   async remove(code: string): Promise<void> {
     const existing = await this.airlinesRepo.findByCode(code)
     if (!existing) throw new NotFoundError('Companhia aérea não encontrada')
