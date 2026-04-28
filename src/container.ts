@@ -17,6 +17,7 @@ import { EmailService }         from './services/email/EmailService'
 import { NotificationsService } from './services/notifications/NotificationsService'
 import { AuthService }          from './modules/auth/AuthService'
 import { UsersService }         from './modules/users/UsersService'
+import { AirlinesService }      from './modules/airlines/AirlinesService'
 import { RoutinesService }      from './modules/routines/RoutinesService'
 import { ScrapeService }        from './modules/scrape/ScrapeService'
 import { UnsubscribeService }   from './modules/unsubscribe/UnsubscribeService'
@@ -48,13 +49,14 @@ const notifSvc = new NotificationsService(
 
 const authSvc       = new AuthService(usersRepo, authRepo, refreshTokenRepo, emailSvc)
 const usersSvc      = new UsersService(usersRepo, emailSvc)
+const airlinesSvc   = new AirlinesService(airlinesRepo)
 const routinesSvc   = new RoutinesService(routinesRepo, airlinesRepo)
 const scrapeSvc     = new ScrapeService(routinesRepo, offersRepo, bestFaresRepo, notifSvc)
 const unsubSvc      = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
 const schedulerSvc  = new SchedulerService(routinesRepo, notifSvc, env)
 
 export const container = {
-  airlinesRepo,
+  airlinesSvc,
   authSvc,
   usersSvc,
   routinesSvc,

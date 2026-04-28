@@ -333,6 +333,70 @@
               "path": ["airlines"]
             }
           }
+        },
+        {
+          "name": "GET /airlines/admin",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/airlines/admin",
+              "host": ["{{baseUrl}}"],
+              "path": ["airlines", "admin"]
+            }
+          }
+        },
+        {
+          "name": "POST /airlines",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/airlines",
+              "host": ["{{baseUrl}}"],
+              "path": ["airlines"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"LA\",\n  \"name\": \"LATAM Airlines\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "PATCH /airlines/:code/activate",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/airlines/:code/activate",
+              "host": ["{{baseUrl}}"],
+              "path": ["airlines", ":code", "activate"],
+              "variable": [{ "key": "code", "value": "" }]
+            }
+          }
+        },
+        {
+          "name": "PATCH /airlines/:code/deactivate",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/airlines/:code/deactivate",
+              "host": ["{{baseUrl}}"],
+              "path": ["airlines", ":code", "deactivate"],
+              "variable": [{ "key": "code", "value": "" }]
+            }
+          }
+        },
+        {
+          "name": "DELETE /airlines/:code",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/airlines/:code",
+              "host": ["{{baseUrl}}"],
+              "path": ["airlines", ":code"],
+              "variable": [{ "key": "code", "value": "" }]
+            }
+          }
         }
       ]
     },
