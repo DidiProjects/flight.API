@@ -79,6 +79,14 @@ export class EmailService implements IEmailService {
   // Private template helpers
   // ---------------------------------------------------------------------------
 
+  private buildDeepLink(offer: OfferBlock, airline: string, passengers: number, fareType: string): string | null {
+    switch (airline.toLowerCase()) {
+      case 'azul':  return this.buildAzulLink(offer, passengers, fareType)
+      case 'latam': return this.buildLatamLink(offer, passengers, fareType)
+      default:      return null
+    }
+  }
+
   private buildAzulLink(offer: OfferBlock, passengers: number, fareType: string): string {
     const cc = fareType === 'brl' ? 'BRL' : 'PTS'
     const [y, m, d] = offer.date.split('-')
@@ -86,13 +94,18 @@ export class EmailService implements IEmailService {
     return `https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds=${offer.origin}&c[0].std=${std}&c[0].as=${offer.destination}&p[0].t=ADT&p[0].c=${passengers}&p[0].cp=false&f.dl=3&f.dr=3&cc=${cc}`
   }
 
+  private buildLatamLink(offer: OfferBlock, passengers: number, fareType: string): string {
+    const redemption = fareType === 'brl' ? 'false' : 'true'
+    return `https://www.latamairlines.com/br/pt/oferta-voos?origin=${offer.origin}&outbound=${offer.date}&destination=${offer.destination}&inbound=undefined&adt=${passengers}&chd=0&inf=0&trip=OW&cabin=Economy&redemption=${redemption}&sort=RECOMMENDED`
+  }
+
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
     const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType, airline } = params
     const airlineName = airline.charAt(0).toUpperCase() + airline.slice(1).toLowerCase()
 
     const offers = [
-      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildAzulLink(outboundOffer, passengers, fareType), airlineName) : '',
-      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildAzulLink(returnOffer,   passengers, fareType), airlineName) : '',
+      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildDeepLink(outboundOffer, airline, passengers, fareType), airlineName) : '',
+      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildDeepLink(returnOffer,   airline, passengers, fareType), airlineName) : '',
     ].join('')
 
     const timestamp = new Date().toLocaleString('pt-BR', {
@@ -134,7 +147,7 @@ export class EmailService implements IEmailService {
 </html>`
   }
 
-  private renderOffer(offer: OfferBlock, label: string, link: string, airline: string): string {
+  private renderOffer(offer: OfferBlock, label: string, link: string | null, airline: string): string {
     const dep   = new Date(offer.departureTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     const arr   = new Date(offer.arrivalTime).toLocaleTimeString('pt-BR',   { hour: '2-digit', minute: '2-digit' })
     const dur   = `${Math.floor(offer.durationMin / 60)}h${String(offer.durationMin % 60).padStart(2, '0')}m`
@@ -176,16 +189,16 @@ export class EmailService implements IEmailService {
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
             ${fareRows.join('')}
           </table>
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:14px;">
+          ${link ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:14px;">
             <tr>
               <td align="center" bgcolor="#0055cc" style="border-radius:5px;">
                 <a href="${link}" target="_blank"
                    style="display:block;padding:11px 0;font-size:13px;color:#ffffff;text-decoration:none;font-weight:bold;font-family:Arial,sans-serif;">
-                  Ver passagens ↗
+                  Ver em ${airline} ↗
                 </a>
               </td>
             </tr>
-          </table>
+          </table>` : ''}
         </td>
       </tr>
     </table>`
