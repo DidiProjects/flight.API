@@ -111,7 +111,7 @@ export class SchedulerService implements ISchedulerService {
   private async maybeSendDailyBest(): Promise<void> {
     const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
     const d = new Date(now)
-    if (d.getHours() !== 8 || d.getMinutes() !== 0) return
+    if (d.getHours() !== 20 || d.getMinutes() !== 0) return
     await this.notifSvc.sendDailyBest()
   }
 }
