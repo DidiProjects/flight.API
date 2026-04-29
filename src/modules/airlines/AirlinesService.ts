@@ -46,6 +46,7 @@ export class AirlinesService implements IAirlinesService {
   async remove(code: string): Promise<void> {
     const existing = await this.airlinesRepo.findByCode(code)
     if (!existing) throw new NotFoundError('Companhia aérea não encontrada')
+    await this.routinesRepo.deleteByAirline(code)
     const deleted = await this.airlinesRepo.delete(code)
     if (!deleted) throw new BadRequestError('Não foi possível remover a companhia aérea')
   }

@@ -175,6 +175,10 @@ export class RoutinesRepository implements IRoutinesRepository {
     )
   }
 
+  async deleteByAirline(airlineCode: string): Promise<void> {
+    await this.db.query(`DELETE FROM routines WHERE airline = $1`, [airlineCode])
+  }
+
   async clearPendingRequest(id: string): Promise<void> {
     await this.db.query(
       `UPDATE routines SET pending_request_id = NULL, pending_request_at = NULL, updated_at = now()
