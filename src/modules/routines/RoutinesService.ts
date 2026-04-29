@@ -66,6 +66,10 @@ export class RoutinesService implements IRoutinesService {
   }
 
   async activate(id: string, userId: string): Promise<RoutineRow> {
+    const existing = await this.routinesRepo.findById(id, userId)
+    if (!existing) throw new NotFoundError('Rotina não encontrada')
+    const airline = await this.airlinesRepo.findByCode(existing.airline)
+    if (!airline?.active) throw new BadRequestError(`Companhia '${existing.airline}' está desativada`)
     const routine = await this.routinesRepo.setActive(id, userId, true)
     if (!routine) throw new NotFoundError('Rotina não encontrada')
     return routine
@@ -78,6 +82,10 @@ export class RoutinesService implements IRoutinesService {
   }
 
   async adminActivate(id: string): Promise<RoutineRow> {
+    const existing = await this.routinesRepo.findByIdAdmin(id)
+    if (!existing) throw new NotFoundError('Rotina não encontrada')
+    const airline = await this.airlinesRepo.findByCode(existing.airline)
+    if (!airline?.active) throw new BadRequestError(`Companhia '${existing.airline}' está desativada`)
     const routine = await this.routinesRepo.setActiveAdmin(id, true)
     if (!routine) throw new NotFoundError('Rotina não encontrada')
     return routine

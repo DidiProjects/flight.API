@@ -49,7 +49,7 @@ const notifSvc = new NotificationsService(
 
 const authSvc       = new AuthService(usersRepo, authRepo, refreshTokenRepo, emailSvc)
 const usersSvc      = new UsersService(usersRepo, emailSvc)
-const airlinesSvc   = new AirlinesService(airlinesRepo)
+const airlinesSvc   = new AirlinesService(airlinesRepo, routinesRepo)
 const routinesSvc   = new RoutinesService(routinesRepo, airlinesRepo)
 const scrapeSvc     = new ScrapeService(routinesRepo, offersRepo, bestFaresRepo, notifSvc)
 const unsubSvc      = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)

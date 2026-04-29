@@ -38,6 +38,7 @@ export interface IRoutinesRepository {
   deleteAdmin(id: string): Promise<boolean>
   setActive(id: string, userId: string, active: boolean): Promise<RoutineRow | null>
   setActiveAdmin(id: string, active: boolean): Promise<RoutineRow | null>
+  deactivateByAirline(airlineCode: string): Promise<void>
   setPendingRequest(id: string, requestId: string): Promise<void>
   clearPendingRequest(id: string): Promise<void>
 }

@@ -1,10 +1,14 @@
 import { AirlineRow } from '../../types'
 import { IAirlinesService } from './interfaces/IAirlinesService'
 import { IAirlinesRepository } from './interfaces/IAirlinesRepository'
+import { IRoutinesRepository } from '../routines/interfaces/IRoutinesRepository'
 import { BadRequestError, ConflictError, NotFoundError } from '../../utils/errors'
 
 export class AirlinesService implements IAirlinesService {
-  constructor(private readonly airlinesRepo: IAirlinesRepository) {}
+  constructor(
+    private readonly airlinesRepo: IAirlinesRepository,
+    private readonly routinesRepo: IRoutinesRepository,
+  ) {}
 
   async listActive(): Promise<AirlineRow[]> {
     return this.airlinesRepo.findActive()
@@ -29,6 +33,7 @@ export class AirlinesService implements IAirlinesService {
   async deactivate(code: string): Promise<AirlineRow> {
     const airline = await this.airlinesRepo.setActive(code, false)
     if (!airline) throw new NotFoundError('Companhia aérea não encontrada')
+    await this.routinesRepo.deactivateByAirline(code)
     return airline
   }
 
