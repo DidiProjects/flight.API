@@ -11,10 +11,11 @@ export interface CreateRoutineData {
   returnStart?: string | null
   returnEnd?: string | null
   passengers: number
-  targetBrl?: number | null
+  currency: string
+  targetCash?: number | null
   targetPts?: number | null
   targetHybPts?: number | null
-  targetHybBrl?: number | null
+  targetHybCash?: number | null
   margin: number
   priority: string
   notificationMode: string

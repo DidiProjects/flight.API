@@ -88,24 +88,24 @@ export class EmailService implements IEmailService {
   }
 
   private buildAzulLink(offer: OfferBlock, passengers: number, fareType: string): string {
-    const cc = fareType === 'brl' ? 'BRL' : 'PTS'
+    const cc = fareType === 'cash' ? 'BRL' : 'PTS'
     const [y, m, d] = offer.date.split('-')
     const std = `${m}/${d}/${y}`
     return `https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds=${offer.origin}&c[0].std=${std}&c[0].as=${offer.destination}&p[0].t=ADT&p[0].c=${passengers}&p[0].cp=false&f.dl=3&f.dr=3&cc=${cc}`
   }
 
   private buildLatamLink(offer: OfferBlock, passengers: number, fareType: string): string {
-    const redemption = fareType === 'brl' ? 'false' : 'true'
+    const redemption = fareType === 'cash' ? 'false' : 'true'
     return `https://www.latamairlines.com/br/pt/oferta-voos?origin=${offer.origin}&outbound=${offer.date}&destination=${offer.destination}&inbound=undefined&adt=${passengers}&chd=0&inf=0&trip=OW&cabin=Economy&redemption=${redemption}&sort=RECOMMENDED`
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
-    const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType, airline } = params
+    const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType, airline, currency } = params
     const airlineName = airline.charAt(0).toUpperCase() + airline.slice(1).toLowerCase()
 
     const offers = [
-      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildDeepLink(outboundOffer, airline, passengers, fareType), airlineName) : '',
-      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildDeepLink(returnOffer,   airline, passengers, fareType), airlineName) : '',
+      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildDeepLink(outboundOffer, airline, passengers, fareType), airlineName, currency) : '',
+      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildDeepLink(returnOffer,   airline, passengers, fareType), airlineName, currency) : '',
     ].join('')
 
     const timestamp = new Date().toLocaleString('pt-BR', {
@@ -147,7 +147,7 @@ export class EmailService implements IEmailService {
 </html>`
   }
 
-  private renderOffer(offer: OfferBlock, label: string, link: string | null, airline: string): string {
+  private renderOffer(offer: OfferBlock, label: string, link: string | null, airline: string, currency: string): string {
     const dep   = new Date(offer.departureTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     const arr   = new Date(offer.arrivalTime).toLocaleTimeString('pt-BR',   { hour: '2-digit', minute: '2-digit' })
     const dur   = `${Math.floor(offer.durationMin / 60)}h${String(offer.durationMin % 60).padStart(2, '0')}m`
@@ -156,11 +156,11 @@ export class EmailService implements IEmailService {
 
     const fareRows: string[] = []
     if (offer.fareBrl != null)
-      fareRows.push(this.renderFareRow('BRL', this.fmtBrl(offer.fareBrl)))
+      fareRows.push(this.renderFareRow(currency, this.fmtCurrency(offer.fareBrl, currency)))
     if (offer.farePts != null)
       fareRows.push(this.renderFareRow('Pontos', `${offer.farePts.toLocaleString('pt-BR')} pts`))
     if (offer.fareHybPts != null && offer.fareHybBrl != null)
-      fareRows.push(this.renderFareRow('Híbrido', `${offer.fareHybPts.toLocaleString('pt-BR')} pts + ${this.fmtBrl(offer.fareHybBrl)}`))
+      fareRows.push(this.renderFareRow('Híbrido', `${offer.fareHybPts.toLocaleString('pt-BR')} pts + ${this.fmtCurrency(offer.fareHybBrl, currency)}`))
 
     return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
@@ -237,7 +237,7 @@ export class EmailService implements IEmailService {
 </html>`
   }
 
-  private fmtBrl(value: number): string {
-    return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  private fmtCurrency(value: number, currency: string): string {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(value)
   }
 }

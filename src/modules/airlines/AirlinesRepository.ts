@@ -5,7 +5,7 @@ import { IAirlinesRepository } from './interfaces/IAirlinesRepository'
 export class AirlinesRepository implements IAirlinesRepository {
   constructor(private readonly db: Pool) {}
 
-  private readonly cols = `code, name, active, has_brl, has_pts, has_hyb`
+  private readonly cols = `code, name, currency, active, has_cash, has_pts, has_hyb`
 
   async findAll(): Promise<AirlineRow[]> {
     const { rows } = await this.db.query<AirlineRow>(
@@ -29,10 +29,10 @@ export class AirlinesRepository implements IAirlinesRepository {
     return rows[0] ?? null
   }
 
-  async create(code: string, name: string): Promise<AirlineRow> {
+  async create(code: string, name: string, currency: string): Promise<AirlineRow> {
     const { rows } = await this.db.query<AirlineRow>(
-      `INSERT INTO airlines (code, name, active) VALUES ($1, $2, true) RETURNING ${this.cols}`,
-      [code, name],
+      `INSERT INTO airlines (code, name, currency, active) VALUES ($1, $2, $3, true) RETURNING ${this.cols}`,
+      [code, name, currency],
     )
     return rows[0]
   }
@@ -45,10 +45,10 @@ export class AirlinesRepository implements IAirlinesRepository {
     return rows[0] ?? null
   }
 
-  async updateFareTypes(code: string, hasBrl: boolean, hasPts: boolean, hasHyb: boolean): Promise<AirlineRow | null> {
+  async updateFareTypes(code: string, hasCash: boolean, hasPts: boolean, hasHyb: boolean): Promise<AirlineRow | null> {
     const { rows } = await this.db.query<AirlineRow>(
-      `UPDATE airlines SET has_brl = $1, has_pts = $2, has_hyb = $3 WHERE code = $4 RETURNING ${this.cols}`,
-      [hasBrl, hasPts, hasHyb, code],
+      `UPDATE airlines SET has_cash = $1, has_pts = $2, has_hyb = $3 WHERE code = $4 RETURNING ${this.cols}`,
+      [hasCash, hasPts, hasHyb, code],
     )
     return rows[0] ?? null
   }

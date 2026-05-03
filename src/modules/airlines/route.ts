@@ -24,8 +24,8 @@ export function airlinesRoute(airlinesSvc: IAirlinesService) {
       '/',
       { preHandler: [app.authenticate, app.requirePasswordChanged, app.requireAdmin] },
       async (req, reply) => {
-        const { code, name } = createAirlineSchema.parse(req.body)
-        reply.status(201).send(await airlinesSvc.create(code, name))
+        const { code, name, currency } = createAirlineSchema.parse(req.body)
+        reply.status(201).send(await airlinesSvc.create(code, name, currency))
       },
     )
 
@@ -52,8 +52,8 @@ export function airlinesRoute(airlinesSvc: IAirlinesService) {
       { preHandler: [app.authenticate, app.requirePasswordChanged, app.requireAdmin] },
       async (req, reply) => {
         const { code } = req.params as { code: string }
-        const { hasBrl, hasPts, hasHyb } = updateFareTypesSchema.parse(req.body)
-        reply.send(await airlinesSvc.updateFareTypes(code, hasBrl, hasPts, hasHyb))
+        const { hasCash, hasPts, hasHyb } = updateFareTypesSchema.parse(req.body)
+        reply.send(await airlinesSvc.updateFareTypes(code, hasCash, hasPts, hasHyb))
       },
     )
 

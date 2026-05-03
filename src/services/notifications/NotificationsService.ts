@@ -132,6 +132,7 @@ export class NotificationsService implements INotificationsService {
       passengers:      routine.passengers,
       fareType:        routine.priority,
       airline:         routine.airline,
+      currency:        routine.currency,
     })
 
     await this.notifLogRepo.insert({

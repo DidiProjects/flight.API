@@ -26,6 +26,7 @@ export interface FlightAlertEmailParams {
   passengers: number
   fareType: string
   airline: string
+  currency: string
 }
 
 export interface IEmailService {

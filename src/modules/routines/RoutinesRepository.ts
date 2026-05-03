@@ -5,7 +5,7 @@ import { IRoutinesRepository, CreateRoutineData } from './interfaces/IRoutinesRe
 const COLS = `
   id, user_id, name, airline, origin, destination,
   outbound_start, outbound_end, return_start, return_end, passengers,
-  target_brl, target_pts, target_hyb_pts, target_hyb_brl,
+  currency, target_cash, target_pts, target_hyb_pts, target_hyb_cash,
   margin, priority, notification_mode, notification_frequency, end_of_period_time,
   cc_emails, pending_request_id, pending_request_at, is_active, created_at, updated_at`
 
@@ -78,16 +78,16 @@ export class RoutinesRepository implements IRoutinesRepository {
       `INSERT INTO routines (
          user_id, name, airline, origin, destination,
          outbound_start, outbound_end, return_start, return_end, passengers,
-         target_brl, target_pts, target_hyb_pts, target_hyb_brl,
+         currency, target_cash, target_pts, target_hyb_pts, target_hyb_cash,
          margin, priority, notification_mode, notification_frequency, end_of_period_time, cc_emails, is_active
        ) VALUES (
          $1,$2,$3,$4,$5, $6,$7,$8,$9,$10,
-         $11,$12,$13,$14, $15,$16,$17,$18,$19,$20,$21
+         $11,$12,$13,$14,$15, $16,$17,$18,$19,$20,$21,$22
        ) RETURNING ${COLS}`,
       [
         data.userId, data.name, data.airline, data.origin, data.destination,
         data.outboundStart, data.outboundEnd, data.returnStart ?? null, data.returnEnd ?? null, data.passengers,
-        data.targetBrl ?? null, data.targetPts ?? null, data.targetHybPts ?? null, data.targetHybBrl ?? null,
+        data.currency, data.targetCash ?? null, data.targetPts ?? null, data.targetHybPts ?? null, data.targetHybCash ?? null,
         data.margin, data.priority, data.notificationMode, data.notificationFrequency,
         data.endOfPeriodTime ?? null, ccJson, data.isActive ?? true,
       ],
@@ -100,8 +100,9 @@ export class RoutinesRepository implements IRoutinesRepository {
       name: 'name', airline: 'airline', origin: 'origin', destination: 'destination',
       outboundStart: 'outbound_start', outboundEnd: 'outbound_end',
       returnStart: 'return_start', returnEnd: 'return_end', passengers: 'passengers',
-      targetBrl: 'target_brl', targetPts: 'target_pts',
-      targetHybPts: 'target_hyb_pts', targetHybBrl: 'target_hyb_brl',
+      currency: 'currency',
+      targetCash: 'target_cash', targetPts: 'target_pts',
+      targetHybPts: 'target_hyb_pts', targetHybCash: 'target_hyb_cash',
       margin: 'margin', priority: 'priority',
       notificationMode: 'notification_mode', notificationFrequency: 'notification_frequency',
       endOfPeriodTime: 'end_of_period_time', isActive: 'is_active',

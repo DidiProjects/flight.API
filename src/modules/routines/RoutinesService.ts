@@ -26,14 +26,14 @@ export class RoutinesService implements IRoutinesService {
     return routine
   }
 
-  async create(userId: string, data: Omit<CreateRoutineData, 'userId'>): Promise<RoutineRow> {
+  async create(userId: string, data: Omit<CreateRoutineData, 'userId' | 'currency'>): Promise<RoutineRow> {
     const count = await this.routinesRepo.countByUser(userId)
     if (count >= MAX_ROUTINES) {
       throw new ForbiddenError(`Limite de ${MAX_ROUTINES} rotinas por usuário atingido`)
     }
 
-    const airlines = await this.airlinesRepo.findActive()
-    if (!airlines.find((a) => a.code === data.airline)) {
+    const airline = await this.airlinesRepo.findByCode(data.airline)
+    if (!airline || !airline.active) {
       throw new BadRequestError(`Companhia '${data.airline}' não disponível`)
     }
     if (data.outboundStart > data.outboundEnd) {
@@ -43,17 +43,25 @@ export class RoutinesService implements IRoutinesService {
       throw new BadRequestError('returnStart deve ser anterior a returnEnd')
     }
 
-    return this.routinesRepo.create({ userId, ...data })
+    return this.routinesRepo.create({ userId, ...data, currency: airline.currency })
   }
 
   async update(
     id: string,
     userId: string,
-    fields: Partial<Omit<CreateRoutineData, 'userId'>>,
+    fields: Partial<Omit<CreateRoutineData, 'userId' | 'currency'>>,
   ): Promise<RoutineRow> {
     const existing = await this.routinesRepo.findById(id, userId)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
-    const updated = await this.routinesRepo.update(id, userId, fields)
+
+    let repoFields: Partial<Omit<CreateRoutineData, 'userId'>> = fields
+    if (fields.airline) {
+      const airline = await this.airlinesRepo.findByCode(fields.airline)
+      if (!airline || !airline.active) throw new BadRequestError(`Companhia '${fields.airline}' não disponível`)
+      repoFields = { ...fields, currency: airline.currency }
+    }
+
+    const updated = await this.routinesRepo.update(id, userId, repoFields)
     if (!updated) throw new NotFoundError('Rotina não encontrada')
     return updated
   }

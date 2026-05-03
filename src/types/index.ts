@@ -14,8 +14,9 @@ export interface UserRow {
 export interface AirlineRow {
   code: string
   name: string
+  currency: string
   active: boolean
-  has_brl: boolean
+  has_cash: boolean
   has_pts: boolean
   has_hyb: boolean
 }
@@ -37,12 +38,13 @@ export interface RoutineRow {
   return_start: string | null
   return_end: string | null
   passengers: number
-  target_brl: number | null
+  currency: string
+  target_cash: number | null
   target_pts: number | null
   target_hyb_pts: number | null
-  target_hyb_brl: number | null
+  target_hyb_cash: number | null
   margin: number
-  priority: 'brl' | 'pts' | 'hyb'
+  priority: 'cash' | 'pts' | 'hyb'
   notification_mode: string
   notification_frequency: string
   end_of_period_time: string | null

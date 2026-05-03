@@ -19,12 +19,12 @@ const routineBaseSchema = z.object({
   returnEnd: nullableStr(dateStr),
   passengers: z.number().int().min(1).max(9).default(1),
 
-  targetBrl: z.number().positive().nullable().optional(),
+  targetCash: z.number().positive().nullable().optional(),
   targetPts: z.number().int().positive().nullable().optional(),
   targetHybPts: z.number().int().positive().nullable().optional(),
-  targetHybBrl: z.number().positive().nullable().optional(),
+  targetHybCash: z.number().positive().nullable().optional(),
   margin: z.number().min(0).max(1).default(0.1),
-  priority: z.enum(['brl', 'pts', 'hyb']).default('brl'),
+  priority: z.enum(['cash', 'pts', 'hyb']).default('cash'),
 
   notificationMode: z.enum([
     'daily_best_and_alert',
@@ -45,10 +45,10 @@ const routineBaseSchema = z.object({
 export const createRoutineSchema = routineBaseSchema
   .refine(
     (d) =>
-      d.targetBrl != null ||
+      d.targetCash != null ||
       d.targetPts != null ||
-      (d.targetHybPts != null && d.targetHybBrl != null),
-    { message: 'Pelo menos um target deve ser informado (targetBrl, targetPts ou targetHybPts+targetHybBrl)' },
+      (d.targetHybPts != null && d.targetHybCash != null),
+    { message: 'Pelo menos um target deve ser informado (targetCash, targetPts ou targetHybPts+targetHybCash)' },
   )
   .refine((d) => d.notificationMode !== 'end_of_period' || d.endOfPeriodTime != null, {
     message: 'endOfPeriodTime é obrigatório para o modo end_of_period',

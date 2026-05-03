@@ -55,16 +55,16 @@ export class ScrapeService implements IScrapeService {
 
   private withinTarget(offer: FlightOfferInput, routine: RoutineRow): boolean {
     const t = 1 + routine.margin
-    if (routine.priority === 'brl' && routine.target_brl  != null && offer.fareBrl  != null)
-      return offer.fareBrl  <= routine.target_brl  * t
+    if (routine.priority === 'cash' && routine.target_cash  != null && offer.fareBrl  != null)
+      return offer.fareBrl  <= routine.target_cash  * t
     if (routine.priority === 'pts' && routine.target_pts  != null && offer.farePts  != null)
       return offer.farePts  <= routine.target_pts  * t
     if (
       routine.priority === 'hyb' &&
-      routine.target_hyb_pts != null && routine.target_hyb_brl != null &&
+      routine.target_hyb_pts != null && routine.target_hyb_cash != null &&
       offer.fareHybPts != null && offer.fareHybBrl != null
     )
-      return offer.fareHybPts <= routine.target_hyb_pts * t && offer.fareHybBrl <= routine.target_hyb_brl * t
+      return offer.fareHybPts <= routine.target_hyb_pts * t && offer.fareHybBrl <= routine.target_hyb_cash * t
     return false
   }
 }
