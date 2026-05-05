@@ -10,10 +10,10 @@ const flightOfferSchema = z.object({
   arrivalTime: z.string(),
   durationMin: z.number().int().positive(),
   stops: z.number().int().min(0).default(0),
-  fareBrl: z.number().positive().nullable().optional(),
+  fareCash: z.number().positive().nullable().optional(),
   farePts: z.number().int().positive().nullable().optional(),
   fareHybPts: z.number().int().positive().nullable().optional(),
-  fareHybBrl: z.number().positive().nullable().optional(),
+  fareHybCash: z.number().positive().nullable().optional(),
 })
 
 export type FlightOfferInput = z.infer<typeof flightOfferSchema>

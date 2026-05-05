@@ -69,10 +69,10 @@ export interface FlightOfferRow {
   destination_timestamp: string
   duration_min: number
   stops: number
-  fare_brl: number | null
+  fare_cash: number | null
   fare_pts: number | null
   fare_hyb_pts: number | null
-  fare_hyb_brl: number | null
+  fare_hyb_cash: number | null
   within_target: boolean
   scraped_at: string
   created_at: Date

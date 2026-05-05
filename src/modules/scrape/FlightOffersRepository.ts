@@ -31,7 +31,7 @@ export class FlightOffersRepository implements IFlightOffersRepository {
         `INSERT INTO flight_offers (
            routine_id, airline, flight_number, date, is_return,
            origin_iata, origin_timestamp, destination_iata, destination_timestamp,
-           duration_min, stops, fare_brl, fare_pts, fare_hyb_pts, fare_hyb_brl,
+           duration_min, stops, fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash,
            within_target, scraped_at
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING id`,
@@ -39,8 +39,8 @@ export class FlightOffersRepository implements IFlightOffersRepository {
           routineId, airline, offer.flightNumber, offer.date, offer.isReturn,
           offer.origin, originTs, offer.destination, destTs,
           offer.durationMin, offer.stops,
-          offer.fareBrl ?? null, offer.farePts ?? null,
-          offer.fareHybPts ?? null, offer.fareHybBrl ?? null,
+          offer.fareCash ?? null, offer.farePts ?? null,
+          offer.fareHybPts ?? null, offer.fareHybCash ?? null,
           withinTargetFn(offer), scrapedAt,
         ],
       )

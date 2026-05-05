@@ -3,7 +3,7 @@ import { BestFareRow } from '../../types'
 import { IBestFaresRepository } from './interfaces/IBestFaresRepository'
 
 const FARE_TYPES: Array<{ col: string; type: string }> = [
-  { col: 'fare_brl',     type: 'cash' },
+  { col: 'fare_cash',    type: 'cash' },
   { col: 'fare_pts',     type: 'pts' },
   { col: 'fare_hyb_pts', type: 'hyb' },
 ]

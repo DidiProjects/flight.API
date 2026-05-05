@@ -26,7 +26,7 @@ export class ScrapeService implements IScrapeService {
     }
 
     const validOffers = data.flights.filter(
-      (f) => f.fareBrl != null || f.farePts != null || f.fareHybPts != null,
+      (f) => f.fareCash != null || f.farePts != null || f.fareHybPts != null,
     )
     if (validOffers.length === 0) { await this.routinesRepo.clearPendingRequest(routine.id); return }
 
@@ -55,16 +55,16 @@ export class ScrapeService implements IScrapeService {
 
   private withinTarget(offer: FlightOfferInput, routine: RoutineRow): boolean {
     const t = 1 + routine.margin
-    if (routine.priority === 'cash' && routine.target_cash  != null && offer.fareBrl  != null)
-      return offer.fareBrl  <= routine.target_cash  * t
+    if (routine.priority === 'cash' && routine.target_cash  != null && offer.fareCash  != null)
+      return offer.fareCash  <= routine.target_cash  * t
     if (routine.priority === 'pts' && routine.target_pts  != null && offer.farePts  != null)
       return offer.farePts  <= routine.target_pts  * t
     if (
       routine.priority === 'hyb' &&
       routine.target_hyb_pts != null && routine.target_hyb_cash != null &&
-      offer.fareHybPts != null && offer.fareHybBrl != null
+      offer.fareHybPts != null && offer.fareHybCash != null
     )
-      return offer.fareHybPts <= routine.target_hyb_pts * t && offer.fareHybBrl <= routine.target_hyb_cash * t
+      return offer.fareHybPts <= routine.target_hyb_pts * t && offer.fareHybCash <= routine.target_hyb_cash * t
     return false
   }
 }

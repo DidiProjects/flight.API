@@ -155,12 +155,12 @@ export class EmailService implements IEmailService {
     const date  = offer.date.split('-').reverse().join('/')
 
     const fareRows: string[] = []
-    if (offer.fareBrl != null)
-      fareRows.push(this.renderFareRow(currency, this.fmtCurrency(offer.fareBrl, currency)))
+    if (offer.fareCash != null)
+      fareRows.push(this.renderFareRow(currency, this.fmtCurrency(offer.fareCash, currency)))
     if (offer.farePts != null)
       fareRows.push(this.renderFareRow('Pontos', `${offer.farePts.toLocaleString('pt-BR')} pts`))
-    if (offer.fareHybPts != null && offer.fareHybBrl != null)
-      fareRows.push(this.renderFareRow('Híbrido', `${offer.fareHybPts.toLocaleString('pt-BR')} pts + ${this.fmtCurrency(offer.fareHybBrl, currency)}`))
+    if (offer.fareHybPts != null && offer.fareHybCash != null)
+      fareRows.push(this.renderFareRow('Híbrido', `${offer.fareHybPts.toLocaleString('pt-BR')} pts + ${this.fmtCurrency(offer.fareHybCash, currency)}`))
 
     return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"

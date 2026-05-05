@@ -156,10 +156,10 @@ export class NotificationsService implements INotificationsService {
       arrivalTime:   bf.offer.destination_timestamp,
       durationMin:   bf.offer.duration_min,
       stops:         bf.offer.stops,
-      fareBrl:       bf.offer.fare_brl,
+      fareCash:      bf.offer.fare_cash,
       farePts:       bf.offer.fare_pts,
       fareHybPts:    bf.offer.fare_hyb_pts,
-      fareHybBrl:    bf.offer.fare_hyb_brl,
+      fareHybCash:   bf.offer.fare_hyb_cash,
     }
   }
 }

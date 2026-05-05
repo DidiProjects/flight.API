@@ -7,10 +7,10 @@ export interface OfferBlock {
   arrivalTime: string
   durationMin: number
   stops: number
-  fareBrl?: number | null
+  fareCash?: number | null
   farePts?: number | null
   fareHybPts?: number | null
-  fareHybBrl?: number | null
+  fareHybCash?: number | null
 }
 
 export interface FlightAlertEmailParams {
