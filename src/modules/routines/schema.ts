@@ -10,7 +10,7 @@ const nullableStr = (schema: z.ZodString) =>
 
 const routineBaseSchema = z.object({
   name: z.string().min(1).max(100),
-  airline: z.string().min(1).max(10),
+  airline: z.string().min(1).max(20),
   origin: iata,
   destination: iata,
   outboundStart: dateStr,
