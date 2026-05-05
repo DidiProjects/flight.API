@@ -45,6 +45,8 @@ export class SchedulerService implements ISchedulerService {
   }
 
   private async dispatchAll(): Promise<void> {
+    const expired = await this.routinesRepo.deactivateExpired()
+    if (expired > 0) console.log(`Scheduler: ${expired} rotina(s) desativada(s) por data vencida`)
     const routines = await this.routinesRepo.findDispatchable()
     for (const routine of routines) {
       try {

@@ -36,6 +36,13 @@ export class RoutinesService implements IRoutinesService {
     if (!airline || !airline.active) {
       throw new BadRequestError(`Companhia '${data.airline}' não disponível`)
     }
+    const today = new Date().toISOString().slice(0, 10)
+    if (data.outboundEnd < today) {
+      throw new BadRequestError('A data de ida já passou')
+    }
+    if (data.returnEnd && data.returnEnd < today) {
+      throw new BadRequestError('A data de volta já passou')
+    }
     if (data.outboundStart > data.outboundEnd) {
       throw new BadRequestError('outboundStart deve ser anterior a outboundEnd')
     }
@@ -76,6 +83,13 @@ export class RoutinesService implements IRoutinesService {
   async activate(id: string, userId: string): Promise<RoutineRow> {
     const existing = await this.routinesRepo.findById(id, userId)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
+    const today = new Date().toISOString().slice(0, 10)
+    if (String(existing.outbound_end).slice(0, 10) < today) {
+      throw new BadRequestError('Não é possível ativar uma rotina com data de ida no passado')
+    }
+    if (existing.return_end && String(existing.return_end).slice(0, 10) < today) {
+      throw new BadRequestError('Não é possível ativar uma rotina com data de volta no passado')
+    }
     const airline = await this.airlinesRepo.findByCode(existing.airline)
     if (!airline?.active) throw new BadRequestError(`Companhia '${existing.airline}' está desativada`)
     const routine = await this.routinesRepo.setActive(id, userId, true)
@@ -92,6 +106,13 @@ export class RoutinesService implements IRoutinesService {
   async adminActivate(id: string): Promise<RoutineRow> {
     const existing = await this.routinesRepo.findByIdAdmin(id)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
+    const today = new Date().toISOString().slice(0, 10)
+    if (String(existing.outbound_end).slice(0, 10) < today) {
+      throw new BadRequestError('Não é possível ativar uma rotina com data de ida no passado')
+    }
+    if (existing.return_end && String(existing.return_end).slice(0, 10) < today) {
+      throw new BadRequestError('Não é possível ativar uma rotina com data de volta no passado')
+    }
     const airline = await this.airlinesRepo.findByCode(existing.airline)
     if (!airline?.active) throw new BadRequestError(`Companhia '${existing.airline}' está desativada`)
     const routine = await this.routinesRepo.setActiveAdmin(id, true)

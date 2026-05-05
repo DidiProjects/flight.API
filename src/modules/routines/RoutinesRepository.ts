@@ -180,6 +180,16 @@ export class RoutinesRepository implements IRoutinesRepository {
     await this.db.query(`DELETE FROM routines WHERE airline = $1`, [airlineCode])
   }
 
+  async deactivateExpired(): Promise<number> {
+    const { rowCount } = await this.db.query(
+      `UPDATE routines SET is_active = false, updated_at = now()
+       WHERE is_active = true
+         AND outbound_end < CURRENT_DATE
+         AND (return_end IS NULL OR return_end < CURRENT_DATE)`,
+    )
+    return rowCount ?? 0
+  }
+
   async clearPendingRequest(id: string): Promise<void> {
     await this.db.query(
       `UPDATE routines SET pending_request_id = NULL, pending_request_at = NULL, updated_at = now()
