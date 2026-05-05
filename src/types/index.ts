@@ -14,7 +14,7 @@ export interface UserRow {
 export interface AirlineRow {
   code: string
   name: string
-  currency: string
+  currency: string | null
   active: boolean
   has_cash: boolean
   has_pts: boolean

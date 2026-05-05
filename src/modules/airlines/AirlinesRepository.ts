@@ -29,10 +29,10 @@ export class AirlinesRepository implements IAirlinesRepository {
     return rows[0] ?? null
   }
 
-  async create(code: string, name: string, currency: string): Promise<AirlineRow> {
+  async create(code: string, name: string, currency?: string): Promise<AirlineRow> {
     const { rows } = await this.db.query<AirlineRow>(
       `INSERT INTO airlines (code, name, currency, active) VALUES ($1, $2, $3, true) RETURNING ${this.cols}`,
-      [code, name, currency],
+      [code, name, currency ?? null],
     )
     return rows[0]
   }

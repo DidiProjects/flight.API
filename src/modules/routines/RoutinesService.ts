@@ -26,7 +26,7 @@ export class RoutinesService implements IRoutinesService {
     return routine
   }
 
-  async create(userId: string, data: Omit<CreateRoutineData, 'userId' | 'currency'>): Promise<RoutineRow> {
+  async create(userId: string, data: Omit<CreateRoutineData, 'userId'>): Promise<RoutineRow> {
     const count = await this.routinesRepo.countByUser(userId)
     if (count >= MAX_ROUTINES) {
       throw new ForbiddenError(`Limite de ${MAX_ROUTINES} rotinas por usuário atingido`)
@@ -50,25 +50,23 @@ export class RoutinesService implements IRoutinesService {
       throw new BadRequestError('returnStart deve ser anterior a returnEnd')
     }
 
-    return this.routinesRepo.create({ userId, ...data, currency: airline.currency })
+    return this.routinesRepo.create({ userId, ...data })
   }
 
   async update(
     id: string,
     userId: string,
-    fields: Partial<Omit<CreateRoutineData, 'userId' | 'currency'>>,
+    fields: Partial<Omit<CreateRoutineData, 'userId'>>,
   ): Promise<RoutineRow> {
     const existing = await this.routinesRepo.findById(id, userId)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
-    let repoFields: Partial<Omit<CreateRoutineData, 'userId'>> = fields
     if (fields.airline) {
       const airline = await this.airlinesRepo.findByCode(fields.airline)
       if (!airline || !airline.active) throw new BadRequestError(`Companhia '${fields.airline}' não disponível`)
-      repoFields = { ...fields, currency: airline.currency }
     }
 
-    const updated = await this.routinesRepo.update(id, userId, repoFields)
+    const updated = await this.routinesRepo.update(id, userId, fields)
     if (!updated) throw new NotFoundError('Rotina não encontrada')
     return updated
   }
