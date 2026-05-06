@@ -86,6 +86,7 @@ export interface BestFareRow {
   fare_type: string
   amount: number
   flight_offer_id: string
+  currency: string
   updated_at: Date
   offer: FlightOfferRow
 }

@@ -38,7 +38,7 @@ export class ScrapeService implements IScrapeService {
       data.scrapedAt,
     )
 
-    await this.bestFaresRepo.upsertFromOffers(routine.id, ids)
+    await this.bestFaresRepo.upsertFromOffers(routine.id, ids, data.currency)
 
     const inserted = await this.offersRepo.findByIds(ids)
     await this.notifSvc.evaluate(routine, inserted)

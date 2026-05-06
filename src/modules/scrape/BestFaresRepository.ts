@@ -11,23 +11,24 @@ const FARE_TYPES: Array<{ col: string; type: string }> = [
 export class BestFaresRepository implements IBestFaresRepository {
   constructor(private readonly db: Pool) {}
 
-  async upsertFromOffers(routineId: string, offerIds: string[]): Promise<void> {
+  async upsertFromOffers(routineId: string, offerIds: string[], currency: string): Promise<void> {
     if (offerIds.length === 0) return
-    const placeholders = offerIds.map((_, i) => `$${i + 3}`).join(',')
+    const placeholders = offerIds.map((_, i) => `$${i + 4}`).join(',')
 
     for (const { col, type } of FARE_TYPES) {
       await this.db.query(
-        `INSERT INTO best_fares (routine_id, date, is_return, fare_type, amount, flight_offer_id)
-         SELECT DISTINCT ON (date, is_return) $1, date, is_return, $2, ${col}, id
+        `INSERT INTO best_fares (routine_id, date, is_return, fare_type, amount, flight_offer_id, currency)
+         SELECT DISTINCT ON (date, is_return) $1, date, is_return, $2, ${col}, id, $3
          FROM flight_offers
          WHERE id IN (${placeholders}) AND ${col} IS NOT NULL
          ORDER BY date, is_return, ${col} ASC
          ON CONFLICT (routine_id, date, is_return, fare_type) DO UPDATE
            SET amount = EXCLUDED.amount,
                flight_offer_id = EXCLUDED.flight_offer_id,
+               currency = EXCLUDED.currency,
                updated_at = now()
            WHERE EXCLUDED.amount < best_fares.amount`,
-        [routineId, type, ...offerIds],
+        [routineId, type, currency, ...offerIds],
       )
     }
   }
