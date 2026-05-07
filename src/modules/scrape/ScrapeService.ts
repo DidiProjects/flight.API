@@ -5,6 +5,7 @@ import { IBestFaresRepository } from './interfaces/IBestFaresRepository'
 import { IRoutinesRepository } from '../routines/interfaces/IRoutinesRepository'
 import { INotificationsService } from '../../services/notifications/interfaces/INotificationsService'
 import { ScrapeCallback, FlightOfferInput } from './schema'
+import { MissingCurrencyError } from '../../utils/errors'
 
 export class ScrapeService implements IScrapeService {
   constructor(
@@ -38,7 +39,9 @@ export class ScrapeService implements IScrapeService {
       data.scrapedAt,
     )
 
-    await this.bestFaresRepo.upsertFromOffers(routine.id, ids, data.currency)
+    const currency = validOffers.find((o) => o.currency)?.currency
+    if (!currency) throw new MissingCurrencyError(routine.id)
+    await this.bestFaresRepo.upsertFromOffers(routine.id, ids, currency)
 
     const inserted = await this.offersRepo.findByIds(ids)
     await this.notifSvc.evaluate(routine, inserted)

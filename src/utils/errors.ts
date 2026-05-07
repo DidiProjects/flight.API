@@ -47,6 +47,13 @@ export class UnprocessableError extends ApiError {
   }
 }
 
+export class MissingCurrencyError extends Error {
+  constructor(routineId: string) {
+    super(`No currency found in callback flights for routine ${routineId}`)
+    this.name = 'MissingCurrencyError'
+  }
+}
+
 export function errorHandler(
   error: FastifyError | ApiError | ZodError | Error,
   req: FastifyRequest,
