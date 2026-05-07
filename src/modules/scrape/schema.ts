@@ -23,7 +23,7 @@ export const scrapeCallbackSchema = z.object({
   routineId: z.string().uuid(),
   origin: z.string().length(3),
   destination: z.string().length(3),
-  currency: z.string().length(3).toUpperCase(),
+  currency: z.string().length(3).toUpperCase().default('BRL'),
   flights: z.array(flightOfferSchema).default([]),
   scrapedAt: z.string(),
   error: z.string().nullable().optional(),
