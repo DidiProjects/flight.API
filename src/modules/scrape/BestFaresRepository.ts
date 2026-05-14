@@ -17,7 +17,7 @@ export class BestFaresRepository implements IBestFaresRepository {
 
     for (const { col, type } of FARE_TYPES) {
       await this.db.query(
-        `INSERT INTO best_fares (routine_id, date, is_return, fare_type, amount, flight_offer_id, currency, last_seen_at, analysis_id)
+        `INSERT INTO best_fares (routine_id, date, is_return, fare_type, amount, flight_offer_id, currency, updated_at, analysis_id)
          SELECT DISTINCT ON (date, is_return) $1, date, is_return, $2, ${col}, id, $3, now(), $4
          FROM flight_offers
          WHERE id IN (${placeholders}) AND ${col} IS NOT NULL
@@ -26,8 +26,7 @@ export class BestFaresRepository implements IBestFaresRepository {
            SET amount          = CASE WHEN EXCLUDED.amount < best_fares.amount THEN EXCLUDED.amount          ELSE best_fares.amount          END,
                flight_offer_id = CASE WHEN EXCLUDED.amount < best_fares.amount THEN EXCLUDED.flight_offer_id ELSE best_fares.flight_offer_id END,
                currency        = CASE WHEN EXCLUDED.amount < best_fares.amount THEN EXCLUDED.currency        ELSE best_fares.currency        END,
-               updated_at      = CASE WHEN EXCLUDED.amount < best_fares.amount THEN now()                    ELSE best_fares.updated_at      END,
-               last_seen_at    = now(),
+               updated_at      = now(),
                analysis_id     = EXCLUDED.analysis_id`,
         [routineId, type, currency, analysisId, ...offerIds],
       )
@@ -41,8 +40,8 @@ export class BestFaresRepository implements IBestFaresRepository {
        JOIN flight_offers fo ON fo.id = bf.flight_offer_id
        WHERE bf.routine_id = $1 AND bf.is_return = $2 AND bf.fare_type = $3
          AND bf.date >= CURRENT_DATE
-         AND bf.last_seen_at >= now() - interval '26 hours'
-       ORDER BY bf.last_seen_at DESC, bf.amount ASC
+         AND bf.updated_at >= now() - interval '26 hours'
+       ORDER BY bf.updated_at DESC, bf.amount ASC
        LIMIT 1`,
       [routineId, isReturn, fareType],
     )

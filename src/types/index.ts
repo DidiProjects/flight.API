@@ -87,7 +87,6 @@ export interface BestFareRow {
   amount: number
   flight_offer_id: string
   currency: string
-  last_seen_at: Date
   analysis_id: string | null
   updated_at: Date
   offer: FlightOfferRow
