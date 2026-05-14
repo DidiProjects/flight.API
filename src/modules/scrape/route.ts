@@ -11,8 +11,6 @@ export function scrapeRoute(scrapeSvc: IScrapeService) {
         throw new UnauthorizedError('API key inválida')
       }
 
-      req.log.info({ body: req.body }, 'scrape callback received')
-
       let data
       try {
         data = scrapeCallbackSchema.parse(req.body)

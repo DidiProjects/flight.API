@@ -64,28 +64,34 @@ export class SchedulerService implements ISchedulerService {
   private async dispatchRoutine(routine: RoutineRow): Promise<void> {
     const requestId = randomUUID()
     await this.routinesRepo.setPendingRequest(routine.id, requestId)
+
+    const payload = {
+      requestId,
+      routineId:     routine.id,
+      airline:       routine.airline,
+      origin:        routine.origin,
+      destination:   routine.destination,
+      outboundStart: this.toDateStr(routine.outbound_start),
+      outboundEnd:   this.toDateStr(routine.outbound_end),
+      ...(routine.return_start && { returnStart: this.toDateStr(routine.return_start) }),
+      ...(routine.return_end   && { returnEnd:   this.toDateStr(routine.return_end) }),
+      passengers:    routine.passengers,
+    }
+
+    console.log(JSON.stringify({ msg: 'dispatching to scraping.API', payload }))
+
     try {
       const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': this.env.SCRAPING_API_KEY },
-        body: JSON.stringify({
-          requestId,
-          routineId:     routine.id,
-          airline:       routine.airline,
-          origin:        routine.origin,
-          destination:   routine.destination,
-          outboundStart: this.toDateStr(routine.outbound_start),
-          outboundEnd:   this.toDateStr(routine.outbound_end),
-          ...(routine.return_start && { returnStart: this.toDateStr(routine.return_start) }),
-          ...(routine.return_end   && { returnEnd:   this.toDateStr(routine.return_end) }),
-          passengers:    routine.passengers,
-        }),
-        signal: AbortSignal.timeout(10_000),
+        body:    JSON.stringify(payload),
+        signal:  AbortSignal.timeout(10_000),
       })
       if (!res.ok) {
         const body = await res.text().catch(() => '')
         throw new Error(`scraping.API ${res.status}: ${body}`)
       }
+      console.log(JSON.stringify({ msg: 'scraping.API accepted', routineId: routine.id, status: res.status }))
     } catch (err) {
       await this.routinesRepo.clearPendingRequest(routine.id)
       throw err
