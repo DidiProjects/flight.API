@@ -63,4 +63,5 @@ export const container = {
   scrapeSvc,
   unsubSvc,
   schedulerSvc,
+  bestFaresRepo,
 } as const
