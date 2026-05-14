@@ -41,7 +41,7 @@ export class ScrapeService implements IScrapeService {
 
     const currency = validOffers.find((o) => o.currency)?.currency
     if (!currency) throw new MissingCurrencyError(routine.id)
-    await this.bestFaresRepo.upsertFromOffers(routine.id, ids, currency)
+    await this.bestFaresRepo.upsertFromOffers(routine.id, ids, currency, data.requestId)
 
     const inserted = await this.offersRepo.findByIds(ids)
     await this.notifSvc.evaluate(routine, inserted)
