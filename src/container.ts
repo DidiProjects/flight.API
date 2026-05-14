@@ -19,6 +19,7 @@ import { AuthService }          from './modules/auth/AuthService'
 import { UsersService }         from './modules/users/UsersService'
 import { AirlinesService }      from './modules/airlines/AirlinesService'
 import { RoutinesService }      from './modules/routines/RoutinesService'
+import { BestFaresService }     from './modules/scrape/BestFaresService'
 import { ScrapeService }        from './modules/scrape/ScrapeService'
 import { UnsubscribeService }   from './modules/unsubscribe/UnsubscribeService'
 import { SchedulerService }     from './services/scheduler/SchedulerService'
@@ -51,6 +52,7 @@ const authSvc       = new AuthService(usersRepo, authRepo, refreshTokenRepo, ema
 const usersSvc      = new UsersService(usersRepo, emailSvc)
 const airlinesSvc   = new AirlinesService(airlinesRepo, routinesRepo)
 const routinesSvc   = new RoutinesService(routinesRepo, airlinesRepo)
+const bestFaresSvc  = new BestFaresService(bestFaresRepo, routinesRepo)
 const scrapeSvc     = new ScrapeService(routinesRepo, offersRepo, bestFaresRepo, notifSvc)
 const unsubSvc      = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
 const schedulerSvc  = new SchedulerService(routinesRepo, notifSvc, env)
@@ -60,8 +62,8 @@ export const container = {
   authSvc,
   usersSvc,
   routinesSvc,
+  bestFaresSvc,
   scrapeSvc,
   unsubSvc,
   schedulerSvc,
-  bestFaresRepo,
 } as const
