@@ -40,7 +40,7 @@ export class BestFaresRepository implements IBestFaresRepository {
        JOIN flight_offers fo ON fo.id = bf.flight_offer_id
        WHERE bf.routine_id = $1 AND bf.is_return = $2 AND bf.fare_type = $3
          AND bf.date >= CURRENT_DATE
-         AND bf.updated_at >= now() - interval '26 hours'
+         AND bf.updated_at >= now() - interval '4 hours'
        ORDER BY bf.updated_at DESC, bf.amount ASC
        LIMIT 1`,
       [routineId, isReturn, fareType],
