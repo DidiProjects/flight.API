@@ -1,10 +1,11 @@
-import Fastify, { FastifyInstance, FastifyRequest } from 'fastify'
+import Fastify, { FastifyBaseLogger, FastifyInstance, FastifyRequest } from 'fastify'
 import fastifyCors from '@fastify/cors'
 import fastifyHelmet from '@fastify/helmet'
 import fastifyJwt from '@fastify/jwt'
 import fastifyRateLimit from '@fastify/rate-limit'
 
 import { env } from './config/env'
+import { logger } from './utils/logger'
 import { errorHandler, ForbiddenError, UnauthorizedError } from './utils/errors'
 import { container } from './container'
 
@@ -42,7 +43,7 @@ declare module 'fastify' {
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true })
+  const app = Fastify({ loggerInstance: logger as FastifyBaseLogger, trustProxy: true })
 
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
     if (!body) return done(null, undefined)

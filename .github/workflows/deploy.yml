@@ -65,6 +65,9 @@ jobs:
             -e SCRAPE_INTERVAL_JITTER_MS="${{ vars.SCRAPE_INTERVAL_JITTER_MS }}" \
             -e SCRAPING_API_URL="${{ vars.SCRAPING_API_URL }}" \
             -e SCRAPING_API_KEY="${{ secrets.SCRAPING_API_KEY }}" \
+            -e GRAFANA_LOKI_URL="${{ vars.GRAFANA_LOKI_URL }}" \
+            -e GRAFANA_LOKI_USER="${{ vars.GRAFANA_LOKI_USER }}" \
+            -e GRAFANA_LOKI_TOKEN="${{ secrets.GRAFANA_LOKI_TOKEN }}" \
             -e FLIGHT_API_KEY="${{ secrets.FLIGHT_API_KEY }}" \
             -e SMTP_HOST="${{ vars.SMTP_HOST }}" \
             -e SMTP_PORT="${{ vars.SMTP_PORT }}" \

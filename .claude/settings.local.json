@@ -3,7 +3,8 @@
     "allow": [
       "Bash(Get-ChildItem -Recurse -Filter \"*.sql\")",
       "Bash(Select-Object -ExpandProperty FullName)",
-      "Bash(xargs grep -l \"CREATE TABLE\\\\|initDb\\\\|setupDb\")"
+      "Bash(xargs grep -l \"CREATE TABLE\\\\|initDb\\\\|setupDb\")",
+      "Bash(npm run *)"
     ]
   }
 }

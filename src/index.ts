@@ -1,5 +1,6 @@
 import { buildApp } from './app'
 import { env } from './config/env'
+import { logger } from './utils/logger'
 import { pool } from './db/pool'
 import { container } from './container'
 
@@ -21,6 +22,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('Erro fatal na inicialização:', err)
+  logger.fatal({ err }, 'Erro fatal na inicialização')
   process.exit(1)
 })

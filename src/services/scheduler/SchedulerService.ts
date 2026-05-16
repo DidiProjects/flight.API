@@ -5,6 +5,9 @@ import { INotificationsService } from '../notifications/interfaces/INotification
 import { Env } from '../../config/env'
 import { NotFoundError } from '../../utils/errors'
 import { RoutineRow } from '../../types'
+import { logger } from '../../utils/logger'
+
+const log = logger.child({ service: 'scheduler' })
 
 export class SchedulerService implements ISchedulerService {
   constructor(
@@ -27,7 +30,7 @@ export class SchedulerService implements ISchedulerService {
       try {
         await this.dispatchAll()
       } catch (err) {
-        console.error('Scheduler scrape error:', err)
+        log.error({ err }, 'Scheduler scrape error')
       } finally {
         const jitter = (Math.random() * 2 - 1) * this.env.SCRAPE_INTERVAL_JITTER_MS
         const delay  = Math.max(this.env.SCRAPE_INTERVAL_MS + jitter, 60_000)
@@ -46,13 +49,14 @@ export class SchedulerService implements ISchedulerService {
 
   private async dispatchAll(): Promise<void> {
     const expired = await this.routinesRepo.deactivateExpired()
-    if (expired > 0) console.log(`Scheduler: ${expired} rotina(s) desativada(s) por data vencida`)
+    if (expired > 0) log.info({ expired }, 'Scheduler: rotinas desativadas por data vencida')
     const routines = await this.routinesRepo.findDispatchable()
+    log.info({ count: routines.length }, 'Scheduler: scrape cycle')
     for (const routine of routines) {
       try {
         await this.dispatchRoutine(routine)
-      } catch (err) {
-        console.error(`Dispatch failed for routine ${routine.id}:`, err)
+      } catch {
+        // error already logged in dispatchRoutine
       }
     }
   }
@@ -78,7 +82,7 @@ export class SchedulerService implements ISchedulerService {
       passengers:    routine.passengers,
     }
 
-    console.log(JSON.stringify({ msg: 'dispatching to scraping.API', payload }))
+    log.info({ ...payload, userId: routine.user_id, routineName: routine.name }, 'dispatching to scraping.API')
 
     try {
       const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
@@ -91,9 +95,10 @@ export class SchedulerService implements ISchedulerService {
         const body = await res.text().catch(() => '')
         throw new Error(`scraping.API ${res.status}: ${body}`)
       }
-      console.log(JSON.stringify({ msg: 'scraping.API accepted', routineId: routine.id, status: res.status }))
+      log.info({ routineId: routine.id, userId: routine.user_id, requestId, status: res.status }, 'scraping.API accepted')
     } catch (err) {
       await this.routinesRepo.clearPendingRequest(routine.id)
+      log.error({ err, routineId: routine.id, userId: routine.user_id, routineName: routine.name, requestId }, 'scraping.API request failed')
       throw err
     }
   }
@@ -108,7 +113,7 @@ export class SchedulerService implements ISchedulerService {
         await this.notifSvc.sendEndOfPeriod()
         await this.maybeSendDailyBest()
       } catch (err) {
-        console.error('Daily job error:', err)
+        log.error({ err }, 'Daily job error')
       } finally {
         setTimeout(tick, 60_000)
       }

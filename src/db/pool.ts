@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
 import { env } from '../config/env'
+import { logger } from '../utils/logger'
 
 export const pool = new Pool({
   host: env.POSTGRES_HOST,
@@ -13,5 +14,5 @@ export const pool = new Pool({
 })
 
 pool.on('error', (err) => {
-  console.error('pg pool error', err)
+  logger.error({ err }, 'pg pool error')
 })

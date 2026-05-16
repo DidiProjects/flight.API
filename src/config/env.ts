@@ -38,6 +38,10 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),
+
+  GRAFANA_LOKI_URL:   z.string().url().optional(),
+  GRAFANA_LOKI_USER:  z.string().optional(),
+  GRAFANA_LOKI_TOKEN: z.string().optional(),
 })
 
 const parsed = envSchema.safeParse(process.env)
