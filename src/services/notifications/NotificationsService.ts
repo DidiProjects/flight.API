@@ -29,6 +29,9 @@ export class NotificationsService implements INotificationsService {
       routineId: routine.id,
       userId: routine.user_id,
       routineName: routine.name,
+      airline: routine.airline,
+      origin: routine.origin,
+      destination: routine.destination,
       mode: routine.notification_mode,
       priority: routine.priority,
     }
@@ -64,6 +67,7 @@ export class NotificationsService implements INotificationsService {
         lastOutAmount: lastLog?.outbound_amount ?? null,
         bestRetAmount: bestRet?.amount ?? null,
         lastRetAmount: lastLog?.return_amount ?? null,
+        status: 'skipped',
       }, 'no notification — fares not improved since last notification')
       return
     }
@@ -99,7 +103,7 @@ export class NotificationsService implements INotificationsService {
           : Promise.resolve(null),
       ])
       if (!bestOut) {
-        log.warn({ routineId: routine.id, userId: routine.user_id }, 'end_of_period skipped — no best fare found')
+        log.warn({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'end_of_period skipped — no best fare found')
         continue
       }
       await this.dispatch(routine, bestOut, bestRet, 'end_of_period')
@@ -118,7 +122,7 @@ export class NotificationsService implements INotificationsService {
           : Promise.resolve(null),
       ])
       if (!bestOut) {
-        log.warn({ routineId: routine.id, userId: routine.user_id }, 'daily_best skipped — no best fare found')
+        log.warn({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'daily_best skipped — no best fare found')
         continue
       }
       await this.dispatch(routine, bestOut, bestRet, 'best_of_day')
@@ -150,7 +154,7 @@ export class NotificationsService implements INotificationsService {
   ): Promise<void> {
     const owner = await this.usersRepo.findById(routine.user_id)
     if (!owner) {
-      log.warn({ routineId: routine.id, userId: routine.user_id, type }, 'dispatch skipped — user not found')
+      log.warn({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, type, status: 'error' }, 'dispatch skipped — user not found')
       return
     }
 
@@ -189,6 +193,9 @@ export class NotificationsService implements INotificationsService {
       routineId:      routine.id,
       userId:         owner.id,
       routineName:    routine.name,
+      airline:        routine.airline,
+      origin:         routine.origin,
+      destination:    routine.destination,
       type,
       priority:       routine.priority,
       outboundAmount: bestOut.amount,
@@ -196,6 +203,7 @@ export class NotificationsService implements INotificationsService {
       currency:       bestOut.currency,
       emailTo:        owner.email,
       ccCount:        activeCc.length,
+      status:         'success',
     }, 'notification dispatched')
 
     await this.notifLogRepo.insert({
