@@ -95,10 +95,10 @@ export class SchedulerService implements ISchedulerService {
         const body = await res.text().catch(() => '')
         throw new Error(`scraping.API ${res.status}: ${body}`)
       }
-      log.info({ routineId: routine.id, userId: routine.user_id, requestId, status: res.status }, 'scraping.API accepted')
+      log.info({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, requestId, httpStatus: res.status, status: 'success' }, 'scraping.API accepted')
     } catch (err) {
       await this.routinesRepo.clearPendingRequest(routine.id)
-      log.error({ err, routineId: routine.id, userId: routine.user_id, routineName: routine.name, requestId }, 'scraping.API request failed')
+      log.error({ err, routineId: routine.id, userId: routine.user_id, routineName: routine.name, airline: routine.airline, origin: routine.origin, destination: routine.destination, requestId, status: 'error' }, 'scraping.API request failed')
       throw err
     }
   }
