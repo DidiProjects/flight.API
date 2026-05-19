@@ -81,9 +81,10 @@ export class EmailService implements IEmailService {
 
   private buildDeepLink(offer: OfferBlock, airline: string, passengers: number, fareType: string): string | null {
     switch (airline.toLowerCase()) {
-      case 'azul':  return this.buildAzulLink(offer, passengers, fareType)
-      case 'latam': return this.buildLatamLink(offer, passengers, fareType)
-      default:      return null
+      case 'azul':           return this.buildAzulLink(offer, passengers, fareType)
+      case 'latam':          return this.buildLatamLink(offer, passengers, fareType)
+      case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers)
+      default:               return null
     }
   }
 
@@ -97,6 +98,22 @@ export class EmailService implements IEmailService {
   private buildLatamLink(offer: OfferBlock, passengers: number, fareType: string): string {
     const redemption = fareType === 'cash' ? 'false' : 'true'
     return `https://www.latamairlines.com/br/pt/oferta-voos?origin=${offer.origin}&outbound=${offer.date}&destination=${offer.destination}&inbound=undefined&adt=${passengers}&chd=0&inf=0&trip=OW&cabin=Economy&redemption=${redemption}&sort=RECOMMENDED`
+  }
+
+  private buildBritishAirwaysLink(offer: OfferBlock, passengers: number): string {
+    const p = new URLSearchParams({
+      trip: 'oneWay',
+      departureDate: offer.date,
+      from: offer.origin,
+      to: offer.destination,
+      travelClass: 'economy',
+      adults: String(passengers),
+      youngAdults: '0',
+      children: '0',
+      infants: '0',
+      bound: 'outbound',
+    })
+    return `https://www.britishairways.com/nx/b/airselect/en/gbr/book/search/?${p.toString()}`
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
