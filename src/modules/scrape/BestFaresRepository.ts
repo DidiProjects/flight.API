@@ -23,9 +23,9 @@ export class BestFaresRepository implements IBestFaresRepository {
          WHERE id IN (${placeholders}) AND ${col} IS NOT NULL
          ORDER BY date, is_return, ${col} ASC
          ON CONFLICT (routine_id, date, is_return, fare_type) DO UPDATE
-           SET amount          = CASE WHEN EXCLUDED.amount < best_fares.amount THEN EXCLUDED.amount          ELSE best_fares.amount          END,
-               flight_offer_id = CASE WHEN EXCLUDED.amount < best_fares.amount THEN EXCLUDED.flight_offer_id ELSE best_fares.flight_offer_id END,
-               currency        = CASE WHEN EXCLUDED.amount < best_fares.amount THEN EXCLUDED.currency        ELSE best_fares.currency        END,
+           SET amount          = EXCLUDED.amount,
+               flight_offer_id = EXCLUDED.flight_offer_id,
+               currency        = EXCLUDED.currency,
                updated_at      = now(),
                analysis_id     = EXCLUDED.analysis_id`,
         [routineId, type, currency, analysisId, ...offerIds],
