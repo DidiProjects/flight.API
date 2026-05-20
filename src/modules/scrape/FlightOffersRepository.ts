@@ -17,7 +17,6 @@ export class FlightOffersRepository implements IFlightOffersRepository {
 
   async insertMany(
     routineId: string,
-    airline: string,
     offers: FlightOfferInput[],
     withinTargetFn: (offer: FlightOfferInput) => boolean,
     scrapedAt: string,
@@ -36,7 +35,7 @@ export class FlightOffersRepository implements IFlightOffersRepository {
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING id`,
         [
-          routineId, airline, offer.flightNumber, offer.date, offer.isReturn,
+          routineId, offer.airline, offer.flightNumber, offer.date, offer.isReturn,
           offer.origin, originTs, offer.destination, destTs,
           offer.durationMin, offer.stops,
           offer.fareCash ?? null, offer.farePts ?? null,

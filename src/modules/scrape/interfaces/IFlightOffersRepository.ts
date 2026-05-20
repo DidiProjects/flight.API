@@ -4,7 +4,6 @@ import { FlightOfferInput } from '../schema'
 export interface IFlightOffersRepository {
   insertMany(
     routineId: string,
-    airline: string,
     offers: FlightOfferInput[],
     withinTargetFn: (offer: FlightOfferInput) => boolean,
     scrapedAt: string,

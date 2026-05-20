@@ -29,7 +29,7 @@ export class NotificationsService implements INotificationsService {
       routineId: routine.id,
       userId: routine.user_id,
       routineName: routine.name,
-      airline: routine.airline,
+      airlines: routine.airlines,
       origin: routine.origin,
       destination: routine.destination,
       mode: routine.notification_mode,
@@ -111,7 +111,7 @@ export class NotificationsService implements INotificationsService {
           : Promise.resolve(null),
       ])
       if (!bestOut) {
-        log.warn({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'end_of_period skipped — no best fare found')
+        log.warn({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'end_of_period skipped — no best fare found')
         continue
       }
       await this.dispatch(routine, bestOut, bestRet, 'end_of_period')
@@ -131,12 +131,12 @@ export class NotificationsService implements INotificationsService {
       ])
 
       if (!bestOut) {
-        log.warn({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'daily_best skipped — no best fare found')
+        log.warn({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'daily_best skipped — no best fare found')
         continue
       }
 
       if (!this.fareWithinTarget(bestOut, routine)) {
-        log.info({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, bestAmount: bestOut.amount, status: 'skipped' }, 'daily_best skipped — best fare not within target')
+        log.info({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, bestAmount: bestOut.amount, status: 'skipped' }, 'daily_best skipped — best fare not within target')
         continue
       }
 
@@ -146,7 +146,7 @@ export class NotificationsService implements INotificationsService {
         lastDailyBest.outbound_amount === bestOut.amount &&
         (lastDailyBest.return_amount ?? null) === (bestRet?.amount ?? null)
       ) {
-        log.info({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, amount: bestOut.amount, status: 'skipped' }, 'daily_best skipped — price unchanged since last daily best')
+        log.info({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, amount: bestOut.amount, status: 'skipped' }, 'daily_best skipped — price unchanged since last daily best')
         continue
       }
 
@@ -200,7 +200,7 @@ export class NotificationsService implements INotificationsService {
   ): Promise<void> {
     const owner = await this.usersRepo.findById(routine.user_id)
     if (!owner) {
-      log.warn({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, type, status: 'error' }, 'dispatch skipped — user not found')
+      log.warn({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, type, status: 'error' }, 'dispatch skipped — user not found')
       return
     }
 
@@ -231,7 +231,7 @@ export class NotificationsService implements INotificationsService {
       returnOffer:      bestRet  ? this.toBlock(bestRet)  : null,
       passengers:       routine.passengers,
       fareType:         routine.priority,
-      airline:          routine.airline,
+      airline:          bestOut.offer.airline,
       currency:         bestOut.currency,
     })
 
@@ -239,7 +239,7 @@ export class NotificationsService implements INotificationsService {
       routineId:      routine.id,
       userId:         owner.id,
       routineName:    routine.name,
-      airline:        routine.airline,
+      airlines:       routine.airlines,
       origin:         routine.origin,
       destination:    routine.destination,
       type,

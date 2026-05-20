@@ -6,7 +6,7 @@ import { container } from './container'
 
 async function main(): Promise<void> {
   const app = await buildApp()
-  await app.listen({ port: env.PORT, host: '0.0.0.0' })
+  await app.listen({ port: env.PORT, host: env.HOST })
 
   container.schedulerSvc.start()
 

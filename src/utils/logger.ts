@@ -3,17 +3,19 @@ import { env } from '../config/env'
 
 const targets: pino.TransportTargetOptions[] = []
 
-if (env.NODE_ENV === 'production') {
-  targets.push({
-    target: 'pino/file',
-    level: env.LOG_LEVEL,
-    options: { destination: 1 },
-  })
-} else {
+const hasPinoPretty = (() => { try { require.resolve('pino-pretty'); return true } catch { return false } })()
+
+if (env.NODE_ENV === 'development' && hasPinoPretty) {
   targets.push({
     target: 'pino-pretty',
     level: env.LOG_LEVEL,
     options: { colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
+  })
+} else {
+  targets.push({
+    target: 'pino/file',
+    level: env.LOG_LEVEL,
+    options: { destination: 1 },
   })
 }
 

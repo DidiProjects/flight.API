@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 const flightOfferSchema = z.object({
+  airline: z.string().min(1),
   flightNumber: z.string(),
   date: z.string(),
   isReturn: z.boolean().default(false),
@@ -22,6 +23,7 @@ export type FlightOfferInput = z.infer<typeof flightOfferSchema>
 export const scrapeCallbackSchema = z.object({
   requestId: z.string().uuid(),
   routineId: z.string().uuid(),
+  airline: z.string().min(1),
   origin: z.string().length(3),
   destination: z.string().length(3),
   flights: z.array(flightOfferSchema).default([]),

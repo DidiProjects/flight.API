@@ -30,7 +30,7 @@ export interface RoutineRow {
   id: string
   user_id: string
   name: string
-  airline: string
+  airlines: string[]
   origin: string
   destination: string
   outbound_start: string
@@ -49,8 +49,6 @@ export interface RoutineRow {
   notification_frequency: string
   end_of_period_time: string | null
   cc_emails: CcEmail[]
-  pending_request_id: string | null
-  pending_request_at: Date | null
   is_active: boolean
   created_at: Date
   updated_at: Date
@@ -81,6 +79,7 @@ export interface FlightOfferRow {
 export interface BestFareRow {
   id: string
   routine_id: string
+  airline: string
   date: string
   is_return: boolean
   fare_type: string

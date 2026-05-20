@@ -17,7 +17,7 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       const body = createRoutineSchema.parse(req.body)
       const routine = await routinesSvc.create(req.user.sub, {
         name:                  body.name,
-        airline:               body.airline,
+        airlines:              body.airlines,
         origin:                body.origin,
         destination:           body.destination,
         outboundStart:         body.outboundStart,
@@ -51,7 +51,7 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       const body = updateRoutineSchema.parse(req.body)
       reply.send(await routinesSvc.update(id, req.user.sub, {
         name:                  body.name,
-        airline:               body.airline,
+        airlines:              body.airlines,
         origin:                body.origin,
         destination:           body.destination,
         outboundStart:         body.outboundStart,

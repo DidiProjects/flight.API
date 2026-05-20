@@ -66,40 +66,42 @@ export class SchedulerService implements ISchedulerService {
   }
 
   private async dispatchRoutine(routine: RoutineRow): Promise<void> {
-    const requestId = randomUUID()
-    await this.routinesRepo.setPendingRequest(routine.id, requestId)
+    for (const airline of routine.airlines) {
+      const requestId = randomUUID()
+      await this.routinesRepo.setPendingRequest(routine.id, airline, requestId)
 
-    const payload = {
-      requestId,
-      routineId:     routine.id,
-      airline:       routine.airline,
-      origin:        routine.origin,
-      destination:   routine.destination,
-      outboundStart: this.toDateStr(routine.outbound_start),
-      outboundEnd:   this.toDateStr(routine.outbound_end),
-      ...(routine.return_start && { returnStart: this.toDateStr(routine.return_start) }),
-      ...(routine.return_end   && { returnEnd:   this.toDateStr(routine.return_end) }),
-      passengers:    routine.passengers,
-    }
-
-    log.info({ ...payload, userId: routine.user_id, routineName: routine.name }, 'dispatching to scraping.API')
-
-    try {
-      const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': this.env.SCRAPING_API_KEY },
-        body:    JSON.stringify(payload),
-        signal:  AbortSignal.timeout(10_000),
-      })
-      if (!res.ok) {
-        const body = await res.text().catch(() => '')
-        throw new Error(`scraping.API ${res.status}: ${body}`)
+      const payload = {
+        requestId,
+        routineId:     routine.id,
+        airline,
+        origin:        routine.origin,
+        destination:   routine.destination,
+        outboundStart: this.toDateStr(routine.outbound_start),
+        outboundEnd:   this.toDateStr(routine.outbound_end),
+        ...(routine.return_start && { returnStart: this.toDateStr(routine.return_start) }),
+        ...(routine.return_end   && { returnEnd:   this.toDateStr(routine.return_end) }),
+        passengers:    routine.passengers,
       }
-      log.info({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, requestId, httpStatus: res.status, status: 'success' }, 'scraping.API accepted')
-    } catch (err) {
-      await this.routinesRepo.clearPendingRequest(routine.id)
-      log.error({ err, routineId: routine.id, userId: routine.user_id, routineName: routine.name, airline: routine.airline, origin: routine.origin, destination: routine.destination, requestId, status: 'error' }, 'scraping.API request failed')
-      throw err
+
+      log.info({ ...payload, userId: routine.user_id, routineName: routine.name }, 'dispatching to scraping.API')
+
+      try {
+        const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': this.env.SCRAPING_API_KEY },
+          body:    JSON.stringify(payload),
+          signal:  AbortSignal.timeout(10_000),
+        })
+        if (!res.ok) {
+          const body = await res.text().catch(() => '')
+          throw new Error(`scraping.API ${res.status}: ${body}`)
+        }
+        log.info({ routineId: routine.id, userId: routine.user_id, airline, requestId, httpStatus: res.status, status: 'success' }, 'scraping.API accepted')
+      } catch (err) {
+        await this.routinesRepo.clearPendingRequest(routine.id, airline)
+        log.error({ err, routineId: routine.id, airline, requestId, status: 'error' }, 'scraping.API request failed')
+        // Do not throw — continue with remaining airlines
+      }
     }
   }
 

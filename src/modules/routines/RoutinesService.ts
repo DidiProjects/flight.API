@@ -32,9 +32,11 @@ export class RoutinesService implements IRoutinesService {
       throw new ForbiddenError(`Limite de ${MAX_ROUTINES} rotinas por usuário atingido`)
     }
 
-    const airline = await this.airlinesRepo.findByCode(data.airline)
-    if (!airline || !airline.active) {
-      throw new BadRequestError(`Companhia '${data.airline}' não disponível`)
+    for (const code of data.airlines) {
+      const airline = await this.airlinesRepo.findByCode(code)
+      if (!airline || !airline.active) {
+        throw new BadRequestError(`Companhia '${code}' não disponível`)
+      }
     }
     const today = new Date().toISOString().slice(0, 10)
     if (data.outboundEnd < today) {
@@ -61,9 +63,11 @@ export class RoutinesService implements IRoutinesService {
     const existing = await this.routinesRepo.findById(id, userId)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
-    if (fields.airline) {
-      const airline = await this.airlinesRepo.findByCode(fields.airline)
-      if (!airline || !airline.active) throw new BadRequestError(`Companhia '${fields.airline}' não disponível`)
+    if (fields.airlines && fields.airlines.length > 0) {
+      for (const code of fields.airlines) {
+        const airline = await this.airlinesRepo.findByCode(code)
+        if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
+      }
     }
 
     const updated = await this.routinesRepo.update(id, userId, fields)
@@ -88,8 +92,10 @@ export class RoutinesService implements IRoutinesService {
     if (existing.return_end && String(existing.return_end).slice(0, 10) < today) {
       throw new BadRequestError('Não é possível ativar uma rotina com data de volta no passado')
     }
-    const airline = await this.airlinesRepo.findByCode(existing.airline)
-    if (!airline?.active) throw new BadRequestError(`Companhia '${existing.airline}' está desativada`)
+    for (const code of existing.airlines) {
+      const airline = await this.airlinesRepo.findByCode(code)
+      if (!airline?.active) throw new BadRequestError(`Companhia '${code}' está desativada`)
+    }
     const routine = await this.routinesRepo.setActive(id, userId, true)
     if (!routine) throw new NotFoundError('Rotina não encontrada')
     return routine
@@ -111,8 +117,10 @@ export class RoutinesService implements IRoutinesService {
     if (existing.return_end && String(existing.return_end).slice(0, 10) < today) {
       throw new BadRequestError('Não é possível ativar uma rotina com data de volta no passado')
     }
-    const airline = await this.airlinesRepo.findByCode(existing.airline)
-    if (!airline?.active) throw new BadRequestError(`Companhia '${existing.airline}' está desativada`)
+    for (const code of existing.airlines) {
+      const airline = await this.airlinesRepo.findByCode(code)
+      if (!airline?.active) throw new BadRequestError(`Companhia '${code}' está desativada`)
+    }
     const routine = await this.routinesRepo.setActiveAdmin(id, true)
     if (!routine) throw new NotFoundError('Rotina não encontrada')
     return routine
