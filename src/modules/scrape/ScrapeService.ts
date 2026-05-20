@@ -1,10 +1,10 @@
-import { RoutineRow } from '../../types'
 import { IScrapeService } from './interfaces/IScrapeService'
 import { IFlightOffersRepository } from './interfaces/IFlightOffersRepository'
 import { IBestFaresRepository } from './interfaces/IBestFaresRepository'
 import { IRoutinesRepository } from '../routines/interfaces/IRoutinesRepository'
 import { INotificationsService } from '../../services/notifications/interfaces/INotificationsService'
 import { ScrapeCallback, FlightOfferInput } from './schema'
+import { RoutineRow } from '../../types'
 import { MissingCurrencyError } from '../../utils/errors'
 import { logger } from '../../utils/logger'
 
@@ -22,6 +22,7 @@ export class ScrapeService implements IScrapeService {
     log.info({
       routineId: data.routineId,
       requestId: data.requestId,
+      airline: data.airline,
       origin: data.origin,
       destination: data.destination,
       flightCount: data.flights.length,
@@ -31,34 +32,35 @@ export class ScrapeService implements IScrapeService {
 
     const routine = await this.routinesRepo.findByIdAdmin(data.routineId)
     if (!routine) {
-      log.warn({ routineId: data.routineId, requestId: data.requestId, origin: data.origin, destination: data.destination, status: 'error' }, 'callback ignored — routine not found')
+      log.warn({ routineId: data.routineId, requestId: data.requestId, airline: data.airline, origin: data.origin, destination: data.destination, status: 'error' }, 'callback ignored — routine not found')
       return
     }
 
-    if (routine.pending_request_id !== data.requestId) {
+    const pending = await this.routinesRepo.getPendingRequest(data.routineId, data.airline)
+    if (!pending || pending.request_id !== data.requestId) {
       log.warn({
         routineId: routine.id,
-        airline: routine.airline,
+        airline: data.airline,
         origin: routine.origin,
         destination: routine.destination,
-        expectedRequestId: routine.pending_request_id,
+        expectedRequestId: pending?.request_id ?? null,
         receivedRequestId: data.requestId,
         status: 'error',
-      }, 'callback ignored — requestId mismatch')
+      }, 'callback ignored — requestId mismatch or no pending request')
       return
     }
 
-    if (this.isExpired(routine)) {
+    if (pending.requested_at < new Date(Date.now() - 60 * 60 * 1000)) {
       log.warn({
         routineId: routine.id,
-        airline: routine.airline,
+        airline: data.airline,
         origin: routine.origin,
         destination: routine.destination,
         requestId: data.requestId,
-        pendingAt: routine.pending_request_at,
+        pendingAt: pending.requested_at,
         status: 'error',
       }, 'callback ignored — request expired (>1h), pending cleared')
-      await this.routinesRepo.clearPendingRequest(routine.id)
+      await this.routinesRepo.clearPendingRequest(data.routineId, data.airline)
       return
     }
 
@@ -66,14 +68,14 @@ export class ScrapeService implements IScrapeService {
       log.error({
         routineId: routine.id,
         userId: routine.user_id,
-        airline: routine.airline,
+        airline: data.airline,
         origin: routine.origin,
         destination: routine.destination,
         requestId: data.requestId,
         scrapingError: data.error,
         status: 'error',
       }, 'scraping.API returned error — no flights')
-      await this.routinesRepo.clearPendingRequest(routine.id)
+      await this.routinesRepo.clearPendingRequest(routine.id, data.airline)
       return
     }
 
@@ -85,14 +87,14 @@ export class ScrapeService implements IScrapeService {
       log.warn({
         routineId: routine.id,
         userId: routine.user_id,
-        airline: routine.airline,
+        airline: data.airline,
         origin: routine.origin,
         destination: routine.destination,
         requestId: data.requestId,
         rawFlightCount: data.flights.length,
         status: 'skipped',
       }, 'callback ignored — no flights with valid fares')
-      await this.routinesRepo.clearPendingRequest(routine.id)
+      await this.routinesRepo.clearPendingRequest(routine.id, data.airline)
       return
     }
 
@@ -102,7 +104,7 @@ export class ScrapeService implements IScrapeService {
     log.info({
       routineId: routine.id,
       userId: routine.user_id,
-      airline: routine.airline,
+      airline: data.airline,
       origin: routine.origin,
       destination: routine.destination,
       requestId: data.requestId,
@@ -116,7 +118,6 @@ export class ScrapeService implements IScrapeService {
 
     const ids = await this.offersRepo.insertMany(
       routine.id,
-      routine.airline,
       validOffers,
       (offer) => this.withinTarget(offer, routine),
       data.scrapedAt,
@@ -126,17 +127,13 @@ export class ScrapeService implements IScrapeService {
     if (!currency) throw new MissingCurrencyError(routine.id)
     await this.bestFaresRepo.upsertFromOffers(routine.id, ids, currency, data.requestId)
 
-    const inserted = await this.offersRepo.findByIds(ids)
-    await this.notifSvc.evaluate(routine, inserted)
+    await this.routinesRepo.clearPendingRequest(routine.id, data.airline)
 
-    await this.routinesRepo.clearPendingRequest(routine.id)
-  }
-
-  private isExpired(routine: RoutineRow): boolean {
-    return (
-      routine.pending_request_at != null &&
-      routine.pending_request_at < new Date(Date.now() - 60 * 60 * 1000)
-    )
+    // Trigger consolidated evaluation only after all airlines for this routine have reported
+    const hasPending = await this.routinesRepo.hasPendingRequests(routine.id)
+    if (!hasPending) {
+      await this.notifSvc.evaluate(routine)
+    }
   }
 
   private withinTarget(offer: FlightOfferInput, routine: RoutineRow): boolean {

@@ -3,7 +3,7 @@ import { RoutineRow } from '../../../types'
 export interface CreateRoutineData {
   userId: string
   name: string
-  airline: string
+  airlines: string[]
   origin: string
   destination: string
   outboundStart: string
@@ -42,6 +42,8 @@ export interface IRoutinesRepository {
   deactivateByAirline(airlineCode: string): Promise<void>
   deleteByAirline(airlineCode: string): Promise<void>
   deactivateExpired(): Promise<number>
-  setPendingRequest(id: string, requestId: string): Promise<void>
-  clearPendingRequest(id: string): Promise<void>
+  setPendingRequest(routineId: string, airline: string, requestId: string): Promise<void>
+  clearPendingRequest(routineId: string, airline: string): Promise<void>
+  getPendingRequest(routineId: string, airline: string): Promise<{ request_id: string; requested_at: Date } | null>
+  hasPendingRequests(routineId: string): Promise<boolean>
 }

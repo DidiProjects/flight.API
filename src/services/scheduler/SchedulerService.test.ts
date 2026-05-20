@@ -12,7 +12,7 @@ function makeRoutine(overrides: Partial<RoutineRow> = {}): RoutineRow {
     id:                    'aaaaaaaa-0000-0000-0000-000000000001',
     user_id:               'bbbbbbbb-0000-0000-0000-000000000002',
     name:                  'Teste VCP→LIS',
-    airline:               'azul',
+    airlines:              ['azul'],
     origin:                'VCP',
     destination:           'LIS',
     // pg DATE columns chegam como Date objects em runtime, apesar de tipado como string
@@ -32,8 +32,6 @@ function makeRoutine(overrides: Partial<RoutineRow> = {}): RoutineRow {
     notification_frequency:'hourly',
     end_of_period_time:    null,
     cc_emails:             [],
-    pending_request_id:    null,
-    pending_request_at:    null,
     is_active:             true,
     created_at:            new Date(),
     updated_at:            new Date(),
@@ -159,5 +157,18 @@ describe('SchedulerService.dispatchOne — payload para scraping.API', () => {
 
     const headers = fetchMock.mock.calls[0][1].headers
     expect(headers['X-API-Key']).toBe('test-key')
+  })
+
+  it('faz fan-out para múltiplas airlines', async () => {
+    const routine = makeRoutine({ airlines: ['azul', 'latam'] })
+    const svc = new SchedulerService(makeRepoMock(routine), makeNotifMock(), makeEnv())
+
+    await svc.dispatchOne(routine.id)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstBody  = JSON.parse(fetchMock.mock.calls[0][1].body)
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(firstBody.airline).toBe('azul')
+    expect(secondBody.airline).toBe('latam')
   })
 })

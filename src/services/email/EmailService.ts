@@ -1,6 +1,6 @@
 import nodemailer, { Transporter } from 'nodemailer'
 import { Env } from '../../config/env'
-import { IEmailService, FlightAlertEmailParams, OfferBlock } from './interfaces/IEmailService'
+import { IEmailService, FlightAlertEmailParams, OfferBlock, AirlineOfferPair } from './interfaces/IEmailService'
 
 export class EmailService implements IEmailService {
   private readonly transporter: Transporter
@@ -117,13 +117,15 @@ export class EmailService implements IEmailService {
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
-    const { routineName, origin, destination, outboundOffer, returnOffer, passengers, fareType, airline, currency } = params
-    const airlineName = airline.charAt(0).toUpperCase() + airline.slice(1).toLowerCase()
+    const { routineName, origin, destination, airlineOffers, passengers, fareType } = params
 
-    const offers = [
-      outboundOffer ? this.renderOffer(outboundOffer, 'IDA',   this.buildDeepLink(outboundOffer, airline, passengers, fareType), airlineName, currency) : '',
-      returnOffer   ? this.renderOffer(returnOffer,   'VOLTA', this.buildDeepLink(returnOffer,   airline, passengers, fareType), airlineName, currency) : '',
-    ].join('')
+    const offers = airlineOffers.map((ao: AirlineOfferPair) => {
+      const airlineName = ao.airline.charAt(0).toUpperCase() + ao.airline.slice(1).toLowerCase()
+      return [
+        this.renderOffer(ao.outbound, 'IDA',   this.buildDeepLink(ao.outbound, ao.airline, passengers, fareType), airlineName, ao.currency),
+        ao.return ? this.renderOffer(ao.return, 'VOLTA', this.buildDeepLink(ao.return, ao.airline, passengers, fareType), airlineName, ao.currency) : '',
+      ].join('')
+    }).join('')
 
     const timestamp = new Date().toLocaleString('pt-BR', {
       timeZone: 'America/Sao_Paulo',

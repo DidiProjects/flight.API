@@ -13,6 +13,13 @@ export interface OfferBlock {
   fareHybCash?: number | null
 }
 
+export interface AirlineOfferPair {
+  airline: string
+  currency: string
+  outbound: OfferBlock
+  return: OfferBlock | null
+}
+
 export interface FlightAlertEmailParams {
   primaryEmail: string
   primaryUnsubLink: string
@@ -21,12 +28,9 @@ export interface FlightAlertEmailParams {
   routineName: string
   origin: string
   destination: string
-  outboundOffer?: OfferBlock | null
-  returnOffer?: OfferBlock | null
+  airlineOffers: AirlineOfferPair[]
   passengers: number
   fareType: string
-  airline: string
-  currency: string
 }
 
 export interface IEmailService {

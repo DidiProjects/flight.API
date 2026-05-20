@@ -17,7 +17,7 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       const body = createRoutineSchema.parse(req.body)
       const routine = await routinesSvc.create(req.user.sub, {
         name:                  body.name,
-        airline:               body.airline,
+        airlines:              body.airlines,
         origin:                body.origin,
         destination:           body.destination,
         outboundStart:         body.outboundStart,
@@ -25,7 +25,6 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         returnStart:           body.returnStart   ?? null,
         returnEnd:             body.returnEnd     ?? null,
         passengers:            body.passengers,
-        currency:              body.currency,
         targetCash:            body.targetCash    ?? null,
         targetPts:             body.targetPts     ?? null,
         targetHybPts:          body.targetHybPts  ?? null,
@@ -51,7 +50,7 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       const body = updateRoutineSchema.parse(req.body)
       reply.send(await routinesSvc.update(id, req.user.sub, {
         name:                  body.name,
-        airline:               body.airline,
+        airlines:              body.airlines,
         origin:                body.origin,
         destination:           body.destination,
         outboundStart:         body.outboundStart,
@@ -59,7 +58,6 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         returnStart:           body.returnStart   ?? null,
         returnEnd:             body.returnEnd     ?? null,
         passengers:            body.passengers,
-        currency:              body.currency,
         targetCash:            body.targetCash    ?? null,
         targetPts:             body.targetPts     ?? null,
         targetHybPts:          body.targetHybPts  ?? null,
