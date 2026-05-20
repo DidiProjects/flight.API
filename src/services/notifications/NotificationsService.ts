@@ -72,17 +72,25 @@ export class NotificationsService implements INotificationsService {
       return
     }
 
-    if (routine.notification_mode === 'alert_only' && hasTargetHit) {
-      await this.dispatch(routine, bestOut, bestRet, 'alert')
-    } else if (routine.notification_mode === 'daily_best_and_alert' && hasTargetHit) {
-      await this.dispatch(routine, bestOut, bestRet, 'alert')
-    } else {
-      log.debug({
-        ...ctx,
-        hasTargetHit,
-        bestOutAmount: bestOut.amount,
-      }, 'fares improved but no alert — will notify at daily_best time')
+    const shouldAlert =
+      (routine.notification_mode === 'alert_only' && hasTargetHit) ||
+      (routine.notification_mode === 'daily_best_and_alert' && hasTargetHit)
+
+    if (!shouldAlert) {
+      log.debug({ ...ctx, hasTargetHit, bestOutAmount: bestOut.amount }, 'fares improved but no alert — will notify at daily_best time')
+      return
     }
+
+    if (routine.notification_frequency !== 'hourly') {
+      const since = this.frequencyWindowStart(routine.notification_frequency)
+      const alreadySent = await this.notifLogRepo.hasAlertSince(routine.id, routine.priority, since)
+      if (alreadySent) {
+        log.info({ ...ctx, frequency: routine.notification_frequency, since, status: 'skipped' }, 'no notification — frequency limit reached for this period')
+        return
+      }
+    }
+
+    await this.dispatch(routine, bestOut, bestRet, 'alert')
   }
 
   async sendEndOfPeriod(): Promise<void> {
@@ -121,10 +129,27 @@ export class NotificationsService implements INotificationsService {
           ? this.bestFaresRepo.getBest(routine.id, true, routine.priority)
           : Promise.resolve(null),
       ])
+
       if (!bestOut) {
         log.warn({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'daily_best skipped — no best fare found')
         continue
       }
+
+      if (!this.fareWithinTarget(bestOut, routine)) {
+        log.info({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, bestAmount: bestOut.amount, status: 'skipped' }, 'daily_best skipped — best fare not within target')
+        continue
+      }
+
+      const lastDailyBest = await this.notifLogRepo.findLastByType(routine.id, routine.priority, 'best_of_day')
+      if (
+        lastDailyBest &&
+        lastDailyBest.outbound_amount === bestOut.amount &&
+        (lastDailyBest.return_amount ?? null) === (bestRet?.amount ?? null)
+      ) {
+        log.info({ routineId: routine.id, userId: routine.user_id, airline: routine.airline, origin: routine.origin, destination: routine.destination, amount: bestOut.amount, status: 'skipped' }, 'daily_best skipped — price unchanged since last daily best')
+        continue
+      }
+
       await this.dispatch(routine, bestOut, bestRet, 'best_of_day')
     }
   }
@@ -132,6 +157,27 @@ export class NotificationsService implements INotificationsService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private fareWithinTarget(bestOut: BestFareRow, routine: RoutineRow): boolean {
+    const t = 1 + routine.margin
+    if (routine.priority === 'cash' && routine.target_cash != null)
+      return bestOut.amount <= routine.target_cash * t
+    if (routine.priority === 'pts' && routine.target_pts != null)
+      return bestOut.amount <= routine.target_pts * t
+    if (routine.priority === 'hyb' && routine.target_hyb_pts != null && routine.target_hyb_cash != null)
+      return bestOut.offer.fare_hyb_pts != null &&
+             bestOut.offer.fare_hyb_cash != null &&
+             bestOut.offer.fare_hyb_pts  <= routine.target_hyb_pts  * t &&
+             bestOut.offer.fare_hyb_cash <= routine.target_hyb_cash * t
+    return false
+  }
+
+  private frequencyWindowStart(frequency: string): Date {
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+    if (frequency === 'daily')   return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (frequency === 'monthly') return new Date(now.getFullYear(), now.getMonth(), 1)
+    return new Date(0)
+  }
 
   private improved(
     out: BestFareRow,

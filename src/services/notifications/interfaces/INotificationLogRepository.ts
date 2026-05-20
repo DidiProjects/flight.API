@@ -12,5 +12,7 @@ export interface InsertNotificationLogData {
 
 export interface INotificationLogRepository {
   findLast(routineId: string, fareType: string): Promise<NotificationLogRow | null>
+  findLastByType(routineId: string, fareType: string, type: string): Promise<NotificationLogRow | null>
+  hasAlertSince(routineId: string, fareType: string, since: Date): Promise<boolean>
   insert(data: InsertNotificationLogData): Promise<void>
 }
