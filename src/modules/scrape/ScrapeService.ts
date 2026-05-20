@@ -127,10 +127,13 @@ export class ScrapeService implements IScrapeService {
     if (!currency) throw new MissingCurrencyError(routine.id)
     await this.bestFaresRepo.upsertFromOffers(routine.id, ids, currency, data.requestId)
 
-    const inserted = await this.offersRepo.findByIds(ids)
-    await this.notifSvc.evaluate(routine, inserted)
-
     await this.routinesRepo.clearPendingRequest(routine.id, data.airline)
+
+    // Trigger consolidated evaluation only after all airlines for this routine have reported
+    const hasPending = await this.routinesRepo.hasPendingRequests(routine.id)
+    if (!hasPending) {
+      await this.notifSvc.evaluate(routine)
+    }
   }
 
   private withinTarget(offer: FlightOfferInput, routine: RoutineRow): boolean {

@@ -18,7 +18,6 @@ const routineBaseSchema = z.object({
   returnStart: nullableStr(dateStr),
   returnEnd: nullableStr(dateStr),
   passengers: z.number().int().min(1).max(9).default(1),
-  currency: z.string().length(3).toUpperCase(),
 
   targetCash: z.number().positive().nullable().optional(),
   targetPts: z.number().int().positive().nullable().optional(),

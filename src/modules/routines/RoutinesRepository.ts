@@ -294,4 +294,12 @@ export class RoutinesRepository implements IRoutinesRepository {
     )
     return rows[0] ?? null
   }
+
+  async hasPendingRequests(routineId: string): Promise<boolean> {
+    const { rows } = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM routine_pending_requests WHERE routine_id = $1) AS exists`,
+      [routineId],
+    )
+    return rows[0].exists
+  }
 }

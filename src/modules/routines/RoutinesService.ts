@@ -26,18 +26,28 @@ export class RoutinesService implements IRoutinesService {
     return routine
   }
 
-  async create(userId: string, data: Omit<CreateRoutineData, 'userId'>): Promise<RoutineRow> {
+  async create(userId: string, data: Omit<CreateRoutineData, 'userId' | 'currency'>): Promise<RoutineRow> {
     const count = await this.routinesRepo.countByUser(userId)
     if (count >= MAX_ROUTINES) {
       throw new ForbiddenError(`Limite de ${MAX_ROUTINES} rotinas por usuário atingido`)
     }
 
+    const airlineRows = []
     for (const code of data.airlines) {
       const airline = await this.airlinesRepo.findByCode(code)
-      if (!airline || !airline.active) {
-        throw new BadRequestError(`Companhia '${code}' não disponível`)
-      }
+      if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
+      airlineRows.push(airline)
     }
+
+    const currencies = [...new Set(airlineRows.map((a) => a.currency).filter(Boolean))]
+    if (currencies.length > 1) {
+      throw new BadRequestError(
+        `Todas as companhias devem usar a mesma moeda (${airlineRows.map((a) => `${a.code}=${a.currency}`).join(', ')})`,
+      )
+    }
+    const currency = currencies[0]
+    if (!currency) throw new BadRequestError('Companhia sem moeda configurada')
+
     const today = new Date().toISOString().slice(0, 10)
     if (data.outboundEnd < today) {
       throw new BadRequestError('A data de ida já passou')
@@ -52,7 +62,7 @@ export class RoutinesService implements IRoutinesService {
       throw new BadRequestError('returnStart deve ser anterior a returnEnd')
     }
 
-    return this.routinesRepo.create({ userId, ...data })
+    return this.routinesRepo.create({ userId, ...data, currency })
   }
 
   async update(
@@ -64,10 +74,21 @@ export class RoutinesService implements IRoutinesService {
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
     if (fields.airlines && fields.airlines.length > 0) {
+      const airlineRows = []
       for (const code of fields.airlines) {
         const airline = await this.airlinesRepo.findByCode(code)
         if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
+        airlineRows.push(airline)
       }
+      const currencies = [...new Set(airlineRows.map((a) => a.currency).filter(Boolean))]
+      if (currencies.length > 1) {
+        throw new BadRequestError(
+          `Todas as companhias devem usar a mesma moeda (${airlineRows.map((a) => `${a.code}=${a.currency}`).join(', ')})`,
+        )
+      }
+      const updateCurrency = currencies[0]
+      if (!updateCurrency) throw new BadRequestError('Companhia sem moeda configurada')
+      fields = { ...fields, currency: updateCurrency }
     }
 
     const updated = await this.routinesRepo.update(id, userId, fields)

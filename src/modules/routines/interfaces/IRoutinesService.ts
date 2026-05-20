@@ -5,7 +5,7 @@ export interface IRoutinesService {
   list(userId: string): Promise<RoutineRow[]>
   listByUser(userId: string): Promise<RoutineRow[]>
   get(id: string, userId: string): Promise<RoutineRow>
-  create(userId: string, data: Omit<CreateRoutineData, 'userId'>): Promise<RoutineRow>
+  create(userId: string, data: Omit<CreateRoutineData, 'userId' | 'currency'>): Promise<RoutineRow>
   update(id: string, userId: string, fields: Partial<Omit<CreateRoutineData, 'userId'>>): Promise<RoutineRow>
   remove(id: string, userId: string): Promise<void>
   activate(id: string, userId: string): Promise<RoutineRow>

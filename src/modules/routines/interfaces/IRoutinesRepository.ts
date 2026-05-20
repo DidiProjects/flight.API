@@ -45,4 +45,5 @@ export interface IRoutinesRepository {
   setPendingRequest(routineId: string, airline: string, requestId: string): Promise<void>
   clearPendingRequest(routineId: string, airline: string): Promise<void>
   getPendingRequest(routineId: string, airline: string): Promise<{ request_id: string; requested_at: Date } | null>
+  hasPendingRequests(routineId: string): Promise<boolean>
 }

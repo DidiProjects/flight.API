@@ -47,4 +47,18 @@ export class BestFaresRepository implements IBestFaresRepository {
     )
     return rows[0] ?? null
   }
+
+  async getBestPerAirline(routineId: string, isReturn: boolean, fareType: string): Promise<BestFareRow[]> {
+    const { rows } = await this.db.query<BestFareRow>(
+      `SELECT DISTINCT ON (bf.airline) bf.*, row_to_json(fo.*) AS offer
+       FROM best_fares bf
+       JOIN flight_offers fo ON fo.id = bf.flight_offer_id
+       WHERE bf.routine_id = $1 AND bf.is_return = $2 AND bf.fare_type = $3
+         AND bf.date >= CURRENT_DATE
+         AND bf.updated_at >= now() - interval '4 hours'
+       ORDER BY bf.airline, bf.amount ASC, bf.updated_at DESC`,
+      [routineId, isReturn, fareType],
+    )
+    return rows
+  }
 }

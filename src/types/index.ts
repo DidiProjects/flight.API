@@ -94,6 +94,7 @@ export interface BestFareRow {
 export interface NotificationLogRow {
   id: string
   routine_id: string
+  airline: string | null
   type: string
   fare_type: string
   outbound_amount: number | null
