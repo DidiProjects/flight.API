@@ -13,7 +13,7 @@ export class BestFaresRepository implements IBestFaresRepository {
 
   async upsertFromOffers(routineId: string, offerIds: string[], currency: string, analysisId: string): Promise<void> {
     if (offerIds.length === 0) return
-    const placeholders = offerIds.map((_, i) => `$${i + 4}`).join(',')
+    const placeholders = offerIds.map((_, i) => `$${i + 5}`).join(',')
 
     for (const { col, type } of FARE_TYPES) {
       await this.db.query(
