@@ -50,6 +50,7 @@ export class NotificationsService implements INotificationsService {
     ])
 
     if (bestOut.length === 0) {
+      await this.checkStale(routine.id, routine.priority, ctx)
       log.warn(ctx, 'no notification — no best fares found')
       return
     }
@@ -104,7 +105,9 @@ export class NotificationsService implements INotificationsService {
       ])
 
       if (bestOut.length === 0) {
-        log.warn({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'end_of_period skipped — no best fares found')
+        const ctx = { routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination }
+        await this.checkStale(routine.id, routine.priority, ctx)
+        log.warn({ ...ctx, status: 'skipped' }, 'end_of_period skipped — no best fares found')
         continue
       }
 
@@ -147,6 +150,7 @@ export class NotificationsService implements INotificationsService {
         ])
 
         if (bestOut.length === 0) {
+          await this.checkStale(routine.id, routine.priority, { routineId: routine.id, userId })
           log.warn({ routineId: routine.id, userId, status: 'skipped' }, 'daily_best routine skipped — no best fares found')
           continue
         }
@@ -216,6 +220,13 @@ export class NotificationsService implements INotificationsService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private async checkStale(routineId: string, fareType: string, ctx: object): Promise<void> {
+    const stale = await this.bestFaresRepo.hasStaleData(routineId, fareType)
+    if (stale) {
+      log.error({ ...ctx, routineId, fareType, status: 'stale' }, 'routine fare data not updated in 4+ hours')
+    }
+  }
 
   private fareWithinTarget(bestOut: BestFareRow, routine: RoutineRow): boolean {
     const t = 1 + routine.margin

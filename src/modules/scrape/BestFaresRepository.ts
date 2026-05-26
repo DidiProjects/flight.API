@@ -61,4 +61,17 @@ export class BestFaresRepository implements IBestFaresRepository {
     )
     return rows
   }
+
+  async hasStaleData(routineId: string, fareType: string): Promise<boolean> {
+    const { rows } = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM best_fares
+         WHERE routine_id = $1 AND fare_type = $2
+           AND date >= CURRENT_DATE
+           AND updated_at < now() - interval '4 hours'
+       ) AS exists`,
+      [routineId, fareType],
+    )
+    return rows[0].exists
+  }
 }
