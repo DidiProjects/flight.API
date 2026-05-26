@@ -1,6 +1,6 @@
 import nodemailer, { Transporter } from 'nodemailer'
 import { Env } from '../../config/env'
-import { IEmailService, FlightAlertEmailParams, OfferBlock, AirlineOfferPair } from './interfaces/IEmailService'
+import { IEmailService, FlightAlertEmailParams, DailyBestEmailParams, OfferBlock, AirlineOfferPair } from './interfaces/IEmailService'
 
 export class EmailService implements IEmailService {
   private readonly transporter: Transporter
@@ -32,6 +32,16 @@ export class EmailService implements IEmailService {
         html: this.buildAlertHtml(params, cc.unsubLink),
       })
     }
+  }
+
+  async sendDailyBest(params: DailyBestEmailParams): Promise<void> {
+    const today = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
+    await this.transporter.sendMail({
+      from: this.env.SMTP_FROM,
+      to: params.primaryEmail,
+      subject: `Resumo do dia ${today} — Monitoramento de Voos`,
+      html: this.buildDailyBestHtml(params),
+    })
   }
 
   async sendProvisionalPassword(email: string, password: string): Promise<void> {
@@ -229,6 +239,64 @@ export class EmailService implements IEmailService {
       <td style="padding:5px 0;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-family:Arial,sans-serif;width:70px;">${label}</td>
       <td style="padding:5px 0;font-size:15px;font-weight:bold;color:#1a1a2e;font-family:Arial,sans-serif;" align="right">${value}</td>
     </tr>`
+  }
+
+  private buildDailyBestHtml(params: DailyBestEmailParams): string {
+    const today = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
+    const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })
+
+    const sections = params.routines.map((section) => {
+      const offers = section.airlineOffers.map((ao: AirlineOfferPair) => {
+        const airlineName = ao.airline.charAt(0).toUpperCase() + ao.airline.slice(1).toLowerCase()
+        return [
+          this.renderOffer(ao.outbound, 'IDA',   this.buildDeepLink(ao.outbound, ao.airline, section.passengers, section.fareType), airlineName, ao.currency),
+          ao.return ? this.renderOffer(ao.return, 'VOLTA', this.buildDeepLink(ao.return, ao.airline, section.passengers, section.fareType), airlineName, ao.currency) : '',
+        ].join('')
+      }).join('')
+
+      return `
+      <tr>
+        <td style="background:#1a1a2e;padding:14px 24px;">
+          <div style="color:#ffffff;font-size:14px;font-weight:bold;font-family:Arial,sans-serif;">${section.routineName}</div>
+          <div style="color:#8899bb;font-size:12px;margin-top:2px;font-family:Arial,sans-serif;">${section.origin} → ${section.destination} · ${section.passengers} passageiro${section.passengers > 1 ? 's' : ''}</div>
+        </td>
+      </tr>
+      <tr>
+        <td style="background:#ffffff;padding:20px 24px;font-family:Arial,sans-serif;">
+          ${offers || '<p style="color:#555;margin:0;">Nenhuma oferta disponível neste período.</p>'}
+          <div style="margin-top:4px;font-size:11px;text-align:right;">
+            <a href="${section.unsubLink}" style="color:#ccc;text-decoration:underline;">Cancelar recebimento desta rotina</a>
+          </div>
+        </td>
+      </tr>`
+    }).join('')
+
+    return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:20px 0;background:#f0f0f0;font-family:Arial,sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+      <td align="center">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:480px;">
+          <tr>
+            <td style="background:#0d0d1a;padding:20px 24px;border-radius:8px 8px 0 0;">
+              <div style="color:#ffffff;font-size:16px;font-weight:bold;font-family:Arial,sans-serif;">Monitoramento de Voos</div>
+              <div style="color:#8899bb;font-size:12px;margin-top:4px;font-family:Arial,sans-serif;">Resumo do dia — ${today}</div>
+            </td>
+          </tr>
+          ${sections}
+          <tr>
+            <td style="padding:14px 24px;font-size:11px;color:#aaa;text-align:center;font-family:Arial,sans-serif;border-radius:0 0 8px 8px;">
+              Gerado em ${timestamp} (BRT)
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
   }
 
   private wrapLayout(body: string): string {

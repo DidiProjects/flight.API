@@ -33,8 +33,24 @@ export interface FlightAlertEmailParams {
   fareType: string
 }
 
+export interface DailyBestRoutineSection {
+  routineName: string
+  origin: string
+  destination: string
+  passengers: number
+  fareType: string
+  airlineOffers: AirlineOfferPair[]
+  unsubLink: string
+}
+
+export interface DailyBestEmailParams {
+  primaryEmail: string
+  routines: DailyBestRoutineSection[]
+}
+
 export interface IEmailService {
   sendFlightAlert(params: FlightAlertEmailParams): Promise<void>
+  sendDailyBest(params: DailyBestEmailParams): Promise<void>
   sendProvisionalPassword(email: string, password: string): Promise<void>
   sendPasswordReset(email: string, token: string): Promise<void>
   sendUserApproved(email: string): Promise<void>
