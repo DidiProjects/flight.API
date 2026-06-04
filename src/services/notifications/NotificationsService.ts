@@ -11,7 +11,7 @@ import { logger } from '../../utils/logger'
 
 const log = logger.child({ service: 'notifications' })
 
-type AlertType = 'alert' | 'best_of_day' | 'end_of_period'
+type AlertType = 'alert' | 'best_of_day' | 'scheduled'
 type QualifyingAirline = { outbound: BestFareRow; return: BestFareRow | null }
 
 export class NotificationsService implements INotificationsService {
@@ -33,12 +33,12 @@ export class NotificationsService implements INotificationsService {
       airlines: routine.airlines,
       origin: routine.origin,
       destination: routine.destination,
-      mode: routine.notification_mode,
+      modes: routine.notification_modes,
       priority: routine.priority,
     }
 
-    if (routine.notification_mode === 'end_of_period') {
-      log.debug(ctx, 'evaluate skipped — end_of_period mode (handled by scheduler)')
+    if (!routine.notification_modes.includes('target')) {
+      log.debug(ctx, 'evaluate skipped — no "target" mode (handled by scheduled job)')
       return
     }
 
@@ -86,44 +86,15 @@ export class NotificationsService implements INotificationsService {
     await this.dispatch(routine, qualifying, 'alert')
   }
 
-  async sendEndOfPeriod(): Promise<void> {
+  async sendScheduled(): Promise<void> {
     const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
     const d = new Date(now)
     const currentTime = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 
-    const routines = await this.routinesRepo.findActiveForEndOfPeriod(currentTime)
+    const routines = await this.routinesRepo.findActiveForScheduled(currentTime)
     if (routines.length > 0) {
-      log.info({ routineCount: routines.length, currentTime }, 'sending end-of-period notifications')
+      log.info({ routineCount: routines.length, currentTime }, 'sending scheduled notifications')
     }
-
-    for (const routine of routines) {
-      const [bestOut, bestRet] = await Promise.all([
-        this.bestFaresRepo.getBestPerAirline(routine.id, false, routine.priority),
-        routine.return_start
-          ? this.bestFaresRepo.getBestPerAirline(routine.id, true, routine.priority)
-          : Promise.resolve([]),
-      ])
-
-      if (bestOut.length === 0) {
-        const ctx = { routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination }
-        await this.checkStale(routine.id, routine.priority, ctx)
-        log.warn({ ...ctx, status: 'skipped' }, 'end_of_period skipped — no best fares found')
-        continue
-      }
-
-      const retByAirline = Object.fromEntries(bestRet.map((b) => [b.airline, b]))
-      const qualifying: QualifyingAirline[] = bestOut.map((out) => ({
-        outbound: out,
-        return: retByAirline[out.airline] ?? null,
-      }))
-
-      await this.dispatch(routine, qualifying, 'end_of_period')
-    }
-  }
-
-  async sendDailyBest(): Promise<void> {
-    const routines = await this.routinesRepo.findActiveForDailyBest()
-    log.info({ routineCount: routines.length }, 'processing daily best notifications')
 
     const byUser = new Map<string, RoutineRow[]>()
     for (const r of routines) {
@@ -134,7 +105,7 @@ export class NotificationsService implements INotificationsService {
     for (const [userId, userRoutines] of byUser) {
       const owner = await this.usersRepo.findById(userId)
       if (!owner) {
-        log.warn({ userId }, 'daily_best skipped — user not found')
+        log.warn({ userId }, 'scheduled skipped — user not found')
         continue
       }
 
@@ -150,8 +121,9 @@ export class NotificationsService implements INotificationsService {
         ])
 
         if (bestOut.length === 0) {
-          await this.checkStale(routine.id, routine.priority, { routineId: routine.id, userId })
-          log.warn({ routineId: routine.id, userId, status: 'skipped' }, 'daily_best routine skipped — no best fares found')
+          const ctx = { routineId: routine.id, userId }
+          await this.checkStale(routine.id, routine.priority, ctx)
+          log.warn({ routineId: routine.id, userId, status: 'skipped' }, 'scheduled routine skipped — no best fares found')
           continue
         }
 
@@ -182,7 +154,7 @@ export class NotificationsService implements INotificationsService {
       }
 
       if (sections.length === 0) {
-        log.info({ userId, status: 'skipped' }, 'daily_best skipped — no routines with available fares')
+        log.info({ userId, status: 'skipped' }, 'scheduled skipped — no routines with available fares')
         continue
       }
 
@@ -196,16 +168,16 @@ export class NotificationsService implements INotificationsService {
             userId,
             routineName:    routine.name,
             airline,
-            type:           'best_of_day',
+            type:           'scheduled',
             outboundAmount: q.outbound.amount,
             returnAmount:   q.return?.amount ?? null,
             status:         'success',
-          }, 'daily_best notification dispatched')
+          }, 'scheduled notification dispatched')
 
           await this.notifLogRepo.insert({
             routineId:      routine.id,
             airline,
-            type:           'best_of_day',
+            type:           'scheduled',
             fareType:       routine.priority,
             outboundAmount: q.outbound.amount,
             returnAmount:   q.return?.amount ?? null,
@@ -274,9 +246,9 @@ export class NotificationsService implements INotificationsService {
     }
 
     const labels: Record<AlertType, string> = {
-      alert:         `Oferta dentro do target — ${routine.name}`,
-      best_of_day:   `Melhor preço do dia — ${routine.name}`,
-      end_of_period: `Resumo do período — ${routine.name}`,
+      alert:     `Oferta dentro do target — ${routine.name}`,
+      best_of_day: `Melhor preço do dia — ${routine.name}`,
+      scheduled: `Resumo do período — ${routine.name}`,
     }
 
     const activeCc = routine.cc_emails.filter((c) => c.subscribed)

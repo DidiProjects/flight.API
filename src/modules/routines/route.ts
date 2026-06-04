@@ -31,9 +31,9 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         targetHybCash:         body.targetHybCash ?? null,
         margin:                body.margin,
         priority:              body.priority,
-        notificationMode:      body.notificationMode,
+        notificationModes:     body.notificationModes,
         notificationFrequency: body.notificationFrequency,
-        endOfPeriodTime:       body.endOfPeriodTime ?? null,
+        scheduledTime:         body.scheduledTime ?? null,
         ccEmails:              body.ccEmails,
         isActive:              body.isActive,
       })
@@ -64,9 +64,9 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         targetHybCash:         body.targetHybCash ?? null,
         margin:                body.margin,
         priority:              body.priority,
-        notificationMode:      body.notificationMode,
+        notificationModes:     body.notificationModes,
         notificationFrequency: body.notificationFrequency,
-        endOfPeriodTime:       body.endOfPeriodTime ?? null,
+        scheduledTime:         body.scheduledTime ?? null,
         ccEmails:              body.ccEmails,
         isActive:              body.isActive,
       }))

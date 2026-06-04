@@ -26,13 +26,9 @@ const routineBaseSchema = z.object({
   margin: z.number().min(0).max(1).default(0.1),
   priority: z.enum(['cash', 'pts', 'hyb']).default('cash'),
 
-  notificationMode: z.enum([
-    'daily_best_and_alert',
-    'alert_only',
-    'end_of_period',
-  ]),
+  notificationModes: z.array(z.enum(['target', 'scheduled'])).min(1),
   notificationFrequency: z.enum(['hourly', 'daily', 'monthly']),
-  endOfPeriodTime: z.union([
+  scheduledTime: z.union([
     z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
     z.literal(''),
     z.null(),
@@ -43,18 +39,40 @@ const routineBaseSchema = z.object({
 })
 
 export const createRoutineSchema = routineBaseSchema
+  .transform((d) => {
+    // Default scheduledTime to '20:00' when 'scheduled' is in notificationModes and no value provided
+    if (d.notificationModes.includes('scheduled') && !d.scheduledTime) {
+      return { ...d, scheduledTime: '20:00' }
+    }
+    return d
+  })
   .refine(
     (d) =>
+      !d.notificationModes.includes('target') ||
       d.targetCash != null ||
       d.targetPts != null ||
       (d.targetHybPts != null && d.targetHybCash != null),
-    { message: 'Pelo menos um target deve ser informado (targetCash, targetPts ou targetHybPts+targetHybCash)' },
+    {
+      message: 'Quando o modo "target" está ativo, pelo menos um target deve ser informado (targetCash, targetPts ou targetHybPts+targetHybCash)',
+    },
   )
-  .refine((d) => d.notificationMode !== 'end_of_period' || d.endOfPeriodTime != null, {
-    message: 'endOfPeriodTime é obrigatório para o modo end_of_period',
-  })
+  .refine(
+    (d) => !d.notificationModes.includes('scheduled') || d.scheduledTime != null,
+    {
+      message: 'scheduledTime é obrigatório para o modo scheduled',
+    },
+  )
 
-export const updateRoutineSchema = routineBaseSchema.partial().refine(
-  (d) => Object.keys(d).length > 0,
-  { message: 'Nenhum campo para atualizar' },
-)
+export const updateRoutineSchema = routineBaseSchema
+  .partial()
+  .transform((d) => {
+    // Default scheduledTime to '20:00' when 'scheduled' is in notificationModes and no value provided
+    if (d.notificationModes && d.notificationModes.includes('scheduled') && !d.scheduledTime) {
+      return { ...d, scheduledTime: '20:00' }
+    }
+    return d
+  })
+  .refine(
+    (d) => Object.keys(d).length > 0,
+    { message: 'Nenhum campo para atualizar' },
+  )

@@ -18,9 +18,9 @@ export interface CreateRoutineData {
   targetHybCash?: number | null
   margin: number
   priority: string
-  notificationMode: string
+  notificationModes: string[]
   notificationFrequency: string
-  endOfPeriodTime?: string | null
+  scheduledTime?: string | null
   ccEmails: string[]
   isActive?: boolean
 }
@@ -31,8 +31,7 @@ export interface IRoutinesRepository {
   findByIdAdmin(id: string): Promise<RoutineRow | null>
   countByUser(userId: string): Promise<number>
   findDispatchable(): Promise<RoutineRow[]>
-  findActiveForEndOfPeriod(currentTime: string): Promise<RoutineRow[]>
-  findActiveForDailyBest(): Promise<RoutineRow[]>
+  findActiveForScheduled(currentTime: string): Promise<RoutineRow[]>
   create(data: CreateRoutineData): Promise<RoutineRow>
   update(id: string, userId: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null>
   delete(id: string, userId: string): Promise<boolean>

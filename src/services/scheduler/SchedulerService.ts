@@ -112,8 +112,7 @@ export class SchedulerService implements ISchedulerService {
   private scheduleDailyJobs(): void {
     const tick = async () => {
       try {
-        await this.notifSvc.sendEndOfPeriod()
-        await this.maybeSendDailyBest()
+        await this.notifSvc.sendScheduled()
       } catch (err) {
         log.error({ err }, 'Daily job error')
       } finally {
@@ -121,12 +120,5 @@ export class SchedulerService implements ISchedulerService {
       }
     }
     setTimeout(tick, 60_000)
-  }
-
-  private async maybeSendDailyBest(): Promise<void> {
-    const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
-    const d = new Date(now)
-    if (d.getHours() !== 20 || d.getMinutes() !== 0) return
-    await this.notifSvc.sendDailyBest()
   }
 }

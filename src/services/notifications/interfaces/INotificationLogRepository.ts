@@ -3,7 +3,7 @@ import { NotificationLogRow } from '../../../types'
 export interface InsertNotificationLogData {
   routineId: string
   airline: string
-  type: 'alert' | 'best_of_day' | 'end_of_period'
+  type: 'alert' | 'best_of_day' | 'scheduled'
   fareType: string
   outboundAmount: number | null
   returnAmount: number | null

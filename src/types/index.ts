@@ -45,9 +45,9 @@ export interface RoutineRow {
   target_hyb_cash: number | null
   margin: number
   priority: 'cash' | 'pts' | 'hyb'
-  notification_mode: string
+  notification_modes: string[]
   notification_frequency: string
-  end_of_period_time: string | null
+  scheduled_time: string | null
   cc_emails: CcEmail[]
   is_active: boolean
   created_at: Date
