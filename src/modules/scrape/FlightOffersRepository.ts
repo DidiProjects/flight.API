@@ -10,9 +10,9 @@ export class FlightOffersRepository implements IFlightOffersRepository {
     if (referenceTime && time < referenceTime) {
       const d = new Date(date)
       d.setUTCDate(d.getUTCDate() + 1)
-      return `${d.toISOString().slice(0, 10)}T${time}:00`
+      return `${d.toISOString().slice(0, 10)}T${time}:00+00:00`
     }
-    return `${date}T${time}:00`
+    return `${date}T${time}:00+00:00`
   }
 
   async insertMany(
