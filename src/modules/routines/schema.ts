@@ -27,7 +27,7 @@ const routineBaseSchema = z.object({
   priority: z.enum(['cash', 'pts', 'hyb']).default('cash'),
 
   notificationModes: z.array(z.enum(['target', 'scheduled'])).min(1),
-  notificationFrequency: z.enum(['hourly', 'daily', 'monthly']),
+  notificationFrequency: z.enum(['hourly', 'daily', 'monthly']).optional(),
   scheduledTime: z.union([
     z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
     z.literal(''),
@@ -60,6 +60,13 @@ export const createRoutineSchema = routineBaseSchema
     (d) => !d.notificationModes.includes('scheduled') || d.scheduledTime != null,
     {
       message: 'scheduledTime é obrigatório para o modo scheduled',
+    },
+  )
+  .refine(
+    (d) => !d.notificationModes.includes('target') || d.notificationFrequency != null,
+    {
+      message: 'notificationFrequency é obrigatório para o modo target',
+      path: ['notificationFrequency'],
     },
   )
 

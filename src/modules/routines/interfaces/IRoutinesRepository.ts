@@ -19,7 +19,7 @@ export interface CreateRoutineData {
   margin: number
   priority: string
   notificationModes: string[]
-  notificationFrequency: string
+  notificationFrequency?: string
   scheduledTime?: string | null
   ccEmails: string[]
   isActive?: boolean
