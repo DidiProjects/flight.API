@@ -415,6 +415,43 @@
               "variable": [{ "key": "code", "value": "" }]
             }
           }
+        },
+        {
+          "name": "PUT /airlines/admin/:code/coverage",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/airlines/admin/:code/coverage",
+              "host": ["{{baseUrl}}"],
+              "path": ["airlines", "admin", ":code", "coverage"],
+              "variable": [{ "key": "code", "value": "azul" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"airports\": [\n    {\n      \"code\": \"VCP\",\n      \"name\": \"Viracopos\",\n      \"timezone\": \"America/Sao_Paulo\",\n      \"countryCode\": \"br\",\n      \"countryName\": \"Brasil\",\n      \"city\": \"Campinas\",\n      \"region\": \"Sudeste\",\n      \"currency\": \"BRL\"\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Airports",
+      "item": [
+        {
+          "name": "GET /airports?airline=",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/airports?airline=azul",
+              "host": ["{{baseUrl}}"],
+              "path": ["airports"],
+              "query": [
+                { "key": "airline", "value": "azul", "description": "Código da companhia aérea" }
+              ]
+            }
+          }
         }
       ]
     },
@@ -444,7 +481,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"\",\n  \"airlines\": [\"azul\"],\n  \"origin\": \"\",\n  \"destination\": \"\",\n  \"outboundStart\": \"2026-01-01\",\n  \"outboundEnd\": \"2026-01-07\",\n  \"returnStart\": null,\n  \"returnEnd\": null,\n  \"passengers\": 1,\n  \"targetCash\": null,\n  \"targetPts\": null,\n  \"targetHybPts\": null,\n  \"targetHybCash\": null,\n  \"margin\": 0.1,\n  \"priority\": \"cash\",\n  \"notificationMode\": \"alert_only\",\n  \"notificationFrequency\": \"hourly\",\n  \"endOfPeriodTime\": null,\n  \"ccEmails\": [],\n  \"isActive\": true\n}\n\n// airlines: string[] — mín. 1 airline. Cada airline gera um scrape paralelo (fan-out).\n//   Exemplo multi-airline: [\"azul\", \"latam\", \"gol\"]\n//   currency é derivado automaticamente das airlines selecionadas (não enviar no body).\n//   Todas as airlines da rotina devem compartilhar a mesma currency.\n//   O email é consolidado: aguarda todas as airlines reportarem e envia um único email\n//   com seções separadas para cada airline que passou o critério de target + melhora.\n//\n// notificationMode: alert_only | daily_best_and_alert | end_of_period\n//   alert_only           — alerta quando preço supera o melhor anterior E está dentro do target\n//   daily_best_and_alert — idem + resumo diário às 20h (BRT) se preço estiver dentro do target e tiver mudado\n//   end_of_period        — apenas no horário agendado (endOfPeriodTime)\n//\n// notificationFrequency: hourly | daily | monthly\n//   hourly  — sem cooldown entre alertas (cada ciclo de scraping pode disparar)\n//   daily   — máximo 1 alerta por dia (janela BRT)\n//   monthly — máximo 1 alerta por mês\n//\n// Referência de comparação: último email enviado nos últimos 60 dias (por airline)\n// daily_best só dispara se: preço dentro do target E diferente do último best_of_day",
+              "raw": "{\n  \"name\": \"\",\n  \"airlines\": [\"azul\"],\n  \"origin\": \"\",\n  \"destination\": \"\",\n  \"outboundStart\": \"2026-01-01\",\n  \"outboundEnd\": \"2026-01-07\",\n  \"returnStart\": null,\n  \"returnEnd\": null,\n  \"passengers\": 1,\n  \"targetCash\": null,\n  \"targetPts\": null,\n  \"targetHybPts\": null,\n  \"targetHybCash\": null,\n  \"margin\": 0.1,\n  \"priority\": \"cash\",\n  \"notificationModes\": [\"scheduled\"],\n  \"notificationFrequency\": \"hourly\",\n  \"scheduledTime\": \"20:00\",\n  \"ccEmails\": [],\n  \"isActive\": true\n}\n\n// notificationModes: array com um ou mais de: \"target\" | \"scheduled\"\n//   target    — alerta imediato quando preço atinge o valor alvo\n//               Requer: targetCash | targetPts | (targetHybPts + targetHybCash)\n//               Requer: notificationFrequency\n//   scheduled — resumo diário no horário scheduledTime (default 20:00)\n//\n// notificationFrequency: hourly | daily | monthly  (obrigatório apenas com \"target\")\n//   hourly  — sem cooldown entre alertas\n//   daily   — máximo 1 alerta por dia\n//   monthly — máximo 1 alerta por mês\n//\n// scheduledTime: \"HH:MM\" (obrigatório apenas com \"scheduled\", default \"20:00\")",
               "options": { "raw": { "language": "json" } }
             }
           }
@@ -573,6 +610,27 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"requestId\": \"\",\n  \"routineId\": \"\",\n  \"airline\": \"azul\",\n  \"offers\": []\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "POST /scrape/coverage",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key",    "value": "" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scrape/coverage",
+              "host": ["{{baseUrl}}"],
+              "path": ["scrape", "coverage"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"airline\": \"ryanair\",\n  \"airports\": [\n    {\n      \"code\": \"LIS\",\n      \"name\": \"Lisboa\",\n      \"timezone\": \"Europe/Lisbon\",\n      \"countryCode\": \"pt\",\n      \"countryName\": \"Portugal\",\n      \"city\": \"Lisboa\",\n      \"region\": \"Lisboa\",\n      \"currency\": \"EUR\"\n    }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             }
           }

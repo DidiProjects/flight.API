@@ -1,8 +1,10 @@
 import { FastifyInstance } from 'fastify'
 import { IAirlinesService } from './interfaces/IAirlinesService'
+import { IAirportsService } from '../airports/interfaces/IAirportsService'
 import { createAirlineSchema, updateFareTypesSchema } from './schema'
+import { coverageAdminBodySchema } from '../airports/schema'
 
-export function airlinesRoute(airlinesSvc: IAirlinesService) {
+export function airlinesRoute(airlinesSvc: IAirlinesService, airportsSvc: IAirportsService) {
   return async function handler(app: FastifyInstance): Promise<void> {
     app.get(
       '/',
@@ -64,6 +66,17 @@ export function airlinesRoute(airlinesSvc: IAirlinesService) {
         const { code } = req.params as { code: string }
         await airlinesSvc.remove(code)
         reply.status(204).send()
+      },
+    )
+
+    app.put(
+      '/admin/:code/coverage',
+      { preHandler: [app.authenticate, app.requirePasswordChanged, app.requireAdmin] },
+      async (req, reply) => {
+        const { code } = req.params as { code: string }
+        const { airports } = coverageAdminBodySchema.parse(req.body)
+        const result = await airportsSvc.upsertCoverage(code, airports)
+        reply.send(result)
       },
     )
   }
