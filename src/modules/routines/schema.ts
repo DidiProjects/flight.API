@@ -38,6 +38,12 @@ const routineBaseSchema = z.object({
   isActive: z.boolean().default(true),
 })
 
+const MAX_DATE_RANGE_DAYS = 30
+
+function daysBetween(start: string, end: string): number {
+  return (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 60 * 60 * 24)
+}
+
 export const createRoutineSchema = routineBaseSchema
   .transform((d) => {
     // Default scheduledTime to '20:00' when 'scheduled' is in notificationModes and no value provided
@@ -69,6 +75,23 @@ export const createRoutineSchema = routineBaseSchema
       path: ['notificationFrequency'],
     },
   )
+  .refine(
+    (d) => daysBetween(d.outboundStart, d.outboundEnd) <= MAX_DATE_RANGE_DAYS,
+    {
+      message: 'O range de datas de ida não pode exceder 30 dias',
+      path: ['outboundEnd'],
+    },
+  )
+  .refine(
+    (d) => {
+      if (d.returnStart == null || d.returnEnd == null) return true
+      return daysBetween(d.returnStart, d.returnEnd) <= MAX_DATE_RANGE_DAYS
+    },
+    {
+      message: 'O range de datas de volta não pode exceder 30 dias',
+      path: ['returnEnd'],
+    },
+  )
 
 export const updateRoutineSchema = routineBaseSchema
   .partial()
@@ -82,4 +105,24 @@ export const updateRoutineSchema = routineBaseSchema
   .refine(
     (d) => Object.keys(d).length > 0,
     { message: 'Nenhum campo para atualizar' },
+  )
+  .refine(
+    (d) => {
+      if (d.outboundStart == null || d.outboundEnd == null) return true
+      return daysBetween(d.outboundStart, d.outboundEnd) <= MAX_DATE_RANGE_DAYS
+    },
+    {
+      message: 'O range de datas de ida não pode exceder 30 dias',
+      path: ['outboundEnd'],
+    },
+  )
+  .refine(
+    (d) => {
+      if (d.returnStart == null || d.returnEnd == null) return true
+      return daysBetween(d.returnStart, d.returnEnd) <= MAX_DATE_RANGE_DAYS
+    },
+    {
+      message: 'O range de datas de volta não pode exceder 30 dias',
+      path: ['returnEnd'],
+    },
   )
