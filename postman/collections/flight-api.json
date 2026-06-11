@@ -417,18 +417,6 @@
           }
         },
         {
-          "name": "POST /airlines/admin/:code/dispatch-coverage",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{baseUrl}}/airlines/admin/:code/dispatch-coverage",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines", "admin", ":code", "dispatch-coverage"],
-              "variable": [{ "key": "code", "value": "ryanair" }]
-            }
-          }
-        },
-        {
           "name": "PUT /airlines/admin/:code/coverage",
           "request": {
             "method": "PUT",

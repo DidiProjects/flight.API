@@ -3,7 +3,6 @@ import { IAirlinesService } from './interfaces/IAirlinesService'
 import { IAirportsService } from '../airports/interfaces/IAirportsService'
 import { createAirlineSchema, updateFareTypesSchema } from './schema'
 import { coverageAdminBodySchema } from '../airports/schema'
-import { env } from '../../config/env'
 
 export function airlinesRoute(airlinesSvc: IAirlinesService, airportsSvc: IAirportsService) {
   return async function handler(app: FastifyInstance): Promise<void> {
@@ -78,29 +77,6 @@ export function airlinesRoute(airlinesSvc: IAirlinesService, airportsSvc: IAirpo
         const { airports } = coverageAdminBodySchema.parse(req.body)
         const result = await airportsSvc.upsertCoverage(code, airports)
         reply.send(result)
-      },
-    )
-
-    app.post(
-      '/admin/:code/dispatch-coverage',
-      { preHandler: [app.authenticate, app.requirePasswordChanged, app.requireAdmin] },
-      async (req, reply) => {
-        const { code } = req.params as { code: string }
-        const res = await fetch(`${env.SCRAPING_API_URL}/coverage`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', 'X-API-Key': env.SCRAPING_API_KEY },
-          body:    JSON.stringify({ airline: code }),
-          signal:  AbortSignal.timeout(10_000),
-        })
-        if (res.status === 422) {
-          const body = await res.json().catch(() => ({ error: 'Airline not supported' })) as { error: string }
-          return reply.status(422).send({ error: body.error })
-        }
-        if (!res.ok) {
-          const text = await res.text().catch(() => '')
-          throw new Error(`scraping.API ${res.status}: ${text}`)
-        }
-        return reply.status(202).send({ airline: code, queued: true })
       },
     )
   }
