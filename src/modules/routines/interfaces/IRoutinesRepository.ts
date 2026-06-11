@@ -34,6 +34,7 @@ export interface IRoutinesRepository {
   findActiveForScheduled(currentTime: string): Promise<RoutineRow[]>
   create(data: CreateRoutineData): Promise<RoutineRow>
   update(id: string, userId: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null>
+  updateById(id: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null>
   delete(id: string, userId: string): Promise<boolean>
   deleteAdmin(id: string): Promise<boolean>
   setActive(id: string, userId: string, active: boolean): Promise<RoutineRow | null>

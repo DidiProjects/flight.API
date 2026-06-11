@@ -202,6 +202,80 @@ export class RoutinesRepository implements IRoutinesRepository {
     return this.findById(id, userId)
   }
 
+  async updateById(id: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null> {
+    const colMap: Record<string, string> = {
+      name: 'name', origin: 'origin', destination: 'destination',
+      outboundStart: 'outbound_start', outboundEnd: 'outbound_end',
+      returnStart: 'return_start', returnEnd: 'return_end', passengers: 'passengers',
+      currency: 'currency',
+      targetCash: 'target_cash', targetPts: 'target_pts',
+      targetHybPts: 'target_hyb_pts', targetHybCash: 'target_hyb_cash',
+      margin: 'margin', priority: 'priority',
+      notificationModes: 'notification_modes', notificationFrequency: 'notification_frequency',
+      scheduledTime: 'scheduled_time', isActive: 'is_active',
+    }
+    const updates: string[] = []
+    const values: unknown[] = []
+    let i = 1
+    for (const [key, col] of Object.entries(colMap)) {
+      if (key in fields) { updates.push(`${col} = $${i++}`); values.push((fields as Record<string, unknown>)[key] ?? null) }
+    }
+    if ('ccEmails' in fields && fields.ccEmails) {
+      updates.push(`cc_emails = $${i++}`)
+      values.push(JSON.stringify(fields.ccEmails.map((e) => ({ email: e, subscribed: true }))))
+    }
+
+    const hasAirlines = 'airlines' in fields && Array.isArray(fields.airlines)
+    const hasScalarUpdates = updates.length > 0
+
+    if (!hasScalarUpdates && !hasAirlines) return this.findByIdAdmin(id)
+
+    const client = await this.db.connect()
+    try {
+      await client.query('BEGIN')
+
+      if (hasScalarUpdates) {
+        updates.push(`updated_at = now()`)
+        values.push(id)
+        const { rowCount } = await client.query(
+          `UPDATE routines SET ${updates.join(', ')} WHERE id = $${i}`,
+          values,
+        )
+        if ((rowCount ?? 0) === 0) {
+          await client.query('ROLLBACK')
+          return null
+        }
+      }
+
+      if (hasAirlines && fields.airlines) {
+        const { rowCount } = await client.query(
+          `SELECT 1 FROM routines WHERE id = $1`,
+          [id],
+        )
+        if ((rowCount ?? 0) === 0) {
+          await client.query('ROLLBACK')
+          return null
+        }
+        await client.query(`DELETE FROM routine_airlines WHERE routine_id = $1`, [id])
+        for (const airline of fields.airlines) {
+          await client.query(
+            `INSERT INTO routine_airlines (routine_id, airline) VALUES ($1, $2)`,
+            [id, airline],
+          )
+        }
+      }
+
+      await client.query('COMMIT')
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+
+    return this.findByIdAdmin(id)
+  }
+
   async delete(id: string, userId: string): Promise<boolean> {
     const { rowCount } = await this.db.query(
       `DELETE FROM routines WHERE id = $1 AND user_id = $2`,

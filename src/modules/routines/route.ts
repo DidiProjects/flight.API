@@ -100,6 +100,33 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       }
     })
 
+    app.patch('/admin/:id', { preHandler: [app.requireAdmin] }, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      const body = updateRoutineSchema.parse(req.body)
+      reply.send(await routinesSvc.adminUpdateRoutine(id, {
+        name:                  body.name,
+        airlines:              body.airlines,
+        origin:                body.origin,
+        destination:           body.destination,
+        outboundStart:         body.outboundStart,
+        outboundEnd:           body.outboundEnd,
+        returnStart:           body.returnStart   ?? null,
+        returnEnd:             body.returnEnd     ?? null,
+        passengers:            body.passengers,
+        targetCash:            body.targetCash    ?? null,
+        targetPts:             body.targetPts     ?? null,
+        targetHybPts:          body.targetHybPts  ?? null,
+        targetHybCash:         body.targetHybCash ?? null,
+        margin:                body.margin,
+        priority:              body.priority,
+        notificationModes:     body.notificationModes,
+        notificationFrequency: body.notificationFrequency,
+        scheduledTime:         body.scheduledTime ?? null,
+        ccEmails:              body.ccEmails,
+        isActive:              body.isActive,
+      }))
+    })
+
     app.get('/admin/users/:userId', { preHandler: [app.requireAdmin] }, async (req, reply) => {
       const { userId } = req.params as { userId: string }
       reply.send(await routinesSvc.listByUser(userId))
