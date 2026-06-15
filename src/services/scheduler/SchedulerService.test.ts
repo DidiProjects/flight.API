@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SchedulerService } from './SchedulerService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
@@ -217,5 +217,70 @@ describe('SchedulerService — dispatch loop', () => {
       job.id,
       expect.stringContaining('500'),
     )
+  })
+})
+
+// ── circuit breaker ───────────────────────────────────────────────────────────
+
+describe('SchedulerService — circuit breaker', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  function makeSvc() {
+    return new SchedulerService(
+      makeScrapingJobRepoMock(),
+      makeFlightFaresRepoMock(),
+      makeNotifMock(),
+      makeEvalMock(),
+      makeEnv(),
+    )
+  }
+
+  it('abre após CIRCUIT_THRESHOLD falhas consecutivas', () => {
+    const svc = makeSvc()
+    for (let i = 0; i < 5; i++) {
+      ;(svc as any).recordFailure('azul')
+    }
+    expect((svc as any).isCircuitOpen('azul')).toBe(true)
+  })
+
+  it('fecha após o cooldown', () => {
+    const svc = makeSvc()
+    for (let i = 0; i < 5; i++) {
+      ;(svc as any).recordFailure('azul')
+    }
+    expect((svc as any).isCircuitOpen('azul')).toBe(true)
+
+    vi.advanceTimersByTime(15 * 60 * 1000 + 1)
+
+    expect((svc as any).isCircuitOpen('azul')).toBe(false)
+  })
+
+  it('isola por empresa — falhas em azul não afetam latam', () => {
+    const svc = makeSvc()
+    for (let i = 0; i < 5; i++) {
+      ;(svc as any).recordFailure('azul')
+    }
+    expect((svc as any).isCircuitOpen('azul')).toBe(true)
+    expect((svc as any).isCircuitOpen('latam')).toBe(false)
+  })
+
+  it('recordSuccess zera contador de falhas e fecha o circuito', () => {
+    const svc = makeSvc()
+    for (let i = 0; i < 4; i++) {
+      ;(svc as any).recordFailure('azul')
+    }
+    ;(svc as any).recordSuccess('azul')
+
+    expect((svc as any).isCircuitOpen('azul')).toBe(false)
+    const state = (svc as any).circuitBreakers.get('azul')
+    expect(state?.failures).toBe(0)
   })
 })
