@@ -32,6 +32,7 @@ export interface IRoutinesRepository {
   countByUser(userId: string): Promise<number>
   findDispatchable(): Promise<RoutineRow[]>
   findActiveForScheduled(currentTime: string): Promise<RoutineRow[]>
+  findAllActive(): Promise<RoutineRow[]>
   create(data: CreateRoutineData): Promise<RoutineRow>
   update(id: string, userId: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null>
   updateById(id: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null>
