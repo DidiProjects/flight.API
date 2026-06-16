@@ -1078,6 +1078,50 @@
             },
             "description": "Retorna agregado diário de preços (flight_fares_daily) para sparkline. Requer JWT."
           }
+        },
+        {
+          "name": "GET /fares/summary",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fares/summary?airlines=azul,latam&origin=VCP&destination=GRU&date_from=2026-08-01&date_to=2026-08-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fares",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "airlines",
+                  "value": "azul,latam",
+                  "description": "Airlines separadas por vírgula"
+                },
+                {
+                  "key": "origin",
+                  "value": "VCP",
+                  "description": "IATA de origem"
+                },
+                {
+                  "key": "destination",
+                  "value": "GRU",
+                  "description": "IATA de destino"
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-08-01",
+                  "description": "Início do range de datas (YYYY-MM-DD)"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-08-31",
+                  "description": "Fim do range de datas (YYYY-MM-DD)"
+                }
+              ]
+            },
+            "description": "Retorna avg/min/p20 de voos diretos (stops=0) de todas as airlines no range de datas — usado pelo PriceHistoryPanel do RoutineCard. Requer JWT."
+          }
         }
       ]
     },

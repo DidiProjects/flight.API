@@ -106,6 +106,36 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     }
   }
 
+  async getSummary(
+    airlines: string[],
+    origin: string,
+    destination: string,
+    dateFrom: string,
+    dateTo: string,
+  ): Promise<PriceHistory> {
+    const { rows } = await this.db.query<PriceHistory>(`
+      SELECT
+        AVG(fare_cash)                                                  AS avg_cash_30d,
+        MIN(fare_cash)                                                  AS min_cash_30d,
+        PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY fare_cash)         AS p20_cash_30d,
+        AVG(fare_pts)                                                   AS avg_pts_30d,
+        MIN(fare_pts)                                                   AS min_pts_30d
+      FROM flight_fares
+      WHERE airline = ANY($1::text[])
+        AND origin = $2 AND destination = $3
+        AND flight_date BETWEEN $4 AND $5
+        AND stops = 0
+        AND scraped_at >= NOW() - INTERVAL '30 days'
+    `, [airlines, origin, destination, dateFrom, dateTo])
+    return rows[0] ?? {
+      avg_cash_30d: null,
+      min_cash_30d: null,
+      p20_cash_30d: null,
+      avg_pts_30d: null,
+      min_pts_30d: null,
+    }
+  }
+
   async aggregateToDailyBucket(bucketDate: string): Promise<number> {
     let total = 0
 
