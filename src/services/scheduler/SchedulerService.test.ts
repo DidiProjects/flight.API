@@ -67,6 +67,7 @@ function makeEnv(): Env {
 function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJobRepository {
   return {
     upsertFromRoutines:  vi.fn().mockResolvedValue(0),
+    upsertFromRoutine:   vi.fn().mockResolvedValue(undefined),
     expireOldJobs:       vi.fn().mockResolvedValue(0),
     updatePriorities:    vi.fn().mockResolvedValue(undefined),
     claimNextJob:        vi.fn().mockResolvedValue(job),
@@ -162,6 +163,23 @@ describe('SchedulerService — dispatch loop', () => {
 
     const headers = fetchMock.mock.calls[0][1].headers
     expect(headers['X-API-Key']).toBe('test-key')
+  })
+
+  it('chama upsertFromRoutine com o routineId correto e não chama upsertFromRoutines', async () => {
+    const routineId = 'routine-uuid-123'
+    const scrapingJobRepo = makeScrapingJobRepoMock(null)
+    const svc = new SchedulerService(
+      scrapingJobRepo,
+      makeFlightFaresRepoMock(),
+      makeNotifMock(),
+      makeEvalMock(),
+      makeEnv(),
+    )
+
+    await svc.dispatchOne(routineId)
+
+    expect(scrapingJobRepo.upsertFromRoutine).toHaveBeenCalledWith(routineId)
+    expect(scrapingJobRepo.upsertFromRoutines).not.toHaveBeenCalled()
   })
 
   it('não faz chamada HTTP se não houver job elegível', async () => {
