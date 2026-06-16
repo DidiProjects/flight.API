@@ -6,6 +6,7 @@ import { IBestFaresRepository } from '../../modules/scrape/interfaces/IBestFares
 import { IUnsubscribeTokensRepository } from '../../modules/unsubscribe/interfaces/IUnsubscribeTokensRepository'
 import { IUsersRepository } from '../../modules/users/interfaces/IUsersRepository'
 import { IEmailService, AirlineOfferPair, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
+import { LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 
@@ -187,6 +188,112 @@ export class NotificationsService implements INotificationsService {
         }
       }
     }
+  }
+
+  async hasRecentAlert(routineId: string, hours: number): Promise<boolean> {
+    return this.notifLogRepo.hasAlertSinceHours(routineId, hours)
+  }
+
+  async dispatchAlert(
+    routine: RoutineRow,
+    outboundFare: LatestFaresByDate,
+    returnFare: LatestFaresByDate | null,
+    history: PriceHistory,
+  ): Promise<void> {
+    const owner = await this.usersRepo.findById(routine.user_id)
+    if (!owner) {
+      log.warn({ routineId: routine.id, userId: routine.user_id }, 'dispatchAlert skipped — user not found')
+      return
+    }
+
+    const activeCc = routine.cc_emails.filter((c) => c.subscribed)
+    const primaryToken = await this.unsubTokensRepo.create(routine.id, owner.email, true)
+    const ccTokens = await Promise.all(
+      activeCc.map(async (c) => ({
+        email: c.email,
+        unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${await this.unsubTokensRepo.create(routine.id, c.email, false)}`,
+      })),
+    )
+
+    const fareToBlock = (fare: LatestFaresByDate, origin: string, destination: string): OfferBlock => ({
+      flightNumber:  '',
+      date:          fare.flight_date,
+      origin,
+      departureTime: fare.departure_time ?? '',
+      destination,
+      arrivalTime:   fare.arrival_time ?? '',
+      durationMin:   fare.duration_min ?? 0,
+      stops:         fare.stops ?? 0,
+      fareCash:      fare.fare_cash,
+      farePts:       fare.fare_pts,
+      fareHybPts:    fare.fare_hyb_pts,
+      fareHybCash:   fare.fare_hyb_cash,
+    })
+
+    const historySuffix = this.buildHistorySuffix(outboundFare, history, routine.priority)
+
+    const airlineOffers: AirlineOfferPair[] = [{
+      airline:  routine.airlines[0],
+      currency: routine.currency,
+      outbound: fareToBlock(outboundFare, routine.origin, routine.destination),
+      return:   returnFare ? fareToBlock(returnFare, routine.destination, routine.origin) : null,
+    }]
+
+    await this.emailSvc.sendFlightAlert({
+      primaryEmail:     owner.email,
+      primaryUnsubLink: `${this.env.API_BASE_URL}/unsubscribe/${primaryToken}`,
+      ccRecipients:     ccTokens,
+      subject:          `Oferta dentro do target — ${routine.name}${historySuffix}`,
+      routineName:      routine.name,
+      origin:           routine.origin,
+      destination:      routine.destination,
+      airlineOffers,
+      passengers:       routine.passengers,
+      fareType:         routine.priority,
+    })
+
+    log.info({
+      routineId:    routine.id,
+      userId:       owner.id,
+      routineName:  routine.name,
+      airline:      routine.airlines[0],
+      flightDate:   outboundFare.flight_date,
+      fareCash:     outboundFare.fare_cash,
+      farePts:      outboundFare.fare_pts,
+      avgCash30d:   history.avg_cash_30d,
+      type:         'alert',
+      status:       'success',
+    }, 'evaluation alert dispatched')
+
+    await this.notifLogRepo.insert({
+      routineId:      routine.id,
+      airline:        routine.airlines[0],
+      type:           'alert',
+      fareType:       routine.priority,
+      outboundAmount: this.fareAmount(outboundFare, routine.priority),
+      returnAmount:   returnFare ? this.fareAmount(returnFare, routine.priority) : null,
+      emailTo:        owner.email,
+      emailCc:        activeCc.map((c) => c.email).join(',') || null,
+    })
+  }
+
+  private fareAmount(fare: LatestFaresByDate, priority: string): number | null {
+    if (priority === 'cash') return fare.fare_cash
+    if (priority === 'pts')  return fare.fare_pts
+    if (priority === 'hyb')  return fare.fare_hyb_pts
+    return null
+  }
+
+  private buildHistorySuffix(fare: LatestFaresByDate, history: PriceHistory, priority: string): string {
+    if (priority === 'cash' && fare.fare_cash != null && history.avg_cash_30d != null) {
+      const pct = Math.round(((history.avg_cash_30d - fare.fare_cash) / history.avg_cash_30d) * 100)
+      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+    }
+    if (priority === 'pts' && fare.fare_pts != null && history.avg_pts_30d != null) {
+      const pct = Math.round(((history.avg_pts_30d - fare.fare_pts) / history.avg_pts_30d) * 100)
+      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+    }
+    return ''
   }
 
   // ---------------------------------------------------------------------------

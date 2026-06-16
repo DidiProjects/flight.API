@@ -18,6 +18,7 @@ import { airportsRoute, airportsScrapeRoute } from './modules/airports/route'
 import { routinesRoute }    from './modules/routines/route'
 import { scrapeRoute }      from './modules/scrape/route'
 import { unsubscribeRoute } from './modules/unsubscribe/route'
+import { flightFaresRoute } from './modules/flight-fares/route'
 
 export interface JWTPayload {
   sub: string
@@ -89,6 +90,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await api.register(scrapeRoute(container.scrapeSvc),              { prefix: '/scrape' })
     await api.register(airportsScrapeRoute(container.airportsSvc),    { prefix: '/scrape' })
     await api.register(unsubscribeRoute(container.unsubSvc),          { prefix: '/unsubscribe' })
+    await api.register(flightFaresRoute(container.flightFaresRepo),   { prefix: '/fares' })
   }, { prefix: '/flight' })
 
   return app

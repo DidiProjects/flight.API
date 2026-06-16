@@ -73,6 +73,13 @@ export class RoutinesRepository implements IRoutinesRepository {
     return rows
   }
 
+  async findAllActive(): Promise<RoutineRow[]> {
+    const { rows } = await this.db.query<RoutineRow>(
+      selectWithAirlines('WHERE r.is_active = true'),
+    )
+    return rows
+  }
+
   async findActiveForScheduled(currentTime: string): Promise<RoutineRow[]> {
     const { rows } = await this.db.query<RoutineRow>(
       `${selectWithAirlines(`WHERE r.is_active = true

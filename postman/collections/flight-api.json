@@ -1063,6 +1063,50 @@
       ]
     },
     {
+      "name": "Fares",
+      "item": [
+        {
+          "name": "GET /fares/history",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fares/history?airline=azul&origin=VCP&destination=GRU&flight_date=2026-08-15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fares",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "airline",
+                  "value": "azul",
+                  "description": "Código da companhia aérea"
+                },
+                {
+                  "key": "origin",
+                  "value": "VCP",
+                  "description": "IATA de origem"
+                },
+                {
+                  "key": "destination",
+                  "value": "GRU",
+                  "description": "IATA de destino"
+                },
+                {
+                  "key": "flight_date",
+                  "value": "2026-08-15",
+                  "description": "Data do voo (YYYY-MM-DD)"
+                }
+              ]
+            },
+            "description": "Retorna agregado diário de preços (flight_fares_daily) para sparkline. Requer JWT."
+          }
+        }
+      ]
+    },
+    {
       "name": "Scrape",
       "item": [
         {
@@ -1094,7 +1138,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"requestId\": \"\",\n  \"routineId\": \"\",\n  \"airline\": \"azul\",\n  \"offers\": []\n}",
+              "raw": "{\n  \"requestId\": \"00000000-0000-0000-0000-000000000001\",\n  \"routineId\": \"00000000-0000-0000-0000-000000000002\",\n  \"origin\": \"VCP\",\n  \"destination\": \"GRU\",\n  \"flights\": [\n    {\n      \"flightNumber\": \"AD1234\",\n      \"date\": \"2026-08-15\",\n      \"isReturn\": false,\n      \"origin\": \"VCP\",\n      \"destination\": \"GRU\",\n      \"departureTime\": \"10:00\",\n      \"arrivalTime\": \"11:45\",\n      \"durationMin\": 105,\n      \"stops\": 0,\n      \"currency\": \"BRL\",\n      \"fareCash\": 450.50,\n      \"farePts\": 25000,\n      \"fareHybPts\": 18711,\n      \"fareHybCash\": 3065.31\n    }\n  ],\n  \"scrapedAt\": \"2026-08-01T15:30:45.123Z\",\n  \"error\": null\n}\n\n// routineId: agora contém o scraping_job.id (não mais o routine.id)\n// flights: array de passagens (antigo campo era \"offers\")",
               "options": {
                 "raw": {
                   "language": "json"
