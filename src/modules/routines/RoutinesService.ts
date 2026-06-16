@@ -128,6 +128,36 @@ export class RoutinesService implements IRoutinesService {
     return routine
   }
 
+  async adminUpdateRoutine(
+    id: string,
+    fields: Partial<Omit<CreateRoutineData, 'userId'>>,
+  ): Promise<RoutineRow> {
+    const existing = await this.routinesRepo.findByIdAdmin(id)
+    if (!existing) throw new NotFoundError('Rotina não encontrada')
+
+    if (fields.airlines && fields.airlines.length > 0) {
+      const airlineRows = []
+      for (const code of fields.airlines) {
+        const airline = await this.airlinesRepo.findByCode(code)
+        if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
+        airlineRows.push(airline)
+      }
+      const currencies = [...new Set(airlineRows.map((a) => a.currency).filter(Boolean))]
+      if (currencies.length > 1) {
+        throw new BadRequestError(
+          `Todas as companhias devem usar a mesma moeda (${airlineRows.map((a) => `${a.code}=${a.currency}`).join(', ')})`,
+        )
+      }
+      const updateCurrency = currencies[0]
+      if (!updateCurrency) throw new BadRequestError('Companhia sem moeda configurada')
+      fields = { ...fields, currency: updateCurrency }
+    }
+
+    const updated = await this.routinesRepo.updateById(id, fields)
+    if (!updated) throw new NotFoundError('Rotina não encontrada')
+    return updated
+  }
+
   async adminActivate(id: string): Promise<RoutineRow> {
     const existing = await this.routinesRepo.findByIdAdmin(id)
     if (!existing) throw new NotFoundError('Rotina não encontrada')

@@ -4,12 +4,24 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "accessToken",  "value": "" },
-    { "key": "refreshToken", "value": "" }
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "refreshToken",
+      "value": ""
+    }
   ],
   "auth": {
     "type": "bearer",
-    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
   },
   "item": [
     {
@@ -18,12 +30,18 @@
         {
           "name": "GET /health",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/health",
-              "host": ["{{baseUrl}}"],
-              "path": ["health"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
             }
           }
         }
@@ -50,18 +68,34 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/auth/login",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "login"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"\",\n  \"password\": \"\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -83,18 +117,34 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/auth/refresh",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "refresh"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -116,16 +166,30 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/auth/logout",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "logout"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -148,53 +212,105 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/auth/change-password",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "change-password"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "change-password"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"currentPassword\": \"\",\n  \"newPassword\": \"\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
         {
           "name": "POST /auth/forgot-password",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/auth/forgot-password",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "forgot-password"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "forgot-password"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
         {
           "name": "POST /auth/reset-password/:token",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/auth/reset-password/:token",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "reset-password", ":token"],
-              "variable": [{ "key": "token", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "reset-password",
+                ":token"
+              ],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": ""
+                }
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"password\": \"\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         }
@@ -206,18 +322,33 @@
         {
           "name": "POST /register",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/register",
-              "host": ["{{baseUrl}}"],
-              "path": ["register"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "register"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"\",\n  \"email\": \"\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         }
@@ -232,12 +363,26 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/users?page=1&limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["users"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ],
               "query": [
-                { "key": "page",   "value": "1" },
-                { "key": "limit",  "value": "20" },
-                { "key": "status", "value": "", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -248,12 +393,25 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/users?page=1&limit=20&status=pending",
-              "host": ["{{baseUrl}}"],
-              "path": ["users"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ],
               "query": [
-                { "key": "page",   "value": "1" },
-                { "key": "limit",  "value": "20" },
-                { "key": "status", "value": "pending" }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": "pending"
+                }
               ]
             }
           }
@@ -264,9 +422,19 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/users/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["users", ":id"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -274,17 +442,37 @@
           "name": "PATCH /users/:id/approve",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/users/:id/approve",
-              "host": ["{{baseUrl}}"],
-              "path": ["users", ":id", "approve"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                ":id",
+                "approve"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"role\": \"user\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -292,17 +480,36 @@
           "name": "PATCH /users/:id",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/users/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["users", ":id"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"role\": \"user\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -312,9 +519,19 @@
             "method": "DELETE",
             "url": {
               "raw": "{{baseUrl}}/users/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["users", ":id"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             }
           }
         }
@@ -329,8 +546,12 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/airlines",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines"
+              ]
             }
           }
         },
@@ -340,8 +561,13 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/airlines/admin",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines", "admin"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines",
+                "admin"
+              ]
             }
           }
         },
@@ -349,16 +575,29 @@
           "name": "POST /airlines",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/airlines",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"code\": \"LA\",\n  \"name\": \"LATAM Airlines\",\n  \"currency\": \"BRL\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -368,9 +607,20 @@
             "method": "PATCH",
             "url": {
               "raw": "{{baseUrl}}/airlines/:code/activate",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines", ":code", "activate"],
-              "variable": [{ "key": "code", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines",
+                ":code",
+                "activate"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -380,9 +630,20 @@
             "method": "PATCH",
             "url": {
               "raw": "{{baseUrl}}/airlines/:code/deactivate",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines", ":code", "deactivate"],
-              "variable": [{ "key": "code", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines",
+                ":code",
+                "deactivate"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -390,17 +651,37 @@
           "name": "PATCH /airlines/:code/fare-types",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/airlines/:code/fare-types",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines", ":code", "fare-types"],
-              "variable": [{ "key": "code", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines",
+                ":code",
+                "fare-types"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": ""
+                }
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"hasCash\": true,\n  \"hasPts\": true,\n  \"hasHyb\": false\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -410,9 +691,85 @@
             "method": "DELETE",
             "url": {
               "raw": "{{baseUrl}}/airlines/:code",
-              "host": ["{{baseUrl}}"],
-              "path": ["airlines", ":code"],
-              "variable": [{ "key": "code", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines",
+                ":code"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "PUT /airlines/admin/:code/coverage",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/airlines/admin/:code/coverage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines",
+                "admin",
+                ":code",
+                "coverage"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "azul"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"airports\": [\n    {\n      \"code\": \"VCP\",\n      \"name\": \"Viracopos\",\n      \"timezone\": \"America/Sao_Paulo\",\n      \"countryCode\": \"br\",\n      \"countryName\": \"Brasil\",\n      \"city\": \"Campinas\",\n      \"region\": \"Sudeste\",\n      \"currency\": \"BRL\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Airports",
+      "item": [
+        {
+          "name": "GET /airports?airline=",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/airports?airline=azul",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airports"
+              ],
+              "query": [
+                {
+                  "key": "airline",
+                  "value": "azul",
+                  "description": "Código da companhia aérea"
+                }
+              ]
             }
           }
         }
@@ -427,8 +784,12 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/routines",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines"
+              ]
             }
           }
         },
@@ -436,16 +797,29 @@
           "name": "POST /routines",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/routines",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines"
+              ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"\",\n  \"airlines\": [\"azul\"],\n  \"origin\": \"\",\n  \"destination\": \"\",\n  \"outboundStart\": \"2026-01-01\",\n  \"outboundEnd\": \"2026-01-07\",\n  \"returnStart\": null,\n  \"returnEnd\": null,\n  \"passengers\": 1,\n  \"targetCash\": null,\n  \"targetPts\": null,\n  \"targetHybPts\": null,\n  \"targetHybCash\": null,\n  \"margin\": 0.1,\n  \"priority\": \"cash\",\n  \"notificationMode\": \"alert_only\",\n  \"notificationFrequency\": \"hourly\",\n  \"endOfPeriodTime\": null,\n  \"ccEmails\": [],\n  \"isActive\": true\n}\n\n// airlines: string[] — mín. 1 airline. Cada airline gera um scrape paralelo (fan-out).\n//   Exemplo multi-airline: [\"azul\", \"latam\", \"gol\"]\n//   currency é derivado automaticamente das airlines selecionadas (não enviar no body).\n//   Todas as airlines da rotina devem compartilhar a mesma currency.\n//   O email é consolidado: aguarda todas as airlines reportarem e envia um único email\n//   com seções separadas para cada airline que passou o critério de target + melhora.\n//\n// notificationMode: alert_only | daily_best_and_alert | end_of_period\n//   alert_only           — alerta quando preço supera o melhor anterior E está dentro do target\n//   daily_best_and_alert — idem + resumo diário às 20h (BRT) se preço estiver dentro do target e tiver mudado\n//   end_of_period        — apenas no horário agendado (endOfPeriodTime)\n//\n// notificationFrequency: hourly | daily | monthly\n//   hourly  — sem cooldown entre alertas (cada ciclo de scraping pode disparar)\n//   daily   — máximo 1 alerta por dia (janela BRT)\n//   monthly — máximo 1 alerta por mês\n//\n// Referência de comparação: último email enviado nos últimos 60 dias (por airline)\n// daily_best só dispara se: preço dentro do target E diferente do último best_of_day",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"name\": \"\",\n  \"airlines\": [\"azul\"],\n  \"origin\": \"\",\n  \"destination\": \"\",\n  \"outboundStart\": \"2026-01-01\",\n  \"outboundEnd\": \"2026-01-07\",\n  \"returnStart\": null,\n  \"returnEnd\": null,\n  \"passengers\": 1,\n  \"targetCash\": null,\n  \"targetPts\": null,\n  \"targetHybPts\": null,\n  \"targetHybCash\": null,\n  \"margin\": 0.1,\n  \"priority\": \"cash\",\n  \"notificationModes\": [\"scheduled\"],\n  \"notificationFrequency\": \"hourly\",\n  \"scheduledTime\": \"20:00\",\n  \"ccEmails\": [],\n  \"isActive\": true\n}\n\n// notificationModes: array com um ou mais de: \"target\" | \"scheduled\"\n//   target    — alerta imediato quando preço atinge o valor alvo\n//               Requer: targetCash | targetPts | (targetHybPts + targetHybCash)\n//               Requer: notificationFrequency\n//   scheduled — resumo diário no horário scheduledTime (default 20:00)\n//\n// notificationFrequency: hourly | daily | monthly  (obrigatório apenas com \"target\")\n//   hourly  — sem cooldown entre alertas\n//   daily   — máximo 1 alerta por dia\n//   monthly — máximo 1 alerta por mês\n//\n// scheduledTime: \"HH:MM\" (obrigatório apenas com \"scheduled\", default \"20:00\")",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -455,9 +829,19 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/routines/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", ":id"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -465,17 +849,36 @@
           "name": "PATCH /routines/:id",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/routines/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", ":id"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"targetCash\": null\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -485,9 +888,19 @@
             "method": "DELETE",
             "url": {
               "raw": "{{baseUrl}}/routines/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", ":id"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -497,9 +910,20 @@
             "method": "PATCH",
             "url": {
               "raw": "{{baseUrl}}/routines/:id/activate",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", ":id", "activate"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                ":id",
+                "activate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -509,9 +933,58 @@
             "method": "PATCH",
             "url": {
               "raw": "{{baseUrl}}/routines/:id/deactivate",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", ":id", "deactivate"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                ":id",
+                "deactivate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "PATCH /routines/admin/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/routines/admin/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                "admin",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rotina editada pelo admin\",\n  \"airlines\": [\n    \"AD\"\n  ],\n  \"origin\": \"GRU\",\n  \"destination\": \"CGH\",\n  \"outboundStart\": \"2026-07-01\",\n  \"outboundEnd\": \"2026-07-31\",\n  \"returnStart\": null,\n  \"returnEnd\": null,\n  \"passengers\": 1,\n  \"targetCash\": 300.0,\n  \"targetPts\": null,\n  \"targetHybPts\": null,\n  \"targetHybCash\": null,\n  \"margin\": 0.1,\n  \"priority\": \"cash\",\n  \"notificationModes\": [\n    \"target\"\n  ],\n  \"notificationFrequency\": \"hourly\",\n  \"scheduledTime\": null,\n  \"ccEmails\": [],\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -521,9 +994,21 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/routines/admin/users/:userId",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", "admin", "users", ":userId"],
-              "variable": [{ "key": "userId", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                "admin",
+                "users",
+                ":userId"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -533,9 +1018,22 @@
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/routines/admin/users/:userId/best-fares",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", "admin", "users", ":userId", "best-fares"],
-              "variable": [{ "key": "userId", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                "admin",
+                "users",
+                ":userId",
+                "best-fares"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": ""
+                }
+              ]
             }
           }
         },
@@ -545,10 +1043,65 @@
             "method": "POST",
             "url": {
               "raw": "{{baseUrl}}/routines/:id/dispatch",
-              "host": ["{{baseUrl}}"],
-              "path": ["routines", ":id", "dispatch"],
-              "variable": [{ "key": "id", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                ":id",
+                "dispatch"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fares",
+      "item": [
+        {
+          "name": "GET /fares/history",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fares/history?airline=azul&origin=VCP&destination=GRU&flight_date=2026-08-15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fares",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "airline",
+                  "value": "azul",
+                  "description": "Código da companhia aérea"
+                },
+                {
+                  "key": "origin",
+                  "value": "VCP",
+                  "description": "IATA de origem"
+                },
+                {
+                  "key": "destination",
+                  "value": "GRU",
+                  "description": "IATA de destino"
+                },
+                {
+                  "key": "flight_date",
+                  "value": "2026-08-15",
+                  "description": "Data do voo (YYYY-MM-DD)"
+                }
+              ]
+            },
+            "description": "Retorna agregado diário de preços (flight_fares_daily) para sparkline. Requer JWT."
           }
         }
       ]
@@ -559,21 +1112,76 @@
         {
           "name": "POST /scrape/results",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "x-api-key",    "value": "" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": ""
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/scrape/results",
-              "host": ["{{baseUrl}}"],
-              "path": ["scrape", "results"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scrape",
+                "results"
+              ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"requestId\": \"\",\n  \"routineId\": \"\",\n  \"airline\": \"azul\",\n  \"offers\": []\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"requestId\": \"00000000-0000-0000-0000-000000000001\",\n  \"routineId\": \"00000000-0000-0000-0000-000000000002\",\n  \"origin\": \"VCP\",\n  \"destination\": \"GRU\",\n  \"flights\": [\n    {\n      \"flightNumber\": \"AD1234\",\n      \"date\": \"2026-08-15\",\n      \"isReturn\": false,\n      \"origin\": \"VCP\",\n      \"destination\": \"GRU\",\n      \"departureTime\": \"10:00\",\n      \"arrivalTime\": \"11:45\",\n      \"durationMin\": 105,\n      \"stops\": 0,\n      \"currency\": \"BRL\",\n      \"fareCash\": 450.50,\n      \"farePts\": 25000,\n      \"fareHybPts\": 18711,\n      \"fareHybCash\": 3065.31\n    }\n  ],\n  \"scrapedAt\": \"2026-08-01T15:30:45.123Z\",\n  \"error\": null\n}\n\n// routineId: agora contém o scraping_job.id (não mais o routine.id)\n// flights: array de passagens (antigo campo era \"offers\")",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST /scrape/coverage",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scrape/coverage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scrape",
+                "coverage"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"airline\": \"ryanair\",\n  \"airports\": [\n    {\n      \"code\": \"LIS\",\n      \"name\": \"Lisboa\",\n      \"timezone\": \"Europe/Lisbon\",\n      \"countryCode\": \"pt\",\n      \"countryName\": \"Portugal\",\n      \"city\": \"Lisboa\",\n      \"region\": \"Lisboa\",\n      \"currency\": \"EUR\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         }
@@ -585,13 +1193,25 @@
         {
           "name": "GET /unsubscribe/:token",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": {
               "raw": "{{baseUrl}}/unsubscribe/:token",
-              "host": ["{{baseUrl}}"],
-              "path": ["unsubscribe", ":token"],
-              "variable": [{ "key": "token", "value": "" }]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "unsubscribe",
+                ":token"
+              ],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": ""
+                }
+              ]
             }
           }
         }

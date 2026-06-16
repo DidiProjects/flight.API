@@ -1,39 +1,95 @@
 import { randomUUID } from 'crypto'
 import { ISchedulerService } from './interfaces/ISchedulerService'
-import { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
+import { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
+import { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
+import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
 import { Env } from '../../config/env'
-import { NotFoundError } from '../../utils/errors'
-import { RoutineRow } from '../../types'
 import { logger } from '../../utils/logger'
 
 const log = logger.child({ service: 'scheduler' })
 
+interface CircuitBreakerState {
+  failures: number
+  state: 'closed' | 'open' | 'half-open'
+  openedAt?: number
+}
+
+const CIRCUIT_THRESHOLD = 5
+const CIRCUIT_COOLDOWN_MS = 15 * 60 * 1000
+const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000
+const EVALUATION_INTERVAL_MS = 5 * 60 * 1000
+const DAILY_TICK_INTERVAL_MS = 60_000
+
+function daysBetween(a: Date, b: Date): number {
+  return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function calcNextRunAt(flightDate: string): Date {
+  const days = daysBetween(new Date(), new Date(flightDate))
+  const intervalMs =
+    days <= 7  ? 2  * 60 * 60 * 1000 :
+    days <= 14 ? 3  * 60 * 60 * 1000 :
+    days <= 30 ? 6  * 60 * 60 * 1000 :
+    days <= 60 ? 12 * 60 * 60 * 1000 :
+                 24 * 60 * 60 * 1000
+  return new Date(Date.now() + intervalMs)
+}
+
+function calcBackoffNextRunAt(retryCount: number): Date {
+  const BASE_MS = 60_000
+  const CAP_MS = 30 * 60_000
+  const jitter = Math.random() * 30_000
+  const delay = Math.min(CAP_MS, BASE_MS * Math.pow(2, retryCount)) + jitter
+  return new Date(Date.now() + delay)
+}
+
+export { calcNextRunAt, calcBackoffNextRunAt }
+
 export class SchedulerService implements ISchedulerService {
+  private readonly circuitBreakers = new Map<string, CircuitBreakerState>()
+
   constructor(
-    private readonly routinesRepo: IRoutinesRepository,
+    private readonly scrapingJobRepo: IScrapingJobRepository,
+    private readonly flightFaresRepo: IFlightFaresRepository,
     private readonly notifSvc: INotificationsService,
+    private readonly evaluationSvc: IEvaluationService,
     private readonly env: Env,
   ) {}
 
   start(): void {
-    this.scheduleScrapeLoop()
+    this.scheduleJobDerivation()
+    this.scheduleJobDispatch()
+    this.scheduleHeartbeat()
+    this.scheduleEvaluation()
     this.scheduleDailyJobs()
   }
 
+  async dispatchOne(id: string): Promise<void> {
+    log.info({ jobId: id }, 'dispatchOne: forcing upsert and dispatch')
+    await this.scrapingJobRepo.upsertFromRoutines()
+    await this.dispatchForAirlines()
+  }
+
   // ---------------------------------------------------------------------------
-  // Scrape loop
+  // Job derivation loop — runs every SCRAPE_INTERVAL_MS
   // ---------------------------------------------------------------------------
 
-  private scheduleScrapeLoop(): void {
+  private scheduleJobDerivation(): void {
     const tick = async () => {
       try {
-        await this.dispatchAll()
+        const expired = await this.scrapingJobRepo.expireOldJobs()
+        if (expired > 0) log.info({ expired }, 'scraping jobs expired')
+
+        const upserted = await this.scrapingJobRepo.upsertFromRoutines()
+        if (upserted > 0) log.info({ upserted }, 'scraping jobs upserted from routines')
+
+        await this.scrapingJobRepo.updatePriorities()
       } catch (err) {
-        log.error({ err }, 'Scheduler scrape error')
+        log.error({ err }, 'job derivation error')
       } finally {
         const jitter = (Math.random() * 2 - 1) * this.env.SCRAPE_INTERVAL_JITTER_MS
-        const delay  = Math.max(this.env.SCRAPE_INTERVAL_MS + jitter, 60_000)
+        const delay = Math.max(this.env.SCRAPE_INTERVAL_MS + jitter, 60_000)
         setTimeout(tick, delay)
       }
     }
@@ -41,68 +97,123 @@ export class SchedulerService implements ISchedulerService {
     setTimeout(tick, initial)
   }
 
-  async dispatchOne(id: string): Promise<void> {
-    const routine = await this.routinesRepo.findByIdAdmin(id)
-    if (!routine) throw new NotFoundError('Rotina não encontrada')
-    await this.dispatchRoutine(routine)
-  }
+  // ---------------------------------------------------------------------------
+  // Dispatch loop — runs every SCRAPE_INTERVAL_MS
+  // ---------------------------------------------------------------------------
 
-  private async dispatchAll(): Promise<void> {
-    const expired = await this.routinesRepo.deactivateExpired()
-    if (expired > 0) log.info({ expired }, 'Scheduler: rotinas desativadas por data vencida')
-    const routines = await this.routinesRepo.findDispatchable()
-    log.info({ count: routines.length }, 'Scheduler: scrape cycle')
-    for (const routine of routines) {
+  private scheduleJobDispatch(): void {
+    const tick = async () => {
       try {
-        await this.dispatchRoutine(routine)
-      } catch {
-        // error already logged in dispatchRoutine
-      }
-    }
-  }
-
-  private toDateStr(v: string | Date): string {
-    return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
-  }
-
-  private async dispatchRoutine(routine: RoutineRow): Promise<void> {
-    for (const airline of routine.airlines) {
-      const requestId = randomUUID()
-      await this.routinesRepo.setPendingRequest(routine.id, airline, requestId)
-
-      const payload = {
-        requestId,
-        routineId:     routine.id,
-        airline,
-        origin:        routine.origin,
-        destination:   routine.destination,
-        outboundStart: this.toDateStr(routine.outbound_start),
-        outboundEnd:   this.toDateStr(routine.outbound_end),
-        ...(routine.return_start && { returnStart: this.toDateStr(routine.return_start) }),
-        ...(routine.return_end   && { returnEnd:   this.toDateStr(routine.return_end) }),
-        passengers:    routine.passengers,
-      }
-
-      log.info({ ...payload, userId: routine.user_id, routineName: routine.name }, 'dispatching to scraping.API')
-
-      try {
-        const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', 'X-API-Key': this.env.SCRAPING_API_KEY },
-          body:    JSON.stringify(payload),
-          signal:  AbortSignal.timeout(10_000),
-        })
-        if (!res.ok) {
-          const body = await res.text().catch(() => '')
-          throw new Error(`scraping.API ${res.status}: ${body}`)
-        }
-        log.info({ routineId: routine.id, userId: routine.user_id, airline, requestId, httpStatus: res.status, status: 'success' }, 'scraping.API accepted')
+        await this.dispatchForAirlines()
       } catch (err) {
-        await this.routinesRepo.clearPendingRequest(routine.id, airline)
-        log.error({ err, routineId: routine.id, airline, requestId, status: 'error' }, 'scraping.API request failed')
-        // Do not throw — continue with remaining airlines
+        log.error({ err }, 'dispatch loop error')
+      } finally {
+        const jitter = (Math.random() * 2 - 1) * this.env.SCRAPE_INTERVAL_JITTER_MS
+        const delay = Math.max(this.env.SCRAPE_INTERVAL_MS + jitter, 60_000)
+        setTimeout(tick, delay)
       }
     }
+    const initial = this.env.SCRAPE_INTERVAL_MS + Math.random() * this.env.SCRAPE_INTERVAL_JITTER_MS
+    setTimeout(tick, initial)
+  }
+
+  private async dispatchForAirlines(): Promise<void> {
+    const airlines = await this.scrapingJobRepo.getActiveAirlines()
+    for (const airline of airlines) {
+      if (this.isCircuitOpen(airline)) {
+        log.warn({ airline }, 'circuit_breaker_open: skipping airline')
+        continue
+      }
+      await this.dispatchNextJob(airline)
+    }
+  }
+
+  private async dispatchNextJob(airline: string): Promise<void> {
+    const job = await this.scrapingJobRepo.claimNextJob(airline)
+    if (!job) return
+
+    log.info({ jobId: job.id, airline: job.airline, priority: job.priority }, 'scraping_job_claimed')
+
+    const requestId = randomUUID()
+    await this.scrapingJobRepo.markRunning(job.id, requestId)
+
+    const payload = {
+      requestId,
+      routineId:     job.id,
+      airline:       job.airline,
+      origin:        job.origin,
+      destination:   job.destination,
+      outboundStart: job.flight_date,
+      outboundEnd:   job.flight_date,
+      passengers:    1,
+    }
+
+    log.info({
+      airline:     job.airline,
+      origin:      job.origin,
+      destination: job.destination,
+      flight_date: job.flight_date,
+      requestId,
+    }, 'scraping_job_dispatched')
+
+    try {
+      const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': this.env.SCRAPING_API_KEY },
+        body:    JSON.stringify(payload),
+        signal:  AbortSignal.timeout(10_000),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`scraping.API ${res.status}: ${body}`)
+      }
+      this.recordSuccess(airline)
+    } catch (err) {
+      this.recordFailure(airline)
+      const nextRunAt = calcBackoffNextRunAt(job.retry_count)
+      if (job.retry_count + 1 >= job.max_retries) {
+        await this.scrapingJobRepo.markDead(job.id, String(err))
+        log.error({ jobId: job.id, airline, err }, 'scraping_job_dead: max retries reached on dispatch')
+      } else {
+        await this.scrapingJobRepo.markFailed(job.id, String(err), nextRunAt)
+        log.error({ jobId: job.id, airline, err }, 'scraping.API request failed')
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Heartbeat — runs every 2 minutes
+  // ---------------------------------------------------------------------------
+
+  private scheduleHeartbeat(): void {
+    const tick = async () => {
+      try {
+        const count = await this.scrapingJobRepo.recoverStuckJobs()
+        if (count > 0) log.info({ count }, 'heartbeat_recovered')
+      } catch (err) {
+        log.error({ err }, 'heartbeat error')
+      } finally {
+        setTimeout(tick, HEARTBEAT_INTERVAL_MS)
+      }
+    }
+    setTimeout(tick, HEARTBEAT_INTERVAL_MS)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Evaluation loop — runs every 5 minutes
+  // ---------------------------------------------------------------------------
+
+  private scheduleEvaluation(): void {
+    const tick = async () => {
+      try {
+        await this.evaluationSvc.runCycle()
+      } catch (err) {
+        log.error({ err }, 'evaluation loop error')
+      } finally {
+        setTimeout(tick, EVALUATION_INTERVAL_MS)
+      }
+    }
+    setTimeout(tick, EVALUATION_INTERVAL_MS)
   }
 
   // ---------------------------------------------------------------------------
@@ -112,21 +223,74 @@ export class SchedulerService implements ISchedulerService {
   private scheduleDailyJobs(): void {
     const tick = async () => {
       try {
-        await this.notifSvc.sendEndOfPeriod()
-        await this.maybeSendDailyBest()
+        await this.runDailyTasks()
       } catch (err) {
-        log.error({ err }, 'Daily job error')
+        log.error({ err }, 'daily jobs error')
       } finally {
-        setTimeout(tick, 60_000)
+        setTimeout(tick, DAILY_TICK_INTERVAL_MS)
       }
     }
-    setTimeout(tick, 60_000)
+    setTimeout(tick, DAILY_TICK_INTERVAL_MS)
   }
 
-  private async maybeSendDailyBest(): Promise<void> {
+  private async runDailyTasks(): Promise<void> {
+    await this.notifSvc.sendScheduled()
+
     const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
     const d = new Date(now)
-    if (d.getHours() !== 20 || d.getMinutes() !== 0) return
-    await this.notifSvc.sendDailyBest()
+    const hours = d.getHours()
+    const minutes = d.getMinutes()
+
+    if (hours === 2 && minutes === 0) {
+      const yesterday = new Date(d)
+      yesterday.setDate(yesterday.getDate() - 1)
+      const bucketDate = yesterday.toISOString().slice(0, 10)
+
+      const aggregated = await this.flightFaresRepo.aggregateToDailyBucket(bucketDate)
+      log.info({ bucketDate, aggregated }, 'daily bucket aggregated')
+
+      const deleted = await this.flightFaresRepo.cleanupOlderThan(30)
+      log.info({ deleted }, 'flight_fares cleanup: old raw data removed')
+
+      const deadCleaned = await this.scrapingJobRepo.cleanupDeadJobs()
+      log.info({ deadCleaned }, 'scraping_jobs cleanup: dead jobs removed')
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Circuit breaker
+  // ---------------------------------------------------------------------------
+
+  private isCircuitOpen(airline: string): boolean {
+    const cb = this.circuitBreakers.get(airline)
+    if (!cb) return false
+    if (cb.state === 'open') {
+      if (cb.openedAt && Date.now() - cb.openedAt > CIRCUIT_COOLDOWN_MS) {
+        cb.state = 'half-open'
+        return false
+      }
+      return true
+    }
+    return false
+  }
+
+  private recordSuccess(airline: string): void {
+    const cb = this.circuitBreakers.get(airline)
+    if (!cb) return
+    if (cb.state === 'half-open') {
+      log.info({ airline }, 'circuit_breaker_closed')
+    }
+    this.circuitBreakers.set(airline, { failures: 0, state: 'closed' })
+  }
+
+  private recordFailure(airline: string): void {
+    const current = this.circuitBreakers.get(airline) ?? { failures: 0, state: 'closed' as const }
+    const failures = current.failures + 1
+    if (failures >= CIRCUIT_THRESHOLD) {
+      log.warn({ airline, consecutiveFailures: failures }, 'circuit_breaker_open')
+      this.circuitBreakers.set(airline, { failures, state: 'open', openedAt: Date.now() })
+    } else {
+      this.circuitBreakers.set(airline, { ...current, failures })
+    }
   }
 }

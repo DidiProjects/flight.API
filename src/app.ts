@@ -14,9 +14,11 @@ import { authRoute }        from './modules/auth/route'
 import { registerRoute }    from './modules/register/route'
 import { usersRoute }       from './modules/users/route'
 import { airlinesRoute }    from './modules/airlines/route'
+import { airportsRoute, airportsScrapeRoute } from './modules/airports/route'
 import { routinesRoute }    from './modules/routines/route'
 import { scrapeRoute }      from './modules/scrape/route'
 import { unsubscribeRoute } from './modules/unsubscribe/route'
+import { flightFaresRoute } from './modules/flight-fares/route'
 
 export interface JWTPayload {
   sub: string
@@ -82,10 +84,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     await api.register(authRoute(container.authSvc),                  { prefix: '/auth' })
     await api.register(registerRoute(container.usersSvc),             { prefix: '/register' })
     await api.register(usersRoute(container.usersSvc),                { prefix: '/users' })
-    await api.register(airlinesRoute(container.airlinesSvc),          { prefix: '/airlines' })
+    await api.register(airlinesRoute(container.airlinesSvc, container.airportsSvc), { prefix: '/airlines' })
+    await api.register(airportsRoute(container.airportsSvc),          { prefix: '/airports' })
     await api.register(routinesRoute(container.routinesSvc, container.schedulerSvc, container.bestFaresSvc), { prefix: '/routines' })
     await api.register(scrapeRoute(container.scrapeSvc),              { prefix: '/scrape' })
+    await api.register(airportsScrapeRoute(container.airportsSvc),    { prefix: '/scrape' })
     await api.register(unsubscribeRoute(container.unsubSvc),          { prefix: '/unsubscribe' })
+    await api.register(flightFaresRoute(container.flightFaresRepo),   { prefix: '/fares' })
   }, { prefix: '/flight' })
 
   return app

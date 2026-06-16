@@ -5,13 +5,14 @@ import { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutines
 import { IBestFaresRepository } from '../../modules/scrape/interfaces/IBestFaresRepository'
 import { IUnsubscribeTokensRepository } from '../../modules/unsubscribe/interfaces/IUnsubscribeTokensRepository'
 import { IUsersRepository } from '../../modules/users/interfaces/IUsersRepository'
-import { IEmailService, AirlineOfferPair, OfferBlock } from '../email/interfaces/IEmailService'
+import { IEmailService, AirlineOfferPair, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
+import { LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 
 const log = logger.child({ service: 'notifications' })
 
-type AlertType = 'alert' | 'best_of_day' | 'end_of_period'
+type AlertType = 'alert' | 'best_of_day' | 'scheduled'
 type QualifyingAirline = { outbound: BestFareRow; return: BestFareRow | null }
 
 export class NotificationsService implements INotificationsService {
@@ -33,12 +34,12 @@ export class NotificationsService implements INotificationsService {
       airlines: routine.airlines,
       origin: routine.origin,
       destination: routine.destination,
-      mode: routine.notification_mode,
+      modes: routine.notification_modes,
       priority: routine.priority,
     }
 
-    if (routine.notification_mode === 'end_of_period') {
-      log.debug(ctx, 'evaluate skipped — end_of_period mode (handled by scheduler)')
+    if (!routine.notification_modes.includes('target')) {
+      log.debug(ctx, 'evaluate skipped — no "target" mode (handled by scheduled job)')
       return
     }
 
@@ -50,6 +51,7 @@ export class NotificationsService implements INotificationsService {
     ])
 
     if (bestOut.length === 0) {
+      await this.checkStale(routine.id, routine.priority, ctx)
       log.warn(ctx, 'no notification — no best fares found')
       return
     }
@@ -85,86 +87,225 @@ export class NotificationsService implements INotificationsService {
     await this.dispatch(routine, qualifying, 'alert')
   }
 
-  async sendEndOfPeriod(): Promise<void> {
+  async sendScheduled(): Promise<void> {
     const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
     const d = new Date(now)
     const currentTime = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 
-    const routines = await this.routinesRepo.findActiveForEndOfPeriod(currentTime)
+    const routines = await this.routinesRepo.findActiveForScheduled(currentTime)
     if (routines.length > 0) {
-      log.info({ routineCount: routines.length, currentTime }, 'sending end-of-period notifications')
+      log.info({ routineCount: routines.length, currentTime }, 'sending scheduled notifications')
     }
 
-    for (const routine of routines) {
-      const [bestOut, bestRet] = await Promise.all([
-        this.bestFaresRepo.getBestPerAirline(routine.id, false, routine.priority),
-        routine.return_start
-          ? this.bestFaresRepo.getBestPerAirline(routine.id, true, routine.priority)
-          : Promise.resolve([]),
-      ])
+    const byUser = new Map<string, RoutineRow[]>()
+    for (const r of routines) {
+      if (!byUser.has(r.user_id)) byUser.set(r.user_id, [])
+      byUser.get(r.user_id)!.push(r)
+    }
 
-      if (bestOut.length === 0) {
-        log.warn({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'end_of_period skipped — no best fares found')
+    for (const [userId, userRoutines] of byUser) {
+      const owner = await this.usersRepo.findById(userId)
+      if (!owner) {
+        log.warn({ userId }, 'scheduled skipped — user not found')
         continue
       }
 
-      const retByAirline = Object.fromEntries(bestRet.map((b) => [b.airline, b]))
-      const qualifying: QualifyingAirline[] = bestOut.map((out) => ({
-        outbound: out,
-        return: retByAirline[out.airline] ?? null,
-      }))
+      const sections: DailyBestRoutineSection[] = []
+      const logEntries: Array<{ routine: RoutineRow; qualifying: QualifyingAirline[] }> = []
 
-      await this.dispatch(routine, qualifying, 'end_of_period')
+      for (const routine of userRoutines) {
+        const [bestOut, bestRet] = await Promise.all([
+          this.bestFaresRepo.getBestPerAirline(routine.id, false, routine.priority),
+          routine.return_start
+            ? this.bestFaresRepo.getBestPerAirline(routine.id, true, routine.priority)
+            : Promise.resolve([]),
+        ])
+
+        if (bestOut.length === 0) {
+          const ctx = { routineId: routine.id, userId }
+          await this.checkStale(routine.id, routine.priority, ctx)
+          log.warn({ routineId: routine.id, userId, status: 'skipped' }, 'scheduled routine skipped — no best fares found')
+          continue
+        }
+
+        const retByAirline = Object.fromEntries(bestRet.map((b) => [b.airline, b]))
+        const qualifying: QualifyingAirline[] = bestOut.map((out) => ({
+          outbound: out,
+          return: retByAirline[out.airline] ?? null,
+        }))
+
+        const unsubToken = await this.unsubTokensRepo.create(routine.id, owner.email, true)
+
+        sections.push({
+          routineName:  routine.name,
+          origin:       routine.origin,
+          destination:  routine.destination,
+          passengers:   routine.passengers,
+          fareType:     routine.priority,
+          airlineOffers: qualifying.map((q) => ({
+            airline:  q.outbound.offer.airline,
+            currency: q.outbound.currency,
+            outbound: this.toBlock(q.outbound),
+            return:   q.return ? this.toBlock(q.return) : null,
+          })),
+          unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
+        })
+
+        logEntries.push({ routine, qualifying })
+      }
+
+      if (sections.length === 0) {
+        log.info({ userId, status: 'skipped' }, 'scheduled skipped — no routines with available fares')
+        continue
+      }
+
+      await this.emailSvc.sendDailyBest({ primaryEmail: owner.email, routines: sections })
+
+      for (const { routine, qualifying } of logEntries) {
+        for (const q of qualifying) {
+          const airline = q.outbound.offer.airline
+          log.info({
+            routineId:      routine.id,
+            userId,
+            routineName:    routine.name,
+            airline,
+            type:           'scheduled',
+            outboundAmount: q.outbound.amount,
+            returnAmount:   q.return?.amount ?? null,
+            status:         'success',
+          }, 'scheduled notification dispatched')
+
+          await this.notifLogRepo.insert({
+            routineId:      routine.id,
+            airline,
+            type:           'scheduled',
+            fareType:       routine.priority,
+            outboundAmount: q.outbound.amount,
+            returnAmount:   q.return?.amount ?? null,
+            emailTo:        owner.email,
+            emailCc:        null,
+          })
+        }
+      }
     }
   }
 
-  async sendDailyBest(): Promise<void> {
-    const routines = await this.routinesRepo.findActiveForDailyBest()
-    log.info({ routineCount: routines.length }, 'sending daily best notifications')
+  async hasRecentAlert(routineId: string, hours: number): Promise<boolean> {
+    return this.notifLogRepo.hasAlertSinceHours(routineId, hours)
+  }
 
-    for (const routine of routines) {
-      const [bestOut, bestRet] = await Promise.all([
-        this.bestFaresRepo.getBestPerAirline(routine.id, false, routine.priority),
-        routine.return_start
-          ? this.bestFaresRepo.getBestPerAirline(routine.id, true, routine.priority)
-          : Promise.resolve([]),
-      ])
-
-      if (bestOut.length === 0) {
-        log.warn({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, origin: routine.origin, destination: routine.destination, status: 'skipped' }, 'daily_best skipped — no best fares found')
-        continue
-      }
-
-      const retByAirline = Object.fromEntries(bestRet.map((b) => [b.airline, b]))
-      const qualifying: QualifyingAirline[] = []
-
-      for (const out of bestOut) {
-        const ret = retByAirline[out.airline] ?? null
-        if (!this.fareWithinTarget(out, routine)) continue
-        const lastDailyBest = await this.notifLogRepo.findLastByType(routine.id, routine.priority, 'best_of_day', out.airline)
-        if (
-          lastDailyBest &&
-          lastDailyBest.outbound_amount === out.amount &&
-          (lastDailyBest.return_amount ?? null) === (ret?.amount ?? null)
-        ) {
-          log.info({ routineId: routine.id, airline: out.airline, amount: out.amount, status: 'skipped' }, 'daily_best skipped — price unchanged since last daily best')
-          continue
-        }
-        qualifying.push({ outbound: out, return: ret })
-      }
-
-      if (qualifying.length === 0) {
-        log.info({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, status: 'skipped' }, 'daily_best skipped — no qualifying airlines')
-        continue
-      }
-
-      await this.dispatch(routine, qualifying, 'best_of_day')
+  async dispatchAlert(
+    routine: RoutineRow,
+    outboundFare: LatestFaresByDate,
+    returnFare: LatestFaresByDate | null,
+    history: PriceHistory,
+  ): Promise<void> {
+    const owner = await this.usersRepo.findById(routine.user_id)
+    if (!owner) {
+      log.warn({ routineId: routine.id, userId: routine.user_id }, 'dispatchAlert skipped — user not found')
+      return
     }
+
+    const activeCc = routine.cc_emails.filter((c) => c.subscribed)
+    const primaryToken = await this.unsubTokensRepo.create(routine.id, owner.email, true)
+    const ccTokens = await Promise.all(
+      activeCc.map(async (c) => ({
+        email: c.email,
+        unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${await this.unsubTokensRepo.create(routine.id, c.email, false)}`,
+      })),
+    )
+
+    const fareToBlock = (fare: LatestFaresByDate, origin: string, destination: string): OfferBlock => ({
+      flightNumber:  '',
+      date:          fare.flight_date,
+      origin,
+      departureTime: fare.departure_time ?? '',
+      destination,
+      arrivalTime:   fare.arrival_time ?? '',
+      durationMin:   fare.duration_min ?? 0,
+      stops:         fare.stops ?? 0,
+      fareCash:      fare.fare_cash,
+      farePts:       fare.fare_pts,
+      fareHybPts:    fare.fare_hyb_pts,
+      fareHybCash:   fare.fare_hyb_cash,
+    })
+
+    const historySuffix = this.buildHistorySuffix(outboundFare, history, routine.priority)
+
+    const airlineOffers: AirlineOfferPair[] = [{
+      airline:  routine.airlines[0],
+      currency: routine.currency,
+      outbound: fareToBlock(outboundFare, routine.origin, routine.destination),
+      return:   returnFare ? fareToBlock(returnFare, routine.destination, routine.origin) : null,
+    }]
+
+    await this.emailSvc.sendFlightAlert({
+      primaryEmail:     owner.email,
+      primaryUnsubLink: `${this.env.API_BASE_URL}/unsubscribe/${primaryToken}`,
+      ccRecipients:     ccTokens,
+      subject:          `Oferta dentro do target — ${routine.name}${historySuffix}`,
+      routineName:      routine.name,
+      origin:           routine.origin,
+      destination:      routine.destination,
+      airlineOffers,
+      passengers:       routine.passengers,
+      fareType:         routine.priority,
+    })
+
+    log.info({
+      routineId:    routine.id,
+      userId:       owner.id,
+      routineName:  routine.name,
+      airline:      routine.airlines[0],
+      flightDate:   outboundFare.flight_date,
+      fareCash:     outboundFare.fare_cash,
+      farePts:      outboundFare.fare_pts,
+      avgCash30d:   history.avg_cash_30d,
+      type:         'alert',
+      status:       'success',
+    }, 'evaluation alert dispatched')
+
+    await this.notifLogRepo.insert({
+      routineId:      routine.id,
+      airline:        routine.airlines[0],
+      type:           'alert',
+      fareType:       routine.priority,
+      outboundAmount: this.fareAmount(outboundFare, routine.priority),
+      returnAmount:   returnFare ? this.fareAmount(returnFare, routine.priority) : null,
+      emailTo:        owner.email,
+      emailCc:        activeCc.map((c) => c.email).join(',') || null,
+    })
+  }
+
+  private fareAmount(fare: LatestFaresByDate, priority: string): number | null {
+    if (priority === 'cash') return fare.fare_cash
+    if (priority === 'pts')  return fare.fare_pts
+    if (priority === 'hyb')  return fare.fare_hyb_pts
+    return null
+  }
+
+  private buildHistorySuffix(fare: LatestFaresByDate, history: PriceHistory, priority: string): string {
+    if (priority === 'cash' && fare.fare_cash != null && history.avg_cash_30d != null) {
+      const pct = Math.round(((history.avg_cash_30d - fare.fare_cash) / history.avg_cash_30d) * 100)
+      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+    }
+    if (priority === 'pts' && fare.fare_pts != null && history.avg_pts_30d != null) {
+      const pct = Math.round(((history.avg_pts_30d - fare.fare_pts) / history.avg_pts_30d) * 100)
+      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+    }
+    return ''
   }
 
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private async checkStale(routineId: string, fareType: string, ctx: object): Promise<void> {
+    const stale = await this.bestFaresRepo.hasStaleData(routineId, fareType)
+    if (stale) {
+      log.error({ ...ctx, routineId, fareType, status: 'stale' }, 'routine fare data not updated in 4+ hours')
+    }
+  }
 
   private fareWithinTarget(bestOut: BestFareRow, routine: RoutineRow): boolean {
     const t = 1 + routine.margin
@@ -212,9 +353,9 @@ export class NotificationsService implements INotificationsService {
     }
 
     const labels: Record<AlertType, string> = {
-      alert:         `Oferta dentro do target — ${routine.name}`,
-      best_of_day:   `Melhor preço do dia — ${routine.name}`,
-      end_of_period: `Resumo do período — ${routine.name}`,
+      alert:     `Oferta dentro do target — ${routine.name}`,
+      best_of_day: `Melhor preço do dia — ${routine.name}`,
+      scheduled: `Resumo do período — ${routine.name}`,
     }
 
     const activeCc = routine.cc_emails.filter((c) => c.subscribed)

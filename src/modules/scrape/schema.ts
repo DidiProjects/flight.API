@@ -22,7 +22,7 @@ export type FlightOfferInput = z.infer<typeof flightOfferSchema>
 
 export const scrapeCallbackSchema = z.object({
   requestId: z.string().uuid(),
-  routineId: z.string().uuid(),
+  routineId: z.string().uuid().optional(),
   airline: z.string().min(1),
   origin: z.string().length(3),
   destination: z.string().length(3),

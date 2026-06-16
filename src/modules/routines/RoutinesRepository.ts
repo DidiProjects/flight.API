@@ -6,7 +6,7 @@ const ROUTINE_COLS = `
   r.id, r.user_id, r.name, r.origin, r.destination,
   r.outbound_start, r.outbound_end, r.return_start, r.return_end, r.passengers,
   r.currency, r.target_cash, r.target_pts, r.target_hyb_pts, r.target_hyb_cash,
-  r.margin, r.priority, r.notification_mode, r.notification_frequency, r.end_of_period_time,
+  r.margin, r.priority, r.notification_modes, r.notification_frequency, r.scheduled_time,
   r.cc_emails, r.is_active, r.created_at, r.updated_at`
 
 /** Build a SELECT that includes the aggregated airlines array */
@@ -73,19 +73,19 @@ export class RoutinesRepository implements IRoutinesRepository {
     return rows
   }
 
-  async findActiveForEndOfPeriod(currentTime: string): Promise<RoutineRow[]> {
+  async findAllActive(): Promise<RoutineRow[]> {
     const { rows } = await this.db.query<RoutineRow>(
-      `${selectWithAirlines(`WHERE r.is_active = true
-         AND r.notification_mode = 'end_of_period'
-         AND to_char(r.end_of_period_time, 'HH24:MI') = $1`)}`,
-      [currentTime],
+      selectWithAirlines('WHERE r.is_active = true'),
     )
     return rows
   }
 
-  async findActiveForDailyBest(): Promise<RoutineRow[]> {
+  async findActiveForScheduled(currentTime: string): Promise<RoutineRow[]> {
     const { rows } = await this.db.query<RoutineRow>(
-      selectWithAirlines(`WHERE r.is_active = true AND r.notification_mode = 'daily_best_and_alert'`),
+      `${selectWithAirlines(`WHERE r.is_active = true
+         AND 'scheduled' = ANY(r.notification_modes)
+         AND to_char(r.scheduled_time, 'HH24:MI') = $1`)}`,
+      [currentTime],
     )
     return rows
   }
@@ -100,7 +100,7 @@ export class RoutinesRepository implements IRoutinesRepository {
            user_id, name, origin, destination,
            outbound_start, outbound_end, return_start, return_end, passengers,
            currency, target_cash, target_pts, target_hyb_pts, target_hyb_cash,
-           margin, priority, notification_mode, notification_frequency, end_of_period_time, cc_emails, is_active
+           margin, priority, notification_modes, notification_frequency, scheduled_time, cc_emails, is_active
          ) VALUES (
            $1,$2,$3,$4, $5,$6,$7,$8,$9,
            $10,$11,$12,$13,$14, $15,$16,$17,$18,$19,$20,$21
@@ -109,8 +109,8 @@ export class RoutinesRepository implements IRoutinesRepository {
           data.userId, data.name, data.origin, data.destination,
           data.outboundStart, data.outboundEnd, data.returnStart ?? null, data.returnEnd ?? null, data.passengers,
           data.currency, data.targetCash ?? null, data.targetPts ?? null, data.targetHybPts ?? null, data.targetHybCash ?? null,
-          data.margin, data.priority, data.notificationMode, data.notificationFrequency,
-          data.endOfPeriodTime ?? null, ccJson, data.isActive ?? true,
+          data.margin, data.priority, data.notificationModes, data.notificationFrequency,
+          data.scheduledTime ?? null, ccJson, data.isActive ?? true,
         ],
       )
       const routineId = rows[0].id
@@ -141,8 +141,8 @@ export class RoutinesRepository implements IRoutinesRepository {
       targetCash: 'target_cash', targetPts: 'target_pts',
       targetHybPts: 'target_hyb_pts', targetHybCash: 'target_hyb_cash',
       margin: 'margin', priority: 'priority',
-      notificationMode: 'notification_mode', notificationFrequency: 'notification_frequency',
-      endOfPeriodTime: 'end_of_period_time', isActive: 'is_active',
+      notificationModes: 'notification_modes', notificationFrequency: 'notification_frequency',
+      scheduledTime: 'scheduled_time', isActive: 'is_active',
     }
     const updates: string[] = []
     const values: unknown[] = []
@@ -207,6 +207,80 @@ export class RoutinesRepository implements IRoutinesRepository {
     }
 
     return this.findById(id, userId)
+  }
+
+  async updateById(id: string, fields: Partial<CreateRoutineData>): Promise<RoutineRow | null> {
+    const colMap: Record<string, string> = {
+      name: 'name', origin: 'origin', destination: 'destination',
+      outboundStart: 'outbound_start', outboundEnd: 'outbound_end',
+      returnStart: 'return_start', returnEnd: 'return_end', passengers: 'passengers',
+      currency: 'currency',
+      targetCash: 'target_cash', targetPts: 'target_pts',
+      targetHybPts: 'target_hyb_pts', targetHybCash: 'target_hyb_cash',
+      margin: 'margin', priority: 'priority',
+      notificationModes: 'notification_modes', notificationFrequency: 'notification_frequency',
+      scheduledTime: 'scheduled_time', isActive: 'is_active',
+    }
+    const updates: string[] = []
+    const values: unknown[] = []
+    let i = 1
+    for (const [key, col] of Object.entries(colMap)) {
+      if (key in fields) { updates.push(`${col} = $${i++}`); values.push((fields as Record<string, unknown>)[key] ?? null) }
+    }
+    if ('ccEmails' in fields && fields.ccEmails) {
+      updates.push(`cc_emails = $${i++}`)
+      values.push(JSON.stringify(fields.ccEmails.map((e) => ({ email: e, subscribed: true }))))
+    }
+
+    const hasAirlines = 'airlines' in fields && Array.isArray(fields.airlines)
+    const hasScalarUpdates = updates.length > 0
+
+    if (!hasScalarUpdates && !hasAirlines) return this.findByIdAdmin(id)
+
+    const client = await this.db.connect()
+    try {
+      await client.query('BEGIN')
+
+      if (hasScalarUpdates) {
+        updates.push(`updated_at = now()`)
+        values.push(id)
+        const { rowCount } = await client.query(
+          `UPDATE routines SET ${updates.join(', ')} WHERE id = $${i}`,
+          values,
+        )
+        if ((rowCount ?? 0) === 0) {
+          await client.query('ROLLBACK')
+          return null
+        }
+      }
+
+      if (hasAirlines && fields.airlines) {
+        const { rowCount } = await client.query(
+          `SELECT 1 FROM routines WHERE id = $1`,
+          [id],
+        )
+        if ((rowCount ?? 0) === 0) {
+          await client.query('ROLLBACK')
+          return null
+        }
+        await client.query(`DELETE FROM routine_airlines WHERE routine_id = $1`, [id])
+        for (const airline of fields.airlines) {
+          await client.query(
+            `INSERT INTO routine_airlines (routine_id, airline) VALUES ($1, $2)`,
+            [id, airline],
+          )
+        }
+      }
+
+      await client.query('COMMIT')
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
+
+    return this.findByIdAdmin(id)
   }
 
   async delete(id: string, userId: string): Promise<boolean> {

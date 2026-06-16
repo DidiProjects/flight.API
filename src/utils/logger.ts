@@ -30,6 +30,7 @@ if (env.GRAFANA_LOKI_URL) {
           ? { username: env.GRAFANA_LOKI_USER, password: env.GRAFANA_LOKI_TOKEN }
           : undefined,
       labels: { app: 'flight-api', env: env.NODE_ENV },
+      propsToLabels: ['airline'],
       silenceErrors: true,
     },
   })

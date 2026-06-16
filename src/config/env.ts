@@ -20,6 +20,7 @@ const envSchema = z.object({
 
   SCRAPE_INTERVAL_MS: z.coerce.number().default(3_600_000),
   SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(300_000),
+  EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
   SCRAPING_API_URL: z.string().url(),
   SCRAPING_API_KEY: z.string(),
   FLIGHT_API_KEY: z.string(),
