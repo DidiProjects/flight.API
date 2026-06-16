@@ -3,13 +3,45 @@ name: Deploy flight.API
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch para deploy em produção'
+        required: true
+        default: 'main'
 
 jobs:
+  test:
+    name: Typecheck & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
   deploy:
+    name: Deploy
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
 
       - name: Build Docker image
         run: docker build -t flight-api:latest .
