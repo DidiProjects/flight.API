@@ -137,14 +137,18 @@ export class SchedulerService implements ISchedulerService {
     const requestId = randomUUID()
     await this.scrapingJobRepo.markRunning(job.id, requestId)
 
+    const flightDate = typeof job.flight_date === 'string'
+      ? job.flight_date.slice(0, 10)
+      : (job.flight_date as unknown as Date).toISOString().slice(0, 10)
+
     const payload = {
       requestId,
       routineId:     job.id,
       airline:       job.airline,
       origin:        job.origin,
       destination:   job.destination,
-      outboundStart: job.flight_date,
-      outboundEnd:   job.flight_date,
+      outboundStart: flightDate,
+      outboundEnd:   flightDate,
       passengers:    1,
     }
 
