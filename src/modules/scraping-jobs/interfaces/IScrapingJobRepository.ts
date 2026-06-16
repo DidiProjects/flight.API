@@ -21,6 +21,7 @@ export interface ScrapingJobRow {
 
 export interface IScrapingJobRepository {
   upsertFromRoutines(): Promise<number>
+  upsertFromRoutine(routineId: string): Promise<void>
   expireOldJobs(): Promise<number>
   updatePriorities(): Promise<void>
   claimNextJob(airline: string): Promise<ScrapingJobRow | null>

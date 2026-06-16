@@ -65,9 +65,9 @@ export class SchedulerService implements ISchedulerService {
     this.scheduleDailyJobs()
   }
 
-  async dispatchOne(id: string): Promise<void> {
-    log.info({ jobId: id }, 'dispatchOne: forcing upsert and dispatch')
-    await this.scrapingJobRepo.upsertFromRoutines()
+  async dispatchOne(routineId: string): Promise<void> {
+    log.info({ routineId }, 'dispatchOne: manual dispatch requested')
+    await this.scrapingJobRepo.upsertFromRoutine(routineId)
     await this.dispatchForAirlines()
   }
 

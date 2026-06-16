@@ -33,6 +33,45 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rowCount ?? 0
   }
 
+  async upsertFromRoutine(routineId: string): Promise<void> {
+    await this.db.query(`
+      INSERT INTO scraping_jobs (airline, origin, destination, flight_date)
+      SELECT DISTINCT
+        ra.airline,
+        r.origin,
+        r.destination,
+        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date
+      FROM routines r
+      JOIN routine_airlines ra ON ra.routine_id = r.id
+      WHERE r.id = $1
+        AND r.outbound_end >= CURRENT_DATE
+      UNION
+      SELECT DISTINCT
+        ra.airline,
+        r.origin,
+        r.destination,
+        generate_series(r.return_start, r.return_end, '1 day'::interval)::date AS flight_date
+      FROM routines r
+      JOIN routine_airlines ra ON ra.routine_id = r.id
+      WHERE r.id = $1
+        AND r.return_start IS NOT NULL
+        AND r.return_end IS NOT NULL
+        AND r.return_end >= CURRENT_DATE
+      ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
+        SET next_run_at = NOW(),
+            priority    = 100,
+            status      = CASE
+              WHEN scraping_jobs.status = 'running' THEN 'running'
+              ELSE 'pending'
+            END,
+            retry_count = CASE
+              WHEN scraping_jobs.status = 'dead' THEN 0
+              ELSE scraping_jobs.retry_count
+            END,
+            updated_at  = NOW()
+    `, [routineId])
+  }
+
   async expireOldJobs(): Promise<number> {
     const { rowCount } = await this.db.query(`
       UPDATE scraping_jobs
