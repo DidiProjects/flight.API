@@ -19,6 +19,7 @@ export interface FlightFareRow {
 }
 
 export interface LatestFaresByDate {
+  airline: string
   flight_date: string
   is_return: boolean
   departure_time: string | null

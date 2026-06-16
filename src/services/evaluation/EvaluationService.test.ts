@@ -40,6 +40,7 @@ function makeRoutine(overrides: Partial<RoutineRow> = {}): RoutineRow {
 
 function makeFare(overrides: Partial<LatestFaresByDate> = {}): LatestFaresByDate {
   return {
+    airline:        'azul',
     flight_date:    '2026-08-15',
     is_return:      false,
     departure_time: '06:00',

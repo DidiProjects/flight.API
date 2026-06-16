@@ -54,42 +54,6 @@ export interface RoutineRow {
   updated_at: Date
 }
 
-export interface FlightOfferRow {
-  id: string
-  routine_id: string
-  airline: string
-  flight_number: string
-  date: string
-  is_return: boolean
-  origin_iata: string
-  origin_timestamp: string
-  destination_iata: string
-  destination_timestamp: string
-  duration_min: number
-  stops: number
-  fare_cash: number | null
-  fare_pts: number | null
-  fare_hyb_pts: number | null
-  fare_hyb_cash: number | null
-  within_target: boolean
-  scraped_at: string
-  created_at: Date
-}
-
-export interface BestFareRow {
-  id: string
-  routine_id: string
-  airline: string
-  date: string
-  is_return: boolean
-  fare_type: string
-  amount: number
-  flight_offer_id: string
-  currency: string
-  analysis_id: string | null
-  updated_at: Date
-  offer: FlightOfferRow
-}
 
 export interface NotificationLogRow {
   id: string

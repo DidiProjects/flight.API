@@ -1013,31 +1013,6 @@
           }
         },
         {
-          "name": "GET /routines/admin/users/:userId/best-fares",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/routines/admin/users/:userId/best-fares",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "routines",
-                "admin",
-                "users",
-                ":userId",
-                "best-fares"
-              ],
-              "variable": [
-                {
-                  "key": "userId",
-                  "value": ""
-                }
-              ]
-            }
-          }
-        },
-        {
           "name": "POST /routines/:id/dispatch",
           "request": {
             "method": "POST",

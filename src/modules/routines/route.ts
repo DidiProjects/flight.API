@@ -1,10 +1,9 @@
 import { FastifyInstance } from 'fastify'
 import { IRoutinesService } from './interfaces/IRoutinesService'
 import { ISchedulerService } from '../../services/scheduler/interfaces/ISchedulerService'
-import { IBestFaresService } from '../scrape/interfaces/IBestFaresService'
 import { createRoutineSchema, updateRoutineSchema } from './schema'
 
-export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISchedulerService, bestFaresSvc: IBestFaresService) {
+export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISchedulerService) {
   return async function handler(app: FastifyInstance): Promise<void> {
     app.addHook('preHandler', app.authenticate)
     app.addHook('preHandler', app.requirePasswordChanged)
@@ -130,11 +129,6 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
     app.get('/admin/users/:userId', { preHandler: [app.requireAdmin] }, async (req, reply) => {
       const { userId } = req.params as { userId: string }
       reply.send(await routinesSvc.listByUser(userId))
-    })
-
-    app.get('/admin/users/:userId/best-fares', { preHandler: [app.requireAdmin] }, async (req, reply) => {
-      const { userId } = req.params as { userId: string }
-      reply.send(await bestFaresSvc.adminGetUserBestFares(userId))
     })
 
     app.post('/:id/dispatch', { preHandler: [app.requireAdmin] }, async (req, reply) => {

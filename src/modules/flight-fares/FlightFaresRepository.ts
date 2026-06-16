@@ -57,14 +57,24 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     dateTo: string,
   ): Promise<LatestFaresByDate[]> {
     const { rows } = await this.db.query<LatestFaresByDate>(`
-      SELECT DISTINCT ON (flight_date, is_return)
-        flight_date, is_return,
-        departure_time, arrival_time, duration_min, stops,
-        fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, scraped_at
-      FROM flight_fares
-      WHERE airline = $1 AND origin = $2 AND destination = $3
-        AND flight_date BETWEEN $4 AND $5
-      ORDER BY flight_date, is_return, scraped_at DESC
+      SELECT
+        f.airline, f.flight_date, f.is_return,
+        f.departure_time, f.arrival_time, f.duration_min, f.stops,
+        f.fare_cash, f.fare_pts, f.fare_hyb_pts, f.fare_hyb_cash, f.scraped_at
+      FROM flight_fares f
+      INNER JOIN (
+        SELECT DISTINCT ON (flight_date, is_return)
+          flight_date, is_return, scraping_job_id
+        FROM flight_fares
+        WHERE airline = $1 AND origin = $2 AND destination = $3
+          AND flight_date BETWEEN $4 AND $5
+        ORDER BY flight_date, is_return, scraped_at DESC
+      ) latest_job
+        ON f.flight_date     = latest_job.flight_date
+       AND f.is_return       = latest_job.is_return
+       AND f.scraping_job_id = latest_job.scraping_job_id
+      WHERE f.airline = $1 AND f.origin = $2 AND f.destination = $3
+      ORDER BY f.flight_date, f.is_return, f.fare_cash ASC NULLS LAST
     `, [airline, origin, destination, dateFrom, dateTo])
     return rows
   }

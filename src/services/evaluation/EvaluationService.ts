@@ -11,6 +11,8 @@ function toDateStr(v: string | Date): string {
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
 }
 
+export { toDateStr }
+
 export class EvaluationService implements IEvaluationService {
   constructor(
     private readonly routinesRepo: IRoutinesRepository,
@@ -37,41 +39,47 @@ export class EvaluationService implements IEvaluationService {
   }
 
   private async evaluateRoutine(routine: RoutineRow): Promise<void> {
-    const outboundFares = await this.flightFaresRepo.getLatestByRoute(
-      routine.airlines[0],
-      routine.origin,
-      routine.destination,
-      toDateStr(routine.outbound_start),
-      toDateStr(routine.outbound_end),
-    )
+    const allOutbound: LatestFaresByDate[] = []
+    const allReturn: LatestFaresByDate[] = []
 
-    if (outboundFares.length === 0) return
+    for (const airline of routine.airlines) {
+      const outbound = await this.flightFaresRepo.getLatestByRoute(
+        airline,
+        routine.origin,
+        routine.destination,
+        toDateStr(routine.outbound_start),
+        toDateStr(routine.outbound_end),
+      )
+      allOutbound.push(...outbound)
 
-    const returnFares: LatestFaresByDate[] =
-      routine.return_start && routine.return_end
-        ? await this.flightFaresRepo.getLatestByRoute(
-            routine.airlines[0],
-            routine.destination,
-            routine.origin,
-            toDateStr(routine.return_start),
-            toDateStr(routine.return_end),
-          )
-        : []
+      if (routine.return_start && routine.return_end) {
+        const ret = await this.flightFaresRepo.getLatestByRoute(
+          airline,
+          routine.destination,
+          routine.origin,
+          toDateStr(routine.return_start),
+          toDateStr(routine.return_end),
+        )
+        allReturn.push(...ret)
+      }
+    }
 
-    const bestMatch = this.findBestMatch(outboundFares, routine)
+    if (allOutbound.length === 0) return
+
+    const bestMatch = this.findBestMatch(allOutbound, routine)
     if (!bestMatch) return
 
     const recentAlert = await this.notifSvc.hasRecentAlert(routine.id, 24)
     if (recentAlert) return
 
     const history = await this.flightFaresRepo.getPriceHistory(
-      routine.airlines[0],
+      bestMatch.airline,
       routine.origin,
       routine.destination,
-      bestMatch.flight_date,
+      toDateStr(bestMatch.flight_date),
     )
 
-    const bestReturn = returnFares.find((f) => !f.is_return) ?? null
+    const bestReturn = allReturn.length > 0 ? this.bestFare(allReturn, routine) : null
 
     await this.notifSvc.dispatchAlert(routine, bestMatch, bestReturn, history)
   }
@@ -95,11 +103,15 @@ export class EvaluationService implements IEvaluationService {
 
     if (candidates.length === 0) return null
 
-    return candidates.reduce((best, curr) => {
-      const bestVal = this.fareValue(best, routine)
-      const currVal = this.fareValue(curr, routine)
-      if (bestVal === null) return curr
-      if (currVal === null) return best
+    return this.bestFare(candidates, routine)
+  }
+
+  private bestFare(fares: LatestFaresByDate[], routine: RoutineRow): LatestFaresByDate | null {
+    const withValue = fares.filter((f) => this.fareValue(f, routine) !== null)
+    if (withValue.length === 0) return null
+    return withValue.reduce((best, curr) => {
+      const bestVal = this.fareValue(best, routine)!
+      const currVal = this.fareValue(curr, routine)!
       return currVal < bestVal ? curr : best
     })
   }
