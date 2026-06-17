@@ -88,6 +88,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   ): Promise<PriceHistory> {
     const { rows } = await this.db.query<PriceHistory>(`
       SELECT
+        MAX(currency) FILTER (WHERE currency IS NOT NULL)                 AS currency,
         AVG(fare_cash)                                                    AS avg_cash_30d,
         MIN(fare_cash)                                                    AS min_cash_30d,
         PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY fare_cash)           AS p20_cash_30d,
@@ -99,6 +100,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         AND scraped_at >= NOW() - INTERVAL '30 days'
     `, [airline, origin, destination, flightDate])
     return rows[0] ?? {
+      currency: null,
       avg_cash_30d: null,
       min_cash_30d: null,
       p20_cash_30d: null,
@@ -116,6 +118,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   ): Promise<PriceHistory> {
     const { rows } = await this.db.query<PriceHistory>(`
       SELECT
+        MAX(currency) FILTER (WHERE currency IS NOT NULL)               AS currency,
         AVG(fare_cash)                                                  AS avg_cash_30d,
         MIN(fare_cash)                                                  AS min_cash_30d,
         PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY fare_cash)         AS p20_cash_30d,
@@ -129,6 +132,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         AND scraped_at >= NOW() - INTERVAL '30 days'
     `, [airlines, origin, destination, dateFrom, dateTo])
     return rows[0] ?? {
+      currency: null,
       avg_cash_30d: null,
       min_cash_30d: null,
       p20_cash_30d: null,

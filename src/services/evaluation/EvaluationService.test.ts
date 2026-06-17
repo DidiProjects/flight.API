@@ -59,6 +59,7 @@ function makeFare(overrides: Partial<LatestFaresByDate> = {}): LatestFaresByDate
 
 function makeHistory(): PriceHistory {
   return {
+    currency:     'BRL',
     avg_cash_30d: 2100,
     min_cash_30d: 1700,
     p20_cash_30d: 1800,

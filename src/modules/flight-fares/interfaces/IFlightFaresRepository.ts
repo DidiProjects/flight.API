@@ -36,6 +36,7 @@ export interface LatestFaresByDate {
 }
 
 export interface PriceHistory {
+  currency: string | null
   avg_cash_30d: number | null
   min_cash_30d: number | null
   p20_cash_30d: number | null
