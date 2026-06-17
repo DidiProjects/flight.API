@@ -16,7 +16,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     for (const f of fares) {
       placeholders.push(
-        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
+        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
       )
       values.push(
         jobId,
@@ -30,6 +30,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         f.arrival_time,
         f.duration_min,
         f.stops,
+        f.currency,
         f.fare_cash,
         f.fare_pts,
         f.fare_hyb_pts,
@@ -41,7 +42,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     const { rowCount } = await this.db.query(
       `INSERT INTO flight_fares
          (scraping_job_id, flight_number, flight_date, is_return, origin, destination, airline,
-          departure_time, arrival_time, duration_min, stops,
+          departure_time, arrival_time, duration_min, stops, currency,
           fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, scraped_at)
        VALUES ${placeholders.join(', ')}`,
       values,
@@ -59,7 +60,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     const { rows } = await this.db.query<LatestFaresByDate>(`
       SELECT
         f.airline, f.flight_date, f.is_return,
-        f.departure_time, f.arrival_time, f.duration_min, f.stops,
+        f.departure_time, f.arrival_time, f.duration_min, f.stops, f.currency,
         f.fare_cash, f.fare_pts, f.fare_hyb_pts, f.fare_hyb_cash, f.scraped_at
       FROM flight_fares f
       INNER JOIN (

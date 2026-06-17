@@ -47,6 +47,7 @@ function makeFare(overrides: Partial<LatestFaresByDate> = {}): LatestFaresByDate
     arrival_time:   '18:00',
     duration_min:   720,
     stops:          1,
+    currency:       'BRL',
     fare_cash:      1800,
     fare_pts:       null,
     fare_hyb_pts:   null,

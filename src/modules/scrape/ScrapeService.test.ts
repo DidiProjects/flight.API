@@ -56,6 +56,7 @@ function makeFlightOffer() {
     arrivalTime:   '18:00',
     durationMin:   720,
     stops:         0,
+    currency:      'BRL',
     fareCash:      1800,
     farePts:       null,
     fareHybPts:    null,
@@ -150,6 +151,7 @@ describe('ScrapeService.processCallback', () => {
       origin:         'VCP',
       destination:    'LIS',
       airline:        'azul',
+      currency:       'BRL',
       fare_cash:      1800,
     })
     expect(calledFares[1]).toMatchObject({

@@ -44,16 +44,17 @@ export class ScrapeService implements IScrapeService {
     }
 
     const fares = data.flights.map((f) => ({
-      flight_number: f.flightNumber ?? null,
-      flight_date:   f.date,
-      is_return:     f.isReturn,
-      origin:        f.origin,
-      destination:   f.destination,
-      airline:       f.airline,
+      flight_number:  f.flightNumber ?? null,
+      flight_date:    f.date,
+      is_return:      f.isReturn,
+      origin:         f.origin,
+      destination:    f.destination,
+      airline:        f.airline,
       departure_time: f.departureTime ?? null,
       arrival_time:   f.arrivalTime ?? null,
       duration_min:   f.durationMin ?? null,
       stops:          f.stops ?? null,
+      currency:       f.currency ?? null,
       fare_cash:      f.fareCash ?? null,
       fare_pts:       f.farePts ?? null,
       fare_hyb_pts:   f.fareHybPts ?? null,

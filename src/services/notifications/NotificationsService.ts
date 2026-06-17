@@ -95,7 +95,7 @@ export class NotificationsService implements INotificationsService {
           fareType:     routine.priority,
           airlineOffers: [{
             airline:  bestOutbound.airline,
-            currency: routine.currency,
+            currency: bestOutbound.currency ?? routine.currency,
             outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
             return:   bestReturn ? this.fareToBlock(bestReturn, routine.destination, routine.origin) : null,
           }],
@@ -166,7 +166,7 @@ export class NotificationsService implements INotificationsService {
 
     const airlineOffers: AirlineOfferPair[] = [{
       airline:  outboundFare.airline,
-      currency: routine.currency,
+      currency: outboundFare.currency ?? routine.currency,
       outbound: this.fareToBlock(outboundFare, routine.origin, routine.destination),
       return:   returnFare ? this.fareToBlock(returnFare, routine.destination, routine.origin) : null,
     }]

@@ -11,6 +11,7 @@ export interface FlightFareRow {
   arrival_time: string | null
   duration_min: number | null
   stops: number | null
+  currency: string | null
   fare_cash: number | null
   fare_pts: number | null
   fare_hyb_pts: number | null
@@ -26,6 +27,7 @@ export interface LatestFaresByDate {
   arrival_time: string | null
   duration_min: number | null
   stops: number | null
+  currency: string | null
   fare_cash: number | null
   fare_pts: number | null
   fare_hyb_pts: number | null
