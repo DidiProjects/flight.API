@@ -44,7 +44,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          (scraping_job_id, flight_number, flight_date, is_return, origin, destination, airline,
           departure_time, arrival_time, duration_min, stops, currency,
           fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, scraped_at)
-       VALUES ${placeholders.join(', ')}`,
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (scraping_job_id, flight_date, is_return, flight_number)
+         WHERE flight_number IS NOT NULL
+       DO NOTHING`,
       values,
     )
     return rowCount ?? 0
@@ -117,19 +120,32 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     dateTo: string,
   ): Promise<PriceHistory> {
     const { rows } = await this.db.query<PriceHistory>(`
+      WITH latest_per_date AS (
+        SELECT DISTINCT ON (flight_date, is_return)
+          flight_date, is_return, scraping_job_id
+        FROM flight_fares
+        WHERE airline = ANY($1::text[])
+          AND origin = $2 AND destination = $3
+          AND flight_date BETWEEN $4 AND $5
+          AND stops = 0
+          AND scraped_at >= NOW() - INTERVAL '30 days'
+        ORDER BY flight_date, is_return, scraped_at DESC
+      )
       SELECT
-        MAX(currency) FILTER (WHERE currency IS NOT NULL)               AS currency,
-        AVG(fare_cash)                                                  AS avg_cash_30d,
-        MIN(fare_cash)                                                  AS min_cash_30d,
-        PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY fare_cash)         AS p20_cash_30d,
-        AVG(fare_pts)                                                   AS avg_pts_30d,
-        MIN(fare_pts)                                                   AS min_pts_30d
-      FROM flight_fares
-      WHERE airline = ANY($1::text[])
-        AND origin = $2 AND destination = $3
-        AND flight_date BETWEEN $4 AND $5
-        AND stops = 0
-        AND scraped_at >= NOW() - INTERVAL '30 days'
+        MAX(f.currency) FILTER (WHERE f.currency IS NOT NULL)           AS currency,
+        AVG(f.fare_cash)                                                AS avg_cash_30d,
+        MIN(f.fare_cash)                                                AS min_cash_30d,
+        PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY f.fare_cash)        AS p20_cash_30d,
+        AVG(f.fare_pts)                                                 AS avg_pts_30d,
+        MIN(f.fare_pts)                                                 AS min_pts_30d
+      FROM flight_fares f
+      INNER JOIN latest_per_date lpd
+        ON f.flight_date     = lpd.flight_date
+       AND f.is_return       = lpd.is_return
+       AND f.scraping_job_id = lpd.scraping_job_id
+      WHERE f.airline = ANY($1::text[])
+        AND f.origin = $2 AND f.destination = $3
+        AND f.stops = 0
     `, [airlines, origin, destination, dateFrom, dateTo])
     return rows[0] ?? {
       currency: null,
