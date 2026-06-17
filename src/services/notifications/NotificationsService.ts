@@ -162,7 +162,7 @@ export class NotificationsService implements INotificationsService {
       })),
     )
 
-    const historySuffix = this.buildHistorySuffix(outboundFare, history, routine.priority)
+    const historyNote = this.buildHistoryNote(outboundFare, history, routine.priority)
 
     const airlineOffers: AirlineOfferPair[] = [{
       airline:  outboundFare.airline,
@@ -175,13 +175,14 @@ export class NotificationsService implements INotificationsService {
       primaryEmail:     owner.email,
       primaryUnsubLink: `${this.env.API_BASE_URL}/unsubscribe/${primaryToken}`,
       ccRecipients:     ccTokens,
-      subject:          `Oferta dentro do target — ${routine.name}${historySuffix}`,
+      subject:          `Oferta dentro do target — ${routine.name}`,
       routineName:      routine.name,
       origin:           routine.origin,
       destination:      routine.destination,
       airlineOffers,
       passengers:       routine.passengers,
       fareType:         routine.priority,
+      historyNote,
     })
 
     log.info({
@@ -247,18 +248,18 @@ export class NotificationsService implements INotificationsService {
     return null
   }
 
-  private buildHistorySuffix(fare: LatestFaresByDate, history: PriceHistory, priority: string): string {
+  private buildHistoryNote(fare: LatestFaresByDate, history: PriceHistory, priority: string): string | undefined {
     if (priority === 'cash' && fare.fare_cash != null && history.avg_cash_30d != null) {
       const avg = Number(history.avg_cash_30d)
       const pct = Math.round(((avg - fare.fare_cash) / avg) * 100)
-      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+      if (pct > 0) return `${pct}% abaixo da média dos últimos 30 dias`
     }
     if (priority === 'pts' && fare.fare_pts != null && history.avg_pts_30d != null) {
       const avg = Number(history.avg_pts_30d)
       const pct = Math.round(((avg - fare.fare_pts) / avg) * 100)
-      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+      if (pct > 0) return `${pct}% abaixo da média dos últimos 30 dias`
     }
-    return ''
+    return undefined
   }
 
 }
