@@ -29,6 +29,7 @@ export interface IScrapingJobRepository {
   markSuccess(id: string, nextRunAt: Date): Promise<void>
   markFailed(id: string, error: string, nextRunAt: Date): Promise<void>
   markDead(id: string, error: string): Promise<void>
+  pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number>
   recoverStuckJobs(): Promise<number>
   findByRequestId(requestId: string): Promise<ScrapingJobRow | null>
   getActiveAirlines(): Promise<string[]>

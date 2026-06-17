@@ -7,6 +7,14 @@ import { logger } from '../../utils/logger'
 
 const log = logger.child({ service: 'scrape' })
 
+// An IP/bot block affects the whole airline. Pause every job of that airline for
+// this long instead of retrying job-by-job (which only prolongs the block).
+const BLOCK_COOLDOWN_MS = 60 * 60 * 1000
+
+function isBlockError(error: string): boolean {
+  return /bot|block|ip[\s/_-]?block|captcha|detection|acesso foi limitado|comportamento incomum/i.test(error)
+}
+
 export class ScrapeService implements IScrapeService {
   constructor(
     private readonly scrapingJobRepo: IScrapingJobRepository,
@@ -32,6 +40,15 @@ export class ScrapeService implements IScrapeService {
     }
 
     if (data.error && data.flights.length === 0) {
+      // IP/bot block: pause the whole airline for a cooldown. Do NOT escalate to
+      // dead — the block is not the job's fault.
+      if (isBlockError(data.error)) {
+        const until = new Date(Date.now() + BLOCK_COOLDOWN_MS)
+        const paused = await this.scrapingJobRepo.pauseAirlineForBlock(job.airline, until, data.error)
+        log.warn({ jobId: job.id, airline: job.airline, paused, until }, 'scraping_airline_blocked: airline paused')
+        return
+      }
+
       const nextRunAt = calcBackoffNextRunAt(job.retry_count)
       if (job.retry_count + 1 >= job.max_retries) {
         await this.scrapingJobRepo.markDead(job.id, data.error)

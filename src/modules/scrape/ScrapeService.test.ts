@@ -68,10 +68,11 @@ function makeFlightOffer() {
 
 function makeMocks() {
   const mockScrapingJobRepo = {
-    findByRequestId: vi.fn(),
-    markFailed:      vi.fn(),
-    markDead:        vi.fn(),
-    markSuccess:     vi.fn(),
+    findByRequestId:     vi.fn(),
+    markFailed:          vi.fn(),
+    markDead:            vi.fn(),
+    markSuccess:         vi.fn(),
+    pauseAirlineForBlock: vi.fn(),
   } satisfies Partial<IScrapingJobRepository> as unknown as IScrapingJobRepository
 
   const mockFlightFaresRepo = {
@@ -115,6 +116,22 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markFailed).toHaveBeenCalledOnce()
     expect(mockScrapingJobRepo.markFailed).toHaveBeenCalledWith(job.id, 'timeout', expect.any(Date))
     expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
+  })
+
+  it('webhook de bloqueio — pausa a airline inteira e não escala para dead', async () => {
+    const job = makeJob({ retry_count: 2, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockScrapingJobRepo.pauseAirlineForBlock).mockResolvedValue(7)
+
+    await svc.processCallback(makeCallback({
+      error: 'Azul: zero fares and no empty-state marker for VCP→LIS on 2026-08-15 — likely bot/IP block.',
+      flights: [],
+    }))
+
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledWith('azul', expect.any(Date), expect.stringContaining('bot/IP block'))
+    expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
   })
 
   it('webhook de erro — retry_count >= max_retries — chama markDead', async () => {

@@ -157,6 +157,26 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [id, error])
   }
 
+  async pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number> {
+    // IP block affects the whole airline, not a single job. Push every active job
+    // of this airline past the cooldown and return it to 'pending' (including the
+    // job that was 'running'). retry_count is NOT incremented — a block is not the
+    // job's fault, so it must never escalate jobs to 'dead'.
+    const { rowCount } = await this.db.query(`
+      UPDATE scraping_jobs
+      SET status        = 'pending',
+          running_since = NULL,
+          request_id    = NULL,
+          last_error    = $3,
+          next_run_at   = GREATEST(next_run_at, $2),
+          updated_at    = NOW()
+      WHERE airline = $1
+        AND status IN ('pending', 'failed', 'running')
+        AND flight_date >= CURRENT_DATE
+    `, [airline, until, error])
+    return rowCount ?? 0
+  }
+
   async recoverStuckJobs(): Promise<number> {
     const { rowCount } = await this.db.query(`
       UPDATE scraping_jobs
