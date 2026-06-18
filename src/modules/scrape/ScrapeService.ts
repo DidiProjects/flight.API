@@ -37,7 +37,13 @@ export class ScrapeService implements IScrapeService {
 
     const job = await this.scrapingJobRepo.findByRequestId(data.requestId)
     if (!job) {
+      // O job já saiu (timeout/recovery/reset) ou é um callback duplicado/atrasado.
+      // Ainda assim fechamos a run pelo seu próprio request_id, para não deixá-la
+      // presa em 'running'. markFinished é no-op se a run já estiver finalizada.
       log.warn({ requestId: data.requestId }, 'scrape callback: job not found')
+      await this.analysisRunsRepo.markFinished(data.requestId, data.error
+        ? { status: isBlockError(data.error) ? 'blocked' : 'failed', errorMessage: data.error }
+        : { status: 'success', faresFound: data.flights.length })
       return
     }
 

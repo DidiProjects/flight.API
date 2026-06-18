@@ -52,6 +52,19 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
     return rows
   }
 
+  async failStaleRunning(timeoutMin: number): Promise<number> {
+    const { rowCount } = await this.db.query(
+      `UPDATE analysis_runs
+          SET status = 'failed',
+              error_message = COALESCE(error_message, 'Sem retorno do scraper (timeout)'),
+              finished_at = now()
+        WHERE status = 'running'
+          AND started_at < now() - ($1 || ' minutes')::interval`,
+      [timeoutMin],
+    )
+    return rowCount ?? 0
+  }
+
   async cleanupOlderThan(days: number): Promise<number> {
     const { rowCount } = await this.db.query(
       `DELETE FROM analysis_runs WHERE started_at < now() - ($1 || ' days')::interval`,

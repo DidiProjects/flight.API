@@ -98,6 +98,7 @@ function makeAnalysisRunsRepoMock(): IAnalysisRunsRepository {
     insertRunning:       vi.fn().mockResolvedValue(undefined),
     markFinished:        vi.fn().mockResolvedValue(undefined),
     listByRoutineMatch:  vi.fn().mockResolvedValue([]),
+    failStaleRunning:    vi.fn().mockResolvedValue(0),
     cleanupOlderThan:    vi.fn().mockResolvedValue(0),
   } as unknown as IAnalysisRunsRepository
 }

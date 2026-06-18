@@ -21,6 +21,9 @@ const CIRCUIT_COOLDOWN_MS = 15 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000
 const EVALUATION_INTERVAL_MS = 5 * 60 * 1000
 const DAILY_TICK_INTERVAL_MS = 60_000
+// Runs sem callback (scraper travou/sumiu) são marcadas como falha após esse tempo.
+// Maior que o running_timeout_min do job (10min) para dar margem ao recovery normal.
+const STALE_RUN_TIMEOUT_MIN = 15
 
 function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
@@ -207,6 +210,9 @@ export class SchedulerService implements ISchedulerService {
       try {
         const count = await this.scrapingJobRepo.recoverStuckJobs()
         if (count > 0) log.info({ count }, 'heartbeat_recovered')
+
+        const staleRuns = await this.analysisRunsRepo.failStaleRunning(STALE_RUN_TIMEOUT_MIN)
+        if (staleRuns > 0) log.info({ staleRuns }, 'heartbeat: stale analysis_runs failed')
       } catch (err) {
         log.error({ err }, 'heartbeat error')
       } finally {
