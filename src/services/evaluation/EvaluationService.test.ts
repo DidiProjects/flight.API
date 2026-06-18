@@ -173,4 +173,24 @@ describe('EvaluationService', () => {
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine2, fare2, null, history)
   })
+
+  it('escolhe o menor preço NUMÉRICO quando fare_cash vem como string do pg (regressão)', async () => {
+    const routine = makeRoutine({ target_cash: 2000, margin: 0 })
+    // pg devolve NUMERIC como string; "1076.00" < "652.00" é true lexicograficamente.
+    const expensive = makeFare({ flight_date: '2026-12-11', fare_cash: '1076.00' as unknown as number })
+    const cheap     = makeFare({ flight_date: '2026-12-08', fare_cash: '652.00' as unknown as number })
+    const history   = makeHistory()
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([expensive, cheap])
+    vi.mocked(mockNotifSvc.hasRecentAlert).mockResolvedValue(false)
+    vi.mocked(mockFlightFaresRepo.getPriceHistory).mockResolvedValue(history)
+    vi.mocked(mockNotifSvc.dispatchAlert).mockResolvedValue(undefined)
+
+    await svc.runCycle()
+
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
+    const dispatchedFare = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0][1]
+    expect(dispatchedFare.flight_date).toBe('2026-12-08') // o £652, não o £1076
+  })
 })

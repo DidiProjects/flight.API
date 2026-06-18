@@ -117,9 +117,13 @@ export class EvaluationService implements IEvaluationService {
   }
 
   private fareValue(fare: LatestFaresByDate, routine: RoutineRow): number | null {
-    if (routine.priority === 'cash') return fare.fare_cash
-    if (routine.priority === 'pts')  return fare.fare_pts
-    if (routine.priority === 'hyb')  return fare.fare_hyb_pts
-    return null
+    // NUMERIC volta do pg como string — coagir para Number, senão a comparação
+    // do bestFare vira lexicográfica ("1076.00" < "652.00" === true).
+    const raw =
+      routine.priority === 'cash' ? fare.fare_cash :
+      routine.priority === 'pts'  ? fare.fare_pts :
+      routine.priority === 'hyb'  ? fare.fare_hyb_pts :
+      null
+    return raw == null ? null : Number(raw)
   }
 }

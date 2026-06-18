@@ -242,10 +242,14 @@ export class NotificationsService implements INotificationsService {
   }
 
   private fareAmount(fare: LatestFaresByDate, priority: string): number | null {
-    if (priority === 'cash') return fare.fare_cash
-    if (priority === 'pts')  return fare.fare_pts
-    if (priority === 'hyb')  return fare.fare_hyb_pts
-    return null
+    // NUMERIC volta do pg como string — coagir para Number, senão a comparação
+    // do bestFare vira lexicográfica ("1076.00" < "652.00" === true).
+    const raw =
+      priority === 'cash' ? fare.fare_cash :
+      priority === 'pts'  ? fare.fare_pts :
+      priority === 'hyb'  ? fare.fare_hyb_pts :
+      null
+    return raw == null ? null : Number(raw)
   }
 
   private buildHistoryNote(fare: LatestFaresByDate, history: PriceHistory, priority: string): string | undefined {
