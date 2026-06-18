@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import { FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
+import { CurrentBest, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
 export class FlightFaresRepository implements IFlightFaresRepository {
   constructor(private readonly db: Pool) {}
@@ -155,6 +155,85 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       avg_pts_30d: null,
       min_pts_30d: null,
     }
+  }
+
+  async getCurrentBest(
+    airlines: string[],
+    origin: string,
+    destination: string,
+    dateFrom: string,
+    dateTo: string,
+  ): Promise<CurrentBest> {
+    const { rows } = await this.db.query<CurrentBest>(`
+      WITH latest_per_date AS (
+        SELECT DISTINCT ON (flight_date)
+          flight_date, scraping_job_id, scraped_at
+        FROM flight_fares
+        WHERE airline = ANY($1::text[])
+          AND origin = $2 AND destination = $3
+          AND flight_date BETWEEN $4 AND $5
+          AND is_return = false
+          AND scraped_at >= NOW() - INTERVAL '30 days'
+        ORDER BY flight_date, scraped_at DESC
+      )
+      SELECT
+        MAX(f.currency) FILTER (WHERE f.currency IS NOT NULL) AS currency,
+        MIN(f.fare_cash)     AS best_cash,
+        MIN(f.fare_pts)      AS best_pts,
+        MIN(f.fare_hyb_pts)  AS best_hyb_pts,
+        MIN(f.fare_hyb_cash) AS best_hyb_cash,
+        MAX(lpd.scraped_at)  AS scraped_at
+      FROM flight_fares f
+      INNER JOIN latest_per_date lpd
+        ON f.flight_date     = lpd.flight_date
+       AND f.scraping_job_id = lpd.scraping_job_id
+      WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
+    `, [airlines, origin, destination, dateFrom, dateTo])
+
+    return rows[0] ?? {
+      currency: null,
+      best_cash: null,
+      best_pts: null,
+      best_hyb_pts: null,
+      best_hyb_cash: null,
+      scraped_at: null,
+    }
+  }
+
+  async getPriceByDate(
+    airlines: string[],
+    origin: string,
+    destination: string,
+    dateFrom: string,
+    dateTo: string,
+  ): Promise<PriceByDate[]> {
+    const { rows } = await this.db.query<PriceByDate>(`
+      WITH latest_per_date AS (
+        SELECT DISTINCT ON (flight_date)
+          flight_date, scraping_job_id
+        FROM flight_fares
+        WHERE airline = ANY($1::text[])
+          AND origin = $2 AND destination = $3
+          AND flight_date BETWEEN $4 AND $5
+          AND is_return = false
+          AND scraped_at >= NOW() - INTERVAL '30 days'
+        ORDER BY flight_date, scraped_at DESC
+      )
+      SELECT
+        f.flight_date,
+        MIN(f.fare_cash)     AS best_cash,
+        MIN(f.fare_pts)      AS best_pts,
+        MIN(f.fare_hyb_pts)  AS best_hyb_pts,
+        MIN(f.fare_hyb_cash) AS best_hyb_cash
+      FROM flight_fares f
+      INNER JOIN latest_per_date lpd
+        ON f.flight_date     = lpd.flight_date
+       AND f.scraping_job_id = lpd.scraping_job_id
+      WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
+      GROUP BY f.flight_date
+      ORDER BY f.flight_date
+    `, [airlines, origin, destination, dateFrom, dateTo])
+    return rows
   }
 
   async aggregateToDailyBucket(bucketDate: string): Promise<number> {

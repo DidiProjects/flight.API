@@ -1146,6 +1146,94 @@
             },
             "description": "Retorna avg/min/p20 de voos diretos (stops=0) de todas as airlines no range de datas — usado pelo PriceHistoryPanel do RoutineCard. Requer JWT."
           }
+        },
+        {
+          "name": "GET /fares/current",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fares/current?airlines=azul,latam&origin=VCP&destination=GRU&date_from=2026-08-01&date_to=2026-08-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fares",
+                "current"
+              ],
+              "query": [
+                {
+                  "key": "airlines",
+                  "value": "azul,latam",
+                  "description": "Airlines separadas por vírgula"
+                },
+                {
+                  "key": "origin",
+                  "value": "VCP",
+                  "description": "IATA de origem"
+                },
+                {
+                  "key": "destination",
+                  "value": "GRU",
+                  "description": "IATA de destino"
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-08-01",
+                  "description": "Início do range de datas (YYYY-MM-DD)"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-08-31",
+                  "description": "Fim do range de datas (YYYY-MM-DD)"
+                }
+              ]
+            },
+            "description": "Melhor preço ATUAL (snapshot mais recente por data) + scraped_at (frescor) + contexto de 30d (avg/min/p20) para o veredito baixo/típico/alto no RoutineCard. Requer JWT."
+          }
+        },
+        {
+          "name": "GET /fares/by-date",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fares/by-date?airlines=azul,latam&origin=VCP&destination=GRU&date_from=2026-08-01&date_to=2026-08-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fares",
+                "by-date"
+              ],
+              "query": [
+                {
+                  "key": "airlines",
+                  "value": "azul,latam",
+                  "description": "Airlines separadas por vírgula"
+                },
+                {
+                  "key": "origin",
+                  "value": "VCP",
+                  "description": "IATA de origem"
+                },
+                {
+                  "key": "destination",
+                  "value": "GRU",
+                  "description": "IATA de destino"
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-08-01",
+                  "description": "Início do range de datas (YYYY-MM-DD)"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-08-31",
+                  "description": "Fim do range de datas (YYYY-MM-DD)"
+                }
+              ]
+            },
+            "description": "Melhor preço por DATA (snapshot mais recente de cada data) na janela — usado pelo FareCalendar (heatmap de datas) do RoutineCard. Requer JWT."
+          }
         }
       ]
     },

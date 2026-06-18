@@ -44,11 +44,30 @@ export interface PriceHistory {
   min_pts_30d: number | null
 }
 
+export interface CurrentBest {
+  currency: string | null
+  best_cash: number | null
+  best_pts: number | null
+  best_hyb_pts: number | null
+  best_hyb_cash: number | null
+  scraped_at: Date | null
+}
+
+export interface PriceByDate {
+  flight_date: string
+  best_cash: number | null
+  best_pts: number | null
+  best_hyb_pts: number | null
+  best_hyb_cash: number | null
+}
+
 export interface IFlightFaresRepository {
   insertMany(jobId: string, fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'scraped_at'>[]): Promise<number>
   getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string): Promise<LatestFaresByDate[]>
   getPriceHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceHistory>
+  getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<CurrentBest>
+  getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceByDate[]>
   aggregateToDailyBucket(bucketDate: string): Promise<number>
   cleanupOlderThan(days: number): Promise<number>
 }

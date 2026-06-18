@@ -46,5 +46,27 @@ export function flightFaresRoute(flightFaresRepo: IFlightFaresRepository) {
       )
       reply.send(summary)
     })
+
+    app.get('/current', async (req, reply) => {
+      const query = summaryQuerySchema.parse(req.query)
+      const [current, summary] = await Promise.all([
+        flightFaresRepo.getCurrentBest(query.airlines, query.origin, query.destination, query.date_from, query.date_to),
+        flightFaresRepo.getSummary(query.airlines, query.origin, query.destination, query.date_from, query.date_to),
+      ])
+      // current best (preço de agora + frescor) + contexto de 30 dias (para o veredito no front)
+      reply.send({ ...summary, ...current })
+    })
+
+    app.get('/by-date', async (req, reply) => {
+      const query = summaryQuerySchema.parse(req.query)
+      const dates = await flightFaresRepo.getPriceByDate(
+        query.airlines,
+        query.origin,
+        query.destination,
+        query.date_from,
+        query.date_to,
+      )
+      reply.send({ dates })
+    })
   }
 }
