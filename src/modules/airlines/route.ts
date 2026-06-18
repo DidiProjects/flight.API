@@ -26,8 +26,8 @@ export function airlinesRoute(airlinesSvc: IAirlinesService, airportsSvc: IAirpo
       '/',
       { preHandler: [app.authenticate, app.requirePasswordChanged, app.requireAdmin] },
       async (req, reply) => {
-        const { code, name, currency } = createAirlineSchema.parse(req.body)
-        reply.status(201).send(await airlinesSvc.create(code, name, currency))
+        const { code, name } = createAirlineSchema.parse(req.body)
+        reply.status(201).send(await airlinesSvc.create(code, name))
       },
     )
 

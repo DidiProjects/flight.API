@@ -18,10 +18,10 @@ export class AirlinesService implements IAirlinesService {
     return this.airlinesRepo.findAll()
   }
 
-  async create(code: string, name: string, currency?: string): Promise<AirlineRow> {
+  async create(code: string, name: string): Promise<AirlineRow> {
     const existing = await this.airlinesRepo.findByCode(code)
     if (existing) throw new ConflictError(`Companhia '${code}' já cadastrada`)
-    return this.airlinesRepo.create(code, name, currency)
+    return this.airlinesRepo.create(code, name)
   }
 
   async activate(code: string): Promise<AirlineRow> {

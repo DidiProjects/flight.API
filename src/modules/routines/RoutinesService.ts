@@ -2,6 +2,7 @@ import { RoutineRow } from '../../types'
 import { IRoutinesService } from './interfaces/IRoutinesService'
 import { IRoutinesRepository, CreateRoutineData } from './interfaces/IRoutinesRepository'
 import { IAirlinesRepository } from '../airlines/interfaces/IAirlinesRepository'
+import { IAirportsRepository } from '../airports/interfaces/IAirportsRepository'
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../utils/errors'
 
 const MAX_ROUTINES = 10
@@ -10,7 +11,35 @@ export class RoutinesService implements IRoutinesService {
   constructor(
     private readonly routinesRepo: IRoutinesRepository,
     private readonly airlinesRepo: IAirlinesRepository,
+    private readonly airportsRepo: IAirportsRepository,
   ) {}
+
+  /**
+   * Moeda da rotina = moeda do mercado da ORIGEM (ponto de venda).
+   * Resolvida por airports.currency(airline, origin) para cada companhia.
+   * Todas as companhias precisam resolver a mesma moeda na origem.
+   */
+  private async resolveCurrencyByOrigin(airlines: string[], origin: string): Promise<string> {
+    const resolved: { airline: string; currency: string | null }[] = []
+    for (const code of airlines) {
+      resolved.push({ airline: code, currency: await this.airportsRepo.getCurrency(code, origin) })
+    }
+
+    const missing = resolved.filter((r) => !r.currency)
+    if (missing.length > 0) {
+      throw new BadRequestError(
+        `Sem moeda cadastrada para a origem ${origin} em: ${missing.map((m) => m.airline).join(', ')}`,
+      )
+    }
+
+    const currencies = [...new Set(resolved.map((r) => r.currency as string))]
+    if (currencies.length > 1) {
+      throw new BadRequestError(
+        `As companhias usam moedas diferentes na origem ${origin} (${resolved.map((r) => `${r.airline}=${r.currency}`).join(', ')})`,
+      )
+    }
+    return currencies[0]
+  }
 
   async list(userId: string): Promise<RoutineRow[]> {
     return this.routinesRepo.findByUser(userId)
@@ -32,21 +61,12 @@ export class RoutinesService implements IRoutinesService {
       throw new ForbiddenError(`Limite de ${MAX_ROUTINES} rotinas por usuário atingido`)
     }
 
-    const airlineRows = []
     for (const code of data.airlines) {
       const airline = await this.airlinesRepo.findByCode(code)
       if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
-      airlineRows.push(airline)
     }
 
-    const currencies = [...new Set(airlineRows.map((a) => a.currency).filter(Boolean))]
-    if (currencies.length > 1) {
-      throw new BadRequestError(
-        `Todas as companhias devem usar a mesma moeda (${airlineRows.map((a) => `${a.code}=${a.currency}`).join(', ')})`,
-      )
-    }
-    const currency = currencies[0]
-    if (!currency) throw new BadRequestError('Companhia sem moeda configurada')
+    const currency = await this.resolveCurrencyByOrigin(data.airlines, data.origin)
 
     const today = new Date().toISOString().slice(0, 10)
     if (data.outboundEnd < today) {
@@ -73,22 +93,17 @@ export class RoutinesService implements IRoutinesService {
     const existing = await this.routinesRepo.findById(id, userId)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
-    if (fields.airlines && fields.airlines.length > 0) {
-      const airlineRows = []
-      for (const code of fields.airlines) {
-        const airline = await this.airlinesRepo.findByCode(code)
-        if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
-        airlineRows.push(airline)
+    const changingAirlines = !!fields.airlines && fields.airlines.length > 0
+    if (changingAirlines || fields.origin != null) {
+      const airlines = changingAirlines ? fields.airlines! : existing.airlines
+      const origin = fields.origin ?? existing.origin
+      if (changingAirlines) {
+        for (const code of airlines) {
+          const airline = await this.airlinesRepo.findByCode(code)
+          if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
+        }
       }
-      const currencies = [...new Set(airlineRows.map((a) => a.currency).filter(Boolean))]
-      if (currencies.length > 1) {
-        throw new BadRequestError(
-          `Todas as companhias devem usar a mesma moeda (${airlineRows.map((a) => `${a.code}=${a.currency}`).join(', ')})`,
-        )
-      }
-      const updateCurrency = currencies[0]
-      if (!updateCurrency) throw new BadRequestError('Companhia sem moeda configurada')
-      fields = { ...fields, currency: updateCurrency }
+      fields = { ...fields, currency: await this.resolveCurrencyByOrigin(airlines, origin) }
     }
 
     const updated = await this.routinesRepo.update(id, userId, fields)
@@ -135,22 +150,17 @@ export class RoutinesService implements IRoutinesService {
     const existing = await this.routinesRepo.findByIdAdmin(id)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
-    if (fields.airlines && fields.airlines.length > 0) {
-      const airlineRows = []
-      for (const code of fields.airlines) {
-        const airline = await this.airlinesRepo.findByCode(code)
-        if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
-        airlineRows.push(airline)
+    const changingAirlines = !!fields.airlines && fields.airlines.length > 0
+    if (changingAirlines || fields.origin != null) {
+      const airlines = changingAirlines ? fields.airlines! : existing.airlines
+      const origin = fields.origin ?? existing.origin
+      if (changingAirlines) {
+        for (const code of airlines) {
+          const airline = await this.airlinesRepo.findByCode(code)
+          if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
+        }
       }
-      const currencies = [...new Set(airlineRows.map((a) => a.currency).filter(Boolean))]
-      if (currencies.length > 1) {
-        throw new BadRequestError(
-          `Todas as companhias devem usar a mesma moeda (${airlineRows.map((a) => `${a.code}=${a.currency}`).join(', ')})`,
-        )
-      }
-      const updateCurrency = currencies[0]
-      if (!updateCurrency) throw new BadRequestError('Companhia sem moeda configurada')
-      fields = { ...fields, currency: updateCurrency }
+      fields = { ...fields, currency: await this.resolveCurrencyByOrigin(airlines, origin) }
     }
 
     const updated = await this.routinesRepo.updateById(id, fields)

@@ -65,6 +65,14 @@ export class AirportsRepository implements IAirportsRepository {
     return { inserted, updated, unchanged }
   }
 
+  async getCurrency(airlineCode: string, airportCode: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ currency: string | null }>(
+      `SELECT currency FROM airports WHERE airline_code = $1 AND airport_code = $2`,
+      [airlineCode, airportCode.toUpperCase()],
+    )
+    return rows[0]?.currency ?? null
+  }
+
   async listByAirline(airlineCode: string): Promise<AirportRow[]> {
     const { rows } = await this.db.query<AirportRow>(
       `SELECT id, airline_code, airport_code, name, timezone, country_code, country_name, city, region, currency, updated_at
