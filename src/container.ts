@@ -12,6 +12,7 @@ import { NotificationLogRepository }  from './services/notifications/Notificatio
 import { AirportsRepository }         from './modules/airports/AirportsRepository'
 import { ScrapingJobRepository }      from './modules/scraping-jobs/ScrapingJobRepository'
 import { FlightFaresRepository }      from './modules/flight-fares/FlightFaresRepository'
+import { AnalysisRunsRepository }     from './modules/analysis-runs/AnalysisRunsRepository'
 
 // Services
 import { EmailService }         from './services/email/EmailService'
@@ -25,6 +26,7 @@ import { UnsubscribeService }   from './modules/unsubscribe/UnsubscribeService'
 import { SchedulerService }     from './services/scheduler/SchedulerService'
 import { AirportsService }      from './modules/airports/AirportsService'
 import { EvaluationService }    from './services/evaluation/EvaluationService'
+import { AnalysisRunsService }  from './modules/analysis-runs/AnalysisRunsService'
 
 // ── Repositories ──────────────────────────────────────────────────────────────
 const authRepo         = new AuthRepository(pool)
@@ -37,6 +39,7 @@ const notifLogRepo     = new NotificationLogRepository(pool)
 const airportsRepo     = new AirportsRepository(pool)
 const scrapingJobRepo  = new ScrapingJobRepository(pool)
 const flightFaresRepo  = new FlightFaresRepository(pool)
+const analysisRunsRepo = new AnalysisRunsRepository(pool)
 
 // ── Services ──────────────────────────────────────────────────────────────────
 const emailSvc = new EmailService(env)
@@ -57,10 +60,11 @@ const authSvc      = new AuthService(usersRepo, authRepo, refreshTokenRepo, emai
 const usersSvc     = new UsersService(usersRepo, emailSvc)
 const airlinesSvc  = new AirlinesService(airlinesRepo, routinesRepo)
 const routinesSvc  = new RoutinesService(routinesRepo, airlinesRepo)
-const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo)
+const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo)
 const unsubSvc     = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
-const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env)
+const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo)
 const airportsSvc  = new AirportsService(airportsRepo, airlinesRepo)
+const analysisRunsSvc = new AnalysisRunsService(routinesRepo, analysisRunsRepo)
 
 export const container = {
   airlinesSvc,
@@ -72,4 +76,5 @@ export const container = {
   unsubSvc,
   schedulerSvc,
   flightFaresRepo,
+  analysisRunsSvc,
 } as const

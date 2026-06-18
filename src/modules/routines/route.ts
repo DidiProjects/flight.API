@@ -1,9 +1,14 @@
 import { FastifyInstance } from 'fastify'
 import { IRoutinesService } from './interfaces/IRoutinesService'
 import { ISchedulerService } from '../../services/scheduler/interfaces/ISchedulerService'
+import { IAnalysisRunsService } from '../analysis-runs/AnalysisRunsService'
 import { createRoutineSchema, updateRoutineSchema } from './schema'
 
-export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISchedulerService) {
+export function routinesRoute(
+  routinesSvc: IRoutinesService,
+  schedulerSvc: ISchedulerService,
+  analysisRunsSvc: IAnalysisRunsService,
+) {
   return async function handler(app: FastifyInstance): Promise<void> {
     app.addHook('preHandler', app.authenticate)
     app.addHook('preHandler', app.requirePasswordChanged)
@@ -129,6 +134,11 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
     app.get('/admin/users/:userId', { preHandler: [app.requireAdmin] }, async (req, reply) => {
       const { userId } = req.params as { userId: string }
       reply.send(await routinesSvc.listByUser(userId))
+    })
+
+    app.get('/admin/:id/analysis-runs', { preHandler: [app.requireAdmin] }, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      reply.send(await analysisRunsSvc.listByRoutine(id))
     })
 
     app.post('/:id/dispatch', { preHandler: [app.requireAdmin] }, async (req, reply) => {

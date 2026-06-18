@@ -1034,6 +1034,30 @@
               ]
             }
           }
+        },
+        {
+          "name": "GET /routines/admin/:id/analysis-runs",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/routines/admin/:id/analysis-runs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "routines",
+                "admin",
+                ":id",
+                "analysis-runs"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            }
+          }
         }
       ]
     },

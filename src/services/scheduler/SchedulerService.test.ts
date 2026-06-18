@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SchedulerService } from './SchedulerService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import type { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import type { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
 import type { Env } from '../../config/env'
@@ -92,6 +93,15 @@ function makeFlightFaresRepoMock(): IFlightFaresRepository {
   } as unknown as IFlightFaresRepository
 }
 
+function makeAnalysisRunsRepoMock(): IAnalysisRunsRepository {
+  return {
+    insertRunning:       vi.fn().mockResolvedValue(undefined),
+    markFinished:        vi.fn().mockResolvedValue(undefined),
+    listByRoutineMatch:  vi.fn().mockResolvedValue([]),
+    cleanupOlderThan:    vi.fn().mockResolvedValue(0),
+  } as unknown as IAnalysisRunsRepository
+}
+
 function makeNotifMock(): INotificationsService {
   return {
     evaluate:        vi.fn().mockResolvedValue(undefined),
@@ -129,6 +139,7 @@ describe('SchedulerService — dispatch loop', () => {
       makeNotifMock(),
       makeEvalMock(),
       makeEnv(),
+      makeAnalysisRunsRepoMock(),
     )
 
     await svc.dispatchOne(job.id)
@@ -157,6 +168,7 @@ describe('SchedulerService — dispatch loop', () => {
       makeNotifMock(),
       makeEvalMock(),
       makeEnv(),
+      makeAnalysisRunsRepoMock(),
     )
 
     await svc.dispatchOne(job.id)
@@ -174,6 +186,7 @@ describe('SchedulerService — dispatch loop', () => {
       makeNotifMock(),
       makeEvalMock(),
       makeEnv(),
+      makeAnalysisRunsRepoMock(),
     )
 
     await svc.dispatchOne(routineId)
@@ -189,6 +202,7 @@ describe('SchedulerService — dispatch loop', () => {
       makeNotifMock(),
       makeEvalMock(),
       makeEnv(),
+      makeAnalysisRunsRepoMock(),
     )
 
     await svc.dispatchOne('any-id')
@@ -206,6 +220,7 @@ describe('SchedulerService — dispatch loop', () => {
       makeNotifMock(),
       makeEvalMock(),
       makeEnv(),
+      makeAnalysisRunsRepoMock(),
     )
 
     await svc.dispatchOne(job.id)
@@ -227,6 +242,7 @@ describe('SchedulerService — dispatch loop', () => {
       makeNotifMock(),
       makeEvalMock(),
       makeEnv(),
+      makeAnalysisRunsRepoMock(),
     )
 
     await svc.dispatchOne(job.id)
@@ -258,6 +274,7 @@ describe('SchedulerService — circuit breaker', () => {
       makeNotifMock(),
       makeEvalMock(),
       makeEnv(),
+      makeAnalysisRunsRepoMock(),
     )
   }
 

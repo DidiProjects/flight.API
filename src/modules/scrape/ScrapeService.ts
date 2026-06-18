@@ -1,6 +1,7 @@
 import { IScrapeService } from './interfaces/IScrapeService'
 import { IScrapingJobRepository } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
+import { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import { ScrapeCallback } from './schema'
 import { calcNextRunAt, calcBackoffNextRunAt } from '../../services/scheduler/SchedulerService'
 import { logger } from '../../utils/logger'
@@ -19,6 +20,7 @@ export class ScrapeService implements IScrapeService {
   constructor(
     private readonly scrapingJobRepo: IScrapingJobRepository,
     private readonly flightFaresRepo: IFlightFaresRepository,
+    private readonly analysisRunsRepo: IAnalysisRunsRepository,
   ) {}
 
   async processCallback(data: ScrapeCallback): Promise<void> {
@@ -45,6 +47,7 @@ export class ScrapeService implements IScrapeService {
       if (isBlockError(data.error)) {
         const until = new Date(Date.now() + BLOCK_COOLDOWN_MS)
         const paused = await this.scrapingJobRepo.pauseAirlineForBlock(job.airline, until, data.error)
+        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'blocked', errorMessage: data.error })
         log.warn({ jobId: job.id, airline: job.airline, paused, until }, 'scraping_airline_blocked: airline paused')
         return
       }
@@ -52,9 +55,11 @@ export class ScrapeService implements IScrapeService {
       const nextRunAt = calcBackoffNextRunAt(job.retry_count)
       if (job.retry_count + 1 >= job.max_retries) {
         await this.scrapingJobRepo.markDead(job.id, data.error)
+        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'dead', errorMessage: data.error })
         log.error({ jobId: job.id, error: data.error }, 'scraping_job_dead')
       } else {
         await this.scrapingJobRepo.markFailed(job.id, data.error, nextRunAt)
+        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: data.error })
         log.warn({ jobId: job.id, retryCount: job.retry_count + 1 }, 'scraping_job_failed')
       }
       return
@@ -82,6 +87,7 @@ export class ScrapeService implements IScrapeService {
 
     const nextRunAt = calcNextRunAt(job.flight_date)
     await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
+    await this.analysisRunsRepo.markFinished(data.requestId, { status: 'success', faresFound: data.flights.length })
 
     log.info({ jobId: job.id, faresCount: count }, 'scraping_job_success')
   }

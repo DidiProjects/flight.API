@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ScrapeService } from './ScrapeService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
+import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -79,7 +80,12 @@ function makeMocks() {
     insertMany: vi.fn(),
   } satisfies Partial<IFlightFaresRepository> as unknown as IFlightFaresRepository
 
-  return { mockScrapingJobRepo, mockFlightFaresRepo }
+  const mockAnalysisRunsRepo = {
+    insertRunning: vi.fn(),
+    markFinished:  vi.fn(),
+  } satisfies Partial<IAnalysisRunsRepository> as unknown as IAnalysisRunsRepository
+
+  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -87,13 +93,15 @@ function makeMocks() {
 describe('ScrapeService.processCallback', () => {
   let mockScrapingJobRepo: IScrapingJobRepository
   let mockFlightFaresRepo: IFlightFaresRepository
+  let mockAnalysisRunsRepo: IAnalysisRunsRepository
   let svc: ScrapeService
 
   beforeEach(() => {
     const mocks = makeMocks()
     mockScrapingJobRepo = mocks.mockScrapingJobRepo
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
-    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo)
+    mockAnalysisRunsRepo = mocks.mockAnalysisRunsRepo
+    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo)
   })
 
   it('requestId desconhecido — retorna sem chamar insertMany', async () => {

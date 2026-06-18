@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { ISchedulerService } from './interfaces/ISchedulerService'
 import { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
 import { Env } from '../../config/env'
@@ -55,6 +56,7 @@ export class SchedulerService implements ISchedulerService {
     private readonly notifSvc: INotificationsService,
     private readonly evaluationSvc: IEvaluationService,
     private readonly env: Env,
+    private readonly analysisRunsRepo: IAnalysisRunsRepository,
   ) {}
 
   start(): void {
@@ -141,6 +143,15 @@ export class SchedulerService implements ISchedulerService {
       ? job.flight_date.slice(0, 10)
       : (job.flight_date as unknown as Date).toISOString().slice(0, 10)
 
+    await this.analysisRunsRepo.insertRunning({
+      jobId:       job.id,
+      requestId,
+      airline:     job.airline,
+      origin:      job.origin,
+      destination: job.destination,
+      flightDate,
+    })
+
     const payload = {
       requestId,
       routineId:     job.id,
@@ -177,9 +188,11 @@ export class SchedulerService implements ISchedulerService {
       const nextRunAt = calcBackoffNextRunAt(job.retry_count)
       if (job.retry_count + 1 >= job.max_retries) {
         await this.scrapingJobRepo.markDead(job.id, String(err))
+        await this.analysisRunsRepo.markFinished(requestId, { status: 'dead', errorMessage: String(err) })
         log.error({ jobId: job.id, airline, err }, 'scraping_job_dead: max retries reached on dispatch')
       } else {
         await this.scrapingJobRepo.markFailed(job.id, String(err), nextRunAt)
+        await this.analysisRunsRepo.markFinished(requestId, { status: 'failed', errorMessage: String(err) })
         log.error({ jobId: job.id, airline, err }, 'scraping.API request failed')
       }
     }
@@ -255,6 +268,9 @@ export class SchedulerService implements ISchedulerService {
 
       const deleted = await this.flightFaresRepo.cleanupOlderThan(30)
       log.info({ deleted }, 'flight_fares cleanup: old raw data removed')
+
+      const runsDeleted = await this.analysisRunsRepo.cleanupOlderThan(60)
+      log.info({ runsDeleted }, 'analysis_runs cleanup: old runs removed')
 
       const deadCleaned = await this.scrapingJobRepo.cleanupDeadJobs()
       log.info({ deadCleaned }, 'scraping_jobs cleanup: dead jobs removed')
