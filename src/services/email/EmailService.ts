@@ -94,6 +94,7 @@ export class EmailService implements IEmailService {
       case 'azul':           return this.buildAzulLink(offer, passengers, fareType)
       case 'latam':          return this.buildLatamLink(offer, passengers, fareType)
       case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers)
+      case 'ryanair':        return this.buildRyanairLink(offer, passengers)
       default:               return null
     }
   }
@@ -124,6 +125,23 @@ export class EmailService implements IEmailService {
       bound: 'outbound',
     })
     return `https://www.britishairways.com/nx/b/airselect/en/gbr/book/search/?${p.toString()}`
+  }
+
+  private buildRyanairLink(offer: OfferBlock, passengers: number): string {
+    const p = new URLSearchParams({
+      adults:            String(passengers),
+      teens:             '0',
+      children:          '0',
+      infants:           '0',
+      dateOut:           offer.date,
+      dateIn:            '',
+      isConnectedFlight: 'false',
+      isReturn:          'false',
+      discount:          '0',
+      originIata:        offer.origin,
+      destinationIata:   offer.destination,
+    })
+    return `https://www.ryanair.com/gb/en/trip/flights/select?${p.toString()}`
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
