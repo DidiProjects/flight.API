@@ -32,11 +32,11 @@ function daysBetween(a: Date, b: Date): number {
 function calcNextRunAt(flightDate: string): Date {
   const days = daysBetween(new Date(), new Date(flightDate))
   const intervalMs =
-    days <= 7  ? 2  * 60 * 60 * 1000 :
-    days <= 14 ? 3  * 60 * 60 * 1000 :
-    days <= 30 ? 6  * 60 * 60 * 1000 :
-    days <= 60 ? 12 * 60 * 60 * 1000 :
-                 24 * 60 * 60 * 1000
+    days <= 7  ? 1  * 60 * 60 * 1000 :
+    days <= 14 ? 2  * 60 * 60 * 1000 :
+    days <= 30 ? 4  * 60 * 60 * 1000 :
+    days <= 60 ? 6  * 60 * 60 * 1000 :
+                 12 * 60 * 60 * 1000
   return new Date(Date.now() + intervalMs)
 }
 

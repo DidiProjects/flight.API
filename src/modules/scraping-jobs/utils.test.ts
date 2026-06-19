@@ -16,44 +16,44 @@ describe('calcNextRunAt', () => {
     vi.useRealTimers()
   })
 
-  it('≤7 dias → intervalo de 2 horas', () => {
+  it('≤7 dias → intervalo de 1 hora', () => {
     vi.useFakeTimers()
     const flightDate = addDaysToNow(5)
+    const result = calcNextRunAt(flightDate)
+    const diffMs = result.getTime() - Date.now()
+    expect(diffMs).toBeCloseTo(1 * 60 * 60 * 1000, -4)
+  })
+
+  it('≤14 dias → intervalo de 2 horas', () => {
+    vi.useFakeTimers()
+    const flightDate = addDaysToNow(10)
     const result = calcNextRunAt(flightDate)
     const diffMs = result.getTime() - Date.now()
     expect(diffMs).toBeCloseTo(2 * 60 * 60 * 1000, -4)
   })
 
-  it('≤14 dias → intervalo de 3 horas', () => {
-    vi.useFakeTimers()
-    const flightDate = addDaysToNow(10)
-    const result = calcNextRunAt(flightDate)
-    const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(3 * 60 * 60 * 1000, -4)
-  })
-
-  it('≤30 dias → intervalo de 6 horas', () => {
+  it('≤30 dias → intervalo de 4 horas', () => {
     vi.useFakeTimers()
     const flightDate = addDaysToNow(20)
+    const result = calcNextRunAt(flightDate)
+    const diffMs = result.getTime() - Date.now()
+    expect(diffMs).toBeCloseTo(4 * 60 * 60 * 1000, -4)
+  })
+
+  it('≤60 dias → intervalo de 6 horas', () => {
+    vi.useFakeTimers()
+    const flightDate = addDaysToNow(45)
     const result = calcNextRunAt(flightDate)
     const diffMs = result.getTime() - Date.now()
     expect(diffMs).toBeCloseTo(6 * 60 * 60 * 1000, -4)
   })
 
-  it('≤60 dias → intervalo de 12 horas', () => {
-    vi.useFakeTimers()
-    const flightDate = addDaysToNow(45)
-    const result = calcNextRunAt(flightDate)
-    const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(12 * 60 * 60 * 1000, -4)
-  })
-
-  it('>60 dias → intervalo de 24 horas', () => {
+  it('>60 dias → intervalo de 12 horas', () => {
     vi.useFakeTimers()
     const flightDate = addDaysToNow(90)
     const result = calcNextRunAt(flightDate)
     const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(24 * 60 * 60 * 1000, -4)
+    expect(diffMs).toBeCloseTo(12 * 60 * 60 * 1000, -4)
   })
 })
 
