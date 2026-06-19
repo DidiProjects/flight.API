@@ -1,209 +1,103 @@
-# Arquitetura — scraping.API
+# Arquitetura — flight.API
 
-## Contexto
+REST API (Fastify + TypeScript) que orquestra o monitoramento de preços de voos: agenda raspagens, recebe resultados via webhook, avalia tarifas contra as rotinas dos usuários e envia alertas por email.
 
-Este projeto (`scraping.API`) roda na **Windows VM** e é responsável exclusivamente por raspagem de dados. Não contém regras de negócio.
+## Stack
 
-O cliente desta API é o `flight.API`, rodando no **Linux host**, que orquestra as raspagens, processa os resultados e toma decisões de negócio (alertas, emails, etc.).
+- **HTTP:** Fastify 5 (helmet, cors, rate-limit, jwt)
+- **Validação:** Zod
+- **Banco:** PostgreSQL (`pg`) — schema e migrações vivem no projeto `flight.DB`
+- **Auth:** JWT (usuários) + `X-API-Key` (callback do scraper)
+- **Email:** nodemailer (SMTP)
+- **Logs:** pino (+ pino-loki opcional para Grafana)
+- **DI:** factory functions manuais (`src/container`)
 
----
+## Estrutura
+
+```
+src/
+  config/env.ts        # env via Zod
+  container/           # DI manual
+  modules/<domain>/    # interfaces, repository, service, route, schema
+  services/
+    scheduler/         # loops de agendamento e dispatch
+    evaluation/        # avalia tarifas vs. rotinas
+    notifications/     # alertas e emails agendados
+    email/             # transporte SMTP
+  utils/               # logger, errors, crypto
+```
+
+Cada módulo segue o padrão `interfaces/ → Repository → Service → route → schema`, registrado em `container.ts` e `app.ts`.
 
 ## Fluxo
 
 ```
-flight.API (Linux — 192.168.122.1)
-  │
-  │  POST /scrape  (X-API-Key)
-  ▼
-scraping.API (Windows VM — 192.168.122.224)
-  │  recebe parâmetros
-  │  executa raspagem (Playwright / Camoufox)
-  │  POST /results  (X-API-Key)
-  ▼
-flight.API (Linux — 192.168.122.1)
-  │  processa resultados
-  │  decisões de negócio (email, alertas, etc.)
+flight.FRONT → flight.API ←→ flight.DB
+                   ↕
+             scraping.API → [Site Azul]
 ```
 
----
+O usuário cria rotinas no FRONT. A API persiste e o scheduler trabalha em cima delas.
 
-## Responsabilidades
+## Scheduler (`src/services/scheduler/SchedulerService.ts`)
 
-| Projeto | Onde roda | Responsabilidade |
-|---|---|---|
-| `scraping.API` | Windows VM | Raspar dados, devolver resultados crus |
-| `flight.API` | Linux host | Orquestrar raspagens, regras de negócio, notificações |
+O agendamento não é por rotina. O scheduler deriva `scraping_jobs` — um job por `airline × origin × destination × flight_date` — e cada despacho registra uma linha em `analysis_runs` (a "análise" que o usuário vê).
 
-`scraping.API` **nunca** decide o que fazer com os dados — apenas coleta e devolve.
+Loops (`start()`):
 
----
+- **Derivação** (a cada `SCRAPE_INTERVAL_MS`) — expira jobs antigos, faz upsert de jobs a partir das rotinas ativas, recalcula prioridades.
+- **Dispatch** (a cada `SCRAPE_INTERVAL_MS`) — por companhia, reivindica até `SCRAPE_DISPATCH_BATCH` jobs, marca `running`, cria a `analysis_run` e faz `POST /scrape` na `scraping.API`. Circuit breaker por companhia (5 falhas → abre por 15min).
+- **Heartbeat** (2min) — recupera jobs travados e marca como falha `analysis_runs` paradas em `running` há mais de 15min.
+- **Evaluation** (5min) — `EvaluationService.runCycle()`.
+- **Daily** (tick de 1min) — a partir das 02:00, uma vez/dia: agrega `flight_fares` no bucket diário, limpa dados crus > 30d, `analysis_runs` > 60d e jobs `dead`.
 
-## Stack
+Reagendamento adaptativo após sucesso (`calcNextRunAt`, por proximidade do voo): ≤7d → 1h; ≤14d → 2h; ≤30d → 4h; ≤60d → 6h; >60d → 12h. Falhas usam backoff exponencial com jitter (`calcBackoffNextRunAt`).
 
-| Camada | Tecnologia | Justificativa |
-|---|---|---|
-| HTTP server | **Fastify** | TypeScript-first, schema nativo, rápido |
-| Validação | **Zod** | TypeScript-first, composável |
-| Fila | **p-queue** | Zero dependências externas, MIT |
-| DI | Manual (factory functions) | Sem magic, simples e testável |
-| Outbound HTTP | **fetch nativo** (Node 22) | Sem axios |
-| Auth | X-API-Key header | Stateless, seguro para comunicação interna |
-| Windows service | **NSSM** | Open source, confiável |
+## Webhook — `POST /flight/scrape/results`
 
----
+Recebe o callback da `scraping.API` (autenticado por `X-API-Key`/`FLIGHT_API_KEY`). Responde 200 imediato e processa async (`ScrapeService.processCallback`):
 
-## Estrutura de pastas
+- Localiza o job por `request_id`. Sucesso → grava `flight_fares`, marca job/run `success` e reagenda.
+- Erro de bloqueio/bot → pausa toda a companhia por 1h (não escala para `dead`).
+- Outros erros → `failed` com backoff, ou `dead` ao atingir `max_retries`.
+- Callback órfão (request_id sem job) → tenta reidratar o job pelo id em `routineId` e salva as fares (`ON CONFLICT` protege duplicatas), sem perder a coleta nem deixar a run presa em `running`.
 
-```
-src/
-  config/
-    env.ts           # lê e valida variáveis de ambiente com Zod
-  container/
-    index.ts         # monta o container de DI (factory manual)
-  middleware/
-    auth.ts          # valida X-API-Key recebida
-  routes/
-    scrape.ts        # POST /scrape
-    health.ts        # GET /health
-  services/
-    scraper/
-      azul.ts        # lógica de raspagem Azul
-      index.ts       # interface ScrapeService
-    result/
-      sender.ts      # envia resultado bruto para flight.API
-  queue/
-    index.ts         # instância p-queue + helpers
-  http/
-    client.ts        # wrapper fetch com retry e apikey
-  types/
-    scrape.ts        # ScrapeRequest, ScrapeResult
-  server.ts
-  main.ts
-```
+## Avaliação (`src/services/evaluation/EvaluationService.ts`)
 
----
-
-## Contrato da API
-
-### `POST /scrape`
-
-Chamado pelo `flight.API`.
-
-**Headers:**
-```
-X-API-Key: <SCRAPER_API_KEY>
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "requestId": "uuid-gerado-pelo-flight-api",
-  "origin": "VCP",
-  "destination": "CGH",
-  "outboundStart": "2026-06-01",
-  "outboundEnd": "2026-06-30",
-  "returnStart": "2026-07-01",
-  "returnEnd": "2026-07-31",
-  "passengers": 1
-}
-```
-
-**Response `202 Accepted`:**
-```json
-{ "requestId": "uuid-gerado-pelo-flight-api", "position": 2 }
-```
-
----
-
-### `GET /health`
-
-```json
-{ "status": "ok", "queue": { "size": 2, "pending": 1 } }
-```
-
----
-
-## Envio de resultados
-
-Ao fim de cada raspagem, envia os dados crus para o `flight.API` sem qualquer processamento:
-
-```ts
-await fetch(`${env.FLIGHT_API_URL}/scrape/results`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': env.FLIGHT_API_KEY,
-  },
-  body: JSON.stringify({ requestId, results }),
-});
-```
-
----
-
-## Fila de jobs
-
-- Cada `POST /scrape` enfileira um job
-- `QUEUE_CONCURRENCY` controla paralelismo (default: `2`)
-- Jobs excedentes aguardam — sem rejeição, sem perda
-- Resposta `202` imediata com posição na fila
-
----
+Para cada rotina ativa: busca a tarifa mais recente por rota/companhia, ignorando tarifas mais velhas que 48h (`MAX_FARE_AGE_HOURS`). Filtra contra o alvo da rotina (`cash`/`pts`/`hyb`) com a margem configurada, escolhe a melhor e dispara alerta — respeitando rate-limit de 24h por rotina (`hasRecentAlert`).
 
 ## Variáveis de ambiente
 
-| Variável | Descrição |
-|---|---|
-| `PORT` | Porta da API (default: `3000`) |
-| `SCRAPER_API_KEY` | Chave que o `flight.API` usa para chamar esta API |
-| `FLIGHT_API_URL` | URL base do `flight.API` (ex: `http://192.168.122.1:3011`) |
-| `FLIGHT_API_KEY` | Chave para autenticar no `flight.API` |
-| `QUEUE_CONCURRENCY` | Jobs paralelos simultâneos (default: `2`) |
+Definidas e validadas em `src/config/env.ts` (Zod). Toda nova var deve ir também ao `.env` e ao step `docker run` do `deploy.yml`.
 
----
+| Variável | Default | Descrição |
+|---|---|---|
+| `PORT` | `3011` | Porta HTTP |
+| `POSTGRES_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_DB` | — | Conexão PostgreSQL |
+| `JWT_SECRET` | — | Segredo JWT (≥32 chars) |
+| `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | `15m` / `30d` | Validade dos tokens |
+| `SCRAPE_INTERVAL_MS` | `300000` | Período dos loops de derivação/dispatch (5min) |
+| `SCRAPE_INTERVAL_JITTER_MS` | `60000` | Jitter aplicado ao intervalo |
+| `SCRAPE_DISPATCH_BATCH` | `1` | Jobs por companhia por tick = sessões simultâneas no mesmo IP. Manter baixo p/ evitar detecção de bot |
+| `EVALUATION_INTERVAL_MS` | `300000` | Período do loop de avaliação |
+| `SCRAPING_API_URL` / `SCRAPING_API_KEY` | — | Endpoint e chave da `scraping.API` |
+| `FLIGHT_API_KEY` | — | Chave que o scraper usa no callback `/scrape/results` |
+| `SMTP_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_FROM` | — | Envio de email |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD_INITIAL` | — | Admin inicial (seed) |
+| `API_BASE_URL` / `FRONTEND_URL` | localhost | URLs base (CORS, links de email) |
+| `LOG_LEVEL` | `info` | Nível pino |
+| `GRAFANA_LOKI_URL` / `_USER` / `_TOKEN` | — | Envio de logs ao Loki (opcional) |
 
-## Windows Service (NSSM)
+## Rodar
 
-A API inicia automaticamente com o Windows e reinicia em caso de crash.
-
-### Instalação (uma vez, via PowerShell Admin)
-
-```powershell
-curl -o nssm.zip https://nssm.cc/release/nssm-2.24.zip
-Expand-Archive nssm.zip -DestinationPath C:\nssm
-copy C:\nssm\nssm-2.24\win64\nssm.exe C:\Windows\System32\
-
-nssm install scraping-api "C:\Program Files\nodejs\node.exe"
-nssm set scraping-api AppParameters "--import file:///C:/Users/diego/artifacts/scraping.API/node_modules/tsx/dist/esm/index.cjs C:/Users/diego/artifacts/scraping.API/src/main.ts"
-nssm set scraping-api AppDirectory "C:\Users\diego\artifacts\scraping.API"
-nssm set scraping-api Start SERVICE_AUTO_START
-nssm set scraping-api AppStdout "C:\Users\diego\artifacts\scraping.API\logs\service.log"
-nssm set scraping-api AppStderr "C:\Users\diego\artifacts\scraping.API\logs\service-error.log"
-nssm set scraping-api AppStdoutCreationDisposition 4
-nssm set scraping-api AppStderrCreationDisposition 4
-
-New-Item -ItemType Directory -Path "C:\Users\diego\artifacts\scraping.API\logs" -Force
-nssm start scraping-api
+```
+npm run start:dev   # tsx watch
+npm run build       # tsc → build/
+npm start           # node build/index.js
+npm test            # vitest
+npm run typecheck   # tsc --noEmit
 ```
 
-### Comandos úteis
+## Deploy
 
-```powershell
-nssm status scraping-api
-nssm restart scraping-api
-nssm stop scraping-api
-nssm remove scraping-api
-```
-
----
-
-## Deploy (GitHub Actions)
-
-1. Garantir que a VM está rodando
-2. `git pull`
-3. `npm ci`
-4. `npm run build`
-5. `nssm restart scraping-api`
-6. `GET /health` para confirmar que subiu
-
-> A VM fica rodando permanentemente — sem shutdown após deploy.
+GitHub Actions → build da imagem Docker → push via Tailscale SSH → `docker run` no servidor Linux. Rede Docker `flight-network` liga `flight-api` e `flight-db`. Não buildar à mão — commit + push aciona o workflow.
