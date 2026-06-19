@@ -59,7 +59,14 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     destination: string,
     dateFrom: string,
     dateTo: string,
+    maxAgeHours?: number,
   ): Promise<LatestFaresByDate[]> {
+    const params: unknown[] = [airline, origin, destination, dateFrom, dateTo]
+    const freshFilter =
+      maxAgeHours != null
+        ? `AND scraped_at >= NOW() - ($${params.push(maxAgeHours)} || ' hours')::interval`
+        : ''
+
     const { rows } = await this.db.query<LatestFaresByDate>(`
       SELECT
         f.airline, f.flight_date, f.is_return,
@@ -72,6 +79,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         FROM flight_fares
         WHERE airline = $1 AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
+          ${freshFilter}
         ORDER BY flight_date, is_return, scraped_at DESC
       ) latest_job
         ON f.flight_date     = latest_job.flight_date
@@ -79,7 +87,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
        AND f.scraping_job_id = latest_job.scraping_job_id
       WHERE f.airline = $1 AND f.origin = $2 AND f.destination = $3
       ORDER BY f.flight_date, f.is_return, f.fare_cash ASC NULLS LAST
-    `, [airline, origin, destination, dateFrom, dateTo])
+    `, params)
     return rows
   }
 

@@ -18,8 +18,8 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
-  SCRAPE_INTERVAL_MS: z.coerce.number().default(3_600_000),
-  SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(300_000),
+  SCRAPE_INTERVAL_MS: z.coerce.number().default(300_000),
+  SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(60_000),
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
   SCRAPING_API_URL: z.string().url(),
   SCRAPING_API_KEY: z.string(),

@@ -7,6 +7,10 @@ import { logger } from '../../utils/logger'
 
 const log = logger.child({ service: 'evaluation' })
 
+// Tarifas mais velhas que isso são consideradas obsoletas e não geram alerta.
+// Acima do maior intervalo de re-scraping (24h) para não suprimir alertas legítimos.
+const MAX_FARE_AGE_HOURS = 48
+
 function toDateStr(v: string | Date): string {
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
 }
@@ -48,6 +52,7 @@ export class EvaluationService implements IEvaluationService {
         routine.destination,
         toDateStr(routine.outbound_start),
         toDateStr(routine.outbound_end),
+        MAX_FARE_AGE_HOURS,
       )
       allOutbound.push(...outbound)
     }

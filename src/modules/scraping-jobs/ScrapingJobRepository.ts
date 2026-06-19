@@ -156,8 +156,14 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   async recoverStuckJobs(): Promise<number> {
     const { rowCount } = await this.db.query(`
       UPDATE scraping_jobs
-      SET status = 'pending', running_since = NULL, request_id = NULL,
-          retry_count = retry_count + 1, next_run_at = NOW() + INTERVAL '2 minutes',
+      SET status = CASE WHEN retry_count + 1 >= max_retries THEN 'dead' ELSE 'pending' END,
+          running_since = NULL, request_id = NULL,
+          retry_count = retry_count + 1,
+          last_error = CASE WHEN retry_count + 1 >= max_retries
+                            THEN COALESCE(last_error, 'Stuck running: sem callback após timeout — max retries atingido')
+                            ELSE last_error END,
+          last_failure_at = CASE WHEN retry_count + 1 >= max_retries THEN NOW() ELSE last_failure_at END,
+          next_run_at = NOW() + INTERVAL '2 minutes',
           updated_at = NOW()
       WHERE status = 'running'
         AND running_since < NOW() - (running_timeout_min || ' minutes')::interval

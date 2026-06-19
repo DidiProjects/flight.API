@@ -63,7 +63,7 @@ export interface PriceByDate {
 
 export interface IFlightFaresRepository {
   insertMany(jobId: string, fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'scraped_at'>[]): Promise<number>
-  getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string): Promise<LatestFaresByDate[]>
+  getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string, maxAgeHours?: number): Promise<LatestFaresByDate[]>
   getPriceHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceHistory>
   getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<CurrentBest>
