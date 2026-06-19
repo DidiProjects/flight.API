@@ -35,8 +35,6 @@ export interface RoutineRow {
   destination: string
   outbound_start: string
   outbound_end: string
-  return_start: string | null
-  return_end: string | null
   passengers: number
   currency: string
   target_cash: number | null

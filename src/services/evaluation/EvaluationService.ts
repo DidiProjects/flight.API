@@ -40,7 +40,6 @@ export class EvaluationService implements IEvaluationService {
 
   private async evaluateRoutine(routine: RoutineRow): Promise<void> {
     const allOutbound: LatestFaresByDate[] = []
-    const allReturn: LatestFaresByDate[] = []
 
     for (const airline of routine.airlines) {
       const outbound = await this.flightFaresRepo.getLatestByRoute(
@@ -51,17 +50,6 @@ export class EvaluationService implements IEvaluationService {
         toDateStr(routine.outbound_end),
       )
       allOutbound.push(...outbound)
-
-      if (routine.return_start && routine.return_end) {
-        const ret = await this.flightFaresRepo.getLatestByRoute(
-          airline,
-          routine.destination,
-          routine.origin,
-          toDateStr(routine.return_start),
-          toDateStr(routine.return_end),
-        )
-        allReturn.push(...ret)
-      }
     }
 
     if (allOutbound.length === 0) return
@@ -79,9 +67,7 @@ export class EvaluationService implements IEvaluationService {
       toDateStr(bestMatch.flight_date),
     )
 
-    const bestReturn = allReturn.length > 0 ? this.bestFare(allReturn, routine) : null
-
-    await this.notifSvc.dispatchAlert(routine, bestMatch, bestReturn, history)
+    await this.notifSvc.dispatchAlert(routine, bestMatch, null, history)
   }
 
   private findBestMatch(fares: LatestFaresByDate[], routine: RoutineRow): LatestFaresByDate | null {

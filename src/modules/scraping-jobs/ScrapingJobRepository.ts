@@ -16,18 +16,6 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       JOIN routine_airlines ra ON ra.routine_id = r.id
       WHERE r.is_active = true
         AND r.outbound_end >= CURRENT_DATE
-      UNION
-      SELECT DISTINCT
-        ra.airline,
-        r.origin,
-        r.destination,
-        generate_series(r.return_start, r.return_end, '1 day'::interval)::date AS flight_date
-      FROM routines r
-      JOIN routine_airlines ra ON ra.routine_id = r.id
-      WHERE r.is_active = true
-        AND r.return_start IS NOT NULL
-        AND r.return_end IS NOT NULL
-        AND r.return_end >= CURRENT_DATE
       ON CONFLICT (airline, origin, destination, flight_date) DO NOTHING
     `)
     return rowCount ?? 0
@@ -45,18 +33,6 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       JOIN routine_airlines ra ON ra.routine_id = r.id
       WHERE r.id = $1
         AND r.outbound_end >= CURRENT_DATE
-      UNION
-      SELECT DISTINCT
-        ra.airline,
-        r.origin,
-        r.destination,
-        generate_series(r.return_start, r.return_end, '1 day'::interval)::date AS flight_date
-      FROM routines r
-      JOIN routine_airlines ra ON ra.routine_id = r.id
-      WHERE r.id = $1
-        AND r.return_start IS NOT NULL
-        AND r.return_end IS NOT NULL
-        AND r.return_end >= CURRENT_DATE
       ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
         SET next_run_at = NOW(),
             priority    = 100,

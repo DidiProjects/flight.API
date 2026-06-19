@@ -51,7 +51,6 @@ export class NotificationsService implements INotificationsService {
 
       for (const routine of userRoutines) {
         const allOutbound: LatestFaresByDate[] = []
-        const allReturn: LatestFaresByDate[] = []
 
         for (const airline of routine.airlines) {
           const outbound = await this.flightFaresRepo.getLatestByRoute(
@@ -62,17 +61,6 @@ export class NotificationsService implements INotificationsService {
             toDateStr(routine.outbound_end),
           )
           allOutbound.push(...outbound)
-
-          if (routine.return_start && routine.return_end) {
-            const ret = await this.flightFaresRepo.getLatestByRoute(
-              airline,
-              routine.destination,
-              routine.origin,
-              toDateStr(routine.return_start),
-              toDateStr(routine.return_end),
-            )
-            allReturn.push(...ret)
-          }
         }
 
         if (allOutbound.length === 0) {
@@ -82,8 +70,6 @@ export class NotificationsService implements INotificationsService {
 
         const bestOutbound = this.bestFare(allOutbound, routine.priority)
         if (!bestOutbound) continue
-
-        const bestReturn = allReturn.length > 0 ? this.bestFare(allReturn, routine.priority) : null
 
         const unsubToken = await this.unsubTokensRepo.create(routine.id, owner.email, true)
 
@@ -97,7 +83,7 @@ export class NotificationsService implements INotificationsService {
             airline:  bestOutbound.airline,
             currency: bestOutbound.currency ?? routine.currency,
             outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
-            return:   bestReturn ? this.fareToBlock(bestReturn, routine.destination, routine.origin) : null,
+            return:   null,
           }],
           unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
         })

@@ -72,14 +72,8 @@ export class RoutinesService implements IRoutinesService {
     if (data.outboundEnd < today) {
       throw new BadRequestError('A data de ida já passou')
     }
-    if (data.returnEnd && data.returnEnd < today) {
-      throw new BadRequestError('A data de volta já passou')
-    }
     if (data.outboundStart > data.outboundEnd) {
       throw new BadRequestError('outboundStart deve ser anterior a outboundEnd')
-    }
-    if (data.returnStart && data.returnEnd && data.returnStart > data.returnEnd) {
-      throw new BadRequestError('returnStart deve ser anterior a returnEnd')
     }
 
     return this.routinesRepo.create({ userId, ...data, currency })
@@ -124,9 +118,6 @@ export class RoutinesService implements IRoutinesService {
     const today = new Date().toISOString().slice(0, 10)
     if (String(existing.outbound_end).slice(0, 10) < today) {
       throw new BadRequestError('Não é possível ativar uma rotina com data de ida no passado')
-    }
-    if (existing.return_end && String(existing.return_end).slice(0, 10) < today) {
-      throw new BadRequestError('Não é possível ativar uma rotina com data de volta no passado')
     }
     for (const code of existing.airlines) {
       const airline = await this.airlinesRepo.findByCode(code)
@@ -174,9 +165,6 @@ export class RoutinesService implements IRoutinesService {
     const today = new Date().toISOString().slice(0, 10)
     if (String(existing.outbound_end).slice(0, 10) < today) {
       throw new BadRequestError('Não é possível ativar uma rotina com data de ida no passado')
-    }
-    if (existing.return_end && String(existing.return_end).slice(0, 10) < today) {
-      throw new BadRequestError('Não é possível ativar uma rotina com data de volta no passado')
     }
     for (const code of existing.airlines) {
       const airline = await this.airlinesRepo.findByCode(code)

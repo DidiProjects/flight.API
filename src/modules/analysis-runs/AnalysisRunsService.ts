@@ -22,8 +22,6 @@ export class AnalysisRunsService implements IAnalysisRunsService {
       destination:   routine.destination,
       outboundStart: toDateStr(routine.outbound_start),
       outboundEnd:   toDateStr(routine.outbound_end),
-      returnStart:   routine.return_start ? toDateStr(routine.return_start) : null,
-      returnEnd:     routine.return_end ? toDateStr(routine.return_end) : null,
     })
   }
 }

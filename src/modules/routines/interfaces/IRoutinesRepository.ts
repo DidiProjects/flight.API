@@ -8,8 +8,6 @@ export interface CreateRoutineData {
   destination: string
   outboundStart: string
   outboundEnd: string
-  returnStart?: string | null
-  returnEnd?: string | null
   passengers: number
   currency: string
   targetCash?: number | null

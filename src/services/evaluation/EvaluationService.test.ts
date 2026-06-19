@@ -17,8 +17,6 @@ function makeRoutine(overrides: Partial<RoutineRow> = {}): RoutineRow {
     destination:            'LIS',
     outbound_start:         '2026-08-01',
     outbound_end:           '2026-08-31',
-    return_start:           null,
-    return_end:             null,
     passengers:             1,
     currency:               'BRL',
     target_cash:            2000,

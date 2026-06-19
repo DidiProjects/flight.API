@@ -32,22 +32,17 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
   }
 
   async listByRoutineMatch(params: RoutineMatchParams): Promise<AnalysisRunRow[]> {
-    const { airlines, origin, destination, outboundStart, outboundEnd, returnStart, returnEnd, limit = 200 } = params
-    const hasReturn = returnStart != null && returnEnd != null
+    const { airlines, origin, destination, outboundStart, outboundEnd, limit = 200 } = params
 
     const { rows } = await this.db.query<AnalysisRunRow>(
       `SELECT ${RUN_COLS}
        FROM analysis_runs
        WHERE airline = ANY($1::text[])
-         AND (
-           (origin = $2 AND destination = $3 AND flight_date BETWEEN $4 AND $5)
-           ${hasReturn ? 'OR (origin = $3 AND destination = $2 AND flight_date BETWEEN $6 AND $7)' : ''}
-         )
+         AND origin = $2 AND destination = $3
+         AND flight_date BETWEEN $4 AND $5
        ORDER BY started_at DESC
-       LIMIT ${hasReturn ? '$8' : '$6'}`,
-      hasReturn
-        ? [airlines, origin, destination, outboundStart, outboundEnd, returnStart, returnEnd, limit]
-        : [airlines, origin, destination, outboundStart, outboundEnd, limit],
+       LIMIT $6`,
+      [airlines, origin, destination, outboundStart, outboundEnd, limit],
     )
     return rows
   }

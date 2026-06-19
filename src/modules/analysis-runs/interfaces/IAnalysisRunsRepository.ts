@@ -36,8 +36,6 @@ export interface RoutineMatchParams {
   destination: string
   outboundStart: string
   outboundEnd: string
-  returnStart: string | null
-  returnEnd: string | null
   limit?: number
 }
 
