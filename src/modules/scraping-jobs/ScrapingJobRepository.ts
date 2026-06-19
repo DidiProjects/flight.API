@@ -84,7 +84,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       WHERE id = (
         SELECT id FROM scraping_jobs
         WHERE airline = $1
-          AND status IN ('pending', 'failed')
+          AND status IN ('pending', 'failed', 'success')
           AND next_run_at <= NOW()
           AND retry_count < max_retries
         ORDER BY priority DESC, next_run_at ASC
@@ -108,7 +108,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     await this.db.query(`
       UPDATE scraping_jobs
       SET status = 'success', last_success_at = NOW(), running_since = NULL,
-          request_id = NULL, retry_count = 0, next_run_at = $2, updated_at = NOW()
+          request_id = NULL, retry_count = 0, last_error = NULL, next_run_at = $2, updated_at = NOW()
       WHERE id = $1
     `, [id, nextRunAt])
   }
@@ -175,7 +175,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   async getActiveAirlines(): Promise<string[]> {
     const { rows } = await this.db.query<{ airline: string }>(`
       SELECT DISTINCT airline FROM scraping_jobs
-      WHERE status IN ('pending', 'failed')
+      WHERE status IN ('pending', 'failed', 'success')
         AND next_run_at <= NOW()
         AND retry_count < max_retries
         AND flight_date >= CURRENT_DATE
