@@ -31,11 +31,14 @@ function daysBetween(a: Date, b: Date): number {
 
 function calcNextRunAt(flightDate: string): Date {
   const days = daysBetween(new Date(), new Date(flightDate))
+  // Curva ancorada no comportamento real de preço: surto nos últimos ~21 dias
+  // (≤7/≤14), sweet spot dos bons preços em ~21–45 dias (densificado em 3h),
+  // e zona estável distante (>90 dias) com baixa frequência.
   const intervalMs =
     days <= 7  ? 1  * 60 * 60 * 1000 :
     days <= 14 ? 2  * 60 * 60 * 1000 :
-    days <= 30 ? 4  * 60 * 60 * 1000 :
-    days <= 60 ? 6  * 60 * 60 * 1000 :
+    days <= 45 ? 3  * 60 * 60 * 1000 :
+    days <= 90 ? 6  * 60 * 60 * 1000 :
                  12 * 60 * 60 * 1000
   return new Date(Date.now() + intervalMs)
 }
