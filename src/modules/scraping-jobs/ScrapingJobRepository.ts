@@ -178,6 +178,13 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rows[0] ?? null
   }
 
+  async findById(id: string): Promise<ScrapingJobRow | null> {
+    const { rows } = await this.db.query<ScrapingJobRow>(`
+      SELECT * FROM scraping_jobs WHERE id = $1
+    `, [id])
+    return rows[0] ?? null
+  }
+
   async getActiveAirlines(): Promise<string[]> {
     const { rows } = await this.db.query<{ airline: string }>(`
       SELECT DISTINCT airline FROM scraping_jobs

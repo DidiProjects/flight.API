@@ -32,6 +32,7 @@ export interface IScrapingJobRepository {
   pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number>
   recoverStuckJobs(): Promise<number>
   findByRequestId(requestId: string): Promise<ScrapingJobRow | null>
+  findById(id: string): Promise<ScrapingJobRow | null>
   getActiveAirlines(): Promise<string[]>
   cleanupDeadJobs(): Promise<number>
 }

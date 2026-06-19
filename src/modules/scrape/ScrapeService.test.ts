@@ -70,6 +70,7 @@ function makeFlightOffer() {
 function makeMocks() {
   const mockScrapingJobRepo = {
     findByRequestId:     vi.fn(),
+    findById:            vi.fn(),
     markFailed:          vi.fn(),
     markDead:            vi.fn(),
     markSuccess:         vi.fn(),
@@ -152,6 +153,39 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markDead).toHaveBeenCalledOnce()
     expect(mockScrapingJobRepo.markDead).toHaveBeenCalledWith(job.id, 'scraper crashed')
     expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+  })
+
+  it('callback órfão de sucesso — reidrata job por id, salva fares e marca sucesso', async () => {
+    const job = makeJob({ status: 'pending', request_id: null, flight_date: '2026-07-01' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.findById).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+
+    await svc.processCallback(makeCallback({
+      routineId: job.id,
+      requestId: 'req-00000-0000-0000-0000-0000000000ff',
+      flights:   [makeFlightOffer()],
+    }))
+
+    expect(mockScrapingJobRepo.findById).toHaveBeenCalledWith(job.id)
+    expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledWith(job.id, expect.any(Date))
+  })
+
+  it('callback órfão de sucesso com job já re-despachado — salva fares mas NÃO sobrescreve o job', async () => {
+    const job = makeJob({ status: 'running', request_id: 'req-novo-despacho' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.findById).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+
+    await svc.processCallback(makeCallback({
+      routineId: job.id,
+      requestId: 'req-antigo-atrasado',
+      flights:   [makeFlightOffer()],
+    }))
+
+    expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markSuccess).not.toHaveBeenCalled()
   })
 
   it('webhook de sucesso — insertMany com fares mapeadas e markSuccess chamado', async () => {

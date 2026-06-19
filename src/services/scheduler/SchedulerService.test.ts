@@ -48,6 +48,7 @@ function makeEnv(): Env {
     JWT_REFRESH_EXPIRES_IN:    '30d',
     SCRAPE_INTERVAL_MS:        3_600_000,
     SCRAPE_INTERVAL_JITTER_MS: 300_000,
+    SCRAPE_DISPATCH_BATCH:     5,
     EVALUATION_INTERVAL_MS:    300_000,
     SCRAPING_API_URL:          'http://scraping-api',
     SCRAPING_API_KEY:          'test-key',
@@ -194,6 +195,28 @@ describe('SchedulerService — dispatch loop', () => {
 
     expect(scrapingJobRepo.upsertFromRoutine).toHaveBeenCalledWith(routineId)
     expect(scrapingJobRepo.upsertFromRoutines).not.toHaveBeenCalled()
+  })
+
+  it('despacha em lote até o orçamento por companhia, parando quando não há mais job', async () => {
+    const job = makeJob()
+    const scrapingJobRepo = makeScrapingJobRepoMock()
+    vi.mocked(scrapingJobRepo.claimNextJob)
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce(null)
+    const svc = new SchedulerService(
+      scrapingJobRepo,
+      makeFlightFaresRepoMock(),
+      makeNotifMock(),
+      makeEvalMock(),
+      makeEnv(),
+      makeAnalysisRunsRepoMock(),
+    )
+
+    await (svc as any).dispatchForAirlines(5)
+
+    // Dois jobs disponíveis para 'azul', depois null → exatamente 2 despachos.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('não faz chamada HTTP se não houver job elegível', async () => {

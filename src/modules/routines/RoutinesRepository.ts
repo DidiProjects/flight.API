@@ -82,9 +82,12 @@ export class RoutinesRepository implements IRoutinesRepository {
 
   async findActiveForScheduled(currentTime: string): Promise<RoutineRow[]> {
     const { rows } = await this.db.query<RoutineRow>(
+      // <= (e não =) para dar catch-up: se o tick do minuto exato foi perdido,
+      // a rotina ainda é pega num tick posterior do mesmo dia. A deduplicação
+      // (já enviado hoje) fica a cargo do NotificationsService.
       `${selectWithAirlines(`WHERE r.is_active = true
          AND 'scheduled' = ANY(r.notification_modes)
-         AND to_char(r.scheduled_time, 'HH24:MI') = $1`)}`,
+         AND to_char(r.scheduled_time, 'HH24:MI') <= $1`)}`,
       [currentTime],
     )
     return rows

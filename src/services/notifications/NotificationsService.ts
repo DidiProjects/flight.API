@@ -50,6 +50,12 @@ export class NotificationsService implements INotificationsService {
       const logEntries: Array<{ routine: RoutineRow; bestFare: LatestFaresByDate }> = []
 
       for (const routine of userRoutines) {
+        // Catch-up usa match `<=` no horário, então deduplicamos aqui: se já houve
+        // um envio 'scheduled' nas últimas 12h, não reenvia (frequência é diária).
+        if (await this.notifLogRepo.hasNotificationSinceHours(routine.id, 'scheduled', 12)) {
+          continue
+        }
+
         const allOutbound: LatestFaresByDate[] = []
 
         for (const airline of routine.airlines) {

@@ -37,13 +37,7 @@ export class ScrapeService implements IScrapeService {
 
     const job = await this.scrapingJobRepo.findByRequestId(data.requestId)
     if (!job) {
-      // O job já saiu (timeout/recovery/reset) ou é um callback duplicado/atrasado.
-      // Ainda assim fechamos a run pelo seu próprio request_id, para não deixá-la
-      // presa em 'running'. markFinished é no-op se a run já estiver finalizada.
-      log.warn({ requestId: data.requestId }, 'scrape callback: job not found')
-      await this.analysisRunsRepo.markFinished(data.requestId, data.error
-        ? { status: isBlockError(data.error) ? 'blocked' : 'failed', errorMessage: data.error }
-        : { status: 'success', faresFound: data.flights.length })
+      await this.handleOrphanCallback(data)
       return
     }
 
@@ -71,7 +65,57 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
-    const fares = data.flights.map((f) => ({
+    const count = await this.flightFaresRepo.insertMany(job.id, this.toFareRows(data))
+
+    const nextRunAt = calcNextRunAt(job.flight_date)
+    await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
+    await this.analysisRunsRepo.markFinished(data.requestId, { status: 'success', faresFound: data.flights.length })
+
+    log.info({ jobId: job.id, faresCount: count }, 'scraping_job_success')
+  }
+
+  // Callback cujo request_id não bate com nenhum job: o job já foi recuperado
+  // (timeout) e re-despachado, ou é duplicado/atrasado. O payload carrega o id
+  // do scraping_job em `routineId`, então tentamos reidratar por ele para não
+  // perder a coleta nem deixar a analysis_run presa em 'running'.
+  private async handleOrphanCallback(data: ScrapeCallback): Promise<void> {
+    const job = data.routineId
+      ? await this.scrapingJobRepo.findById(data.routineId)
+      : null
+
+    // Erro sem voos: só fecha a run; não mexe no job (ele já seguiu adiante).
+    if (data.error && data.flights.length === 0) {
+      await this.analysisRunsRepo.markFinished(data.requestId, {
+        status:       isBlockError(data.error) ? 'blocked' : 'failed',
+        errorMessage: data.error,
+      })
+      log.warn({ requestId: data.requestId, jobId: job?.id }, 'orphan callback (erro): run fechada, job intocado')
+      return
+    }
+
+    if (!job) {
+      // Sem job não há scraping_job_id para amarrar as fares — só fecha a run.
+      await this.analysisRunsRepo.markFinished(data.requestId, { status: 'success', faresFound: data.flights.length })
+      log.warn({ requestId: data.requestId }, 'orphan callback: job não encontrado, fares descartadas')
+      return
+    }
+
+    // Persiste a coleta (ON CONFLICT protege contra duplicata).
+    const count = await this.flightFaresRepo.insertMany(job.id, this.toFareRows(data))
+
+    // Só reagenda o job se ele NÃO estiver no meio de uma nova coleta (re-despacho
+    // já em voo com outro request_id) — nesse caso evitamos sobrescrever o estado.
+    const jobMovedOn = job.status === 'running' && job.request_id !== data.requestId
+    if (!jobMovedOn) {
+      await this.scrapingJobRepo.markSuccess(job.id, calcNextRunAt(job.flight_date))
+    }
+    await this.analysisRunsRepo.markFinished(data.requestId, { status: 'success', faresFound: data.flights.length })
+
+    log.info({ jobId: job.id, faresCount: count, jobMovedOn }, 'orphan callback: coleta salva')
+  }
+
+  private toFareRows(data: ScrapeCallback) {
+    return data.flights.map((f) => ({
       flight_number:  f.flightNumber ?? null,
       flight_date:    f.date,
       is_return:      f.isReturn,
@@ -88,13 +132,5 @@ export class ScrapeService implements IScrapeService {
       fare_hyb_pts:   f.fareHybPts ?? null,
       fare_hyb_cash:  f.fareHybCash ?? null,
     }))
-
-    const count = await this.flightFaresRepo.insertMany(job.id, fares)
-
-    const nextRunAt = calcNextRunAt(job.flight_date)
-    await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
-    await this.analysisRunsRepo.markFinished(data.requestId, { status: 'success', faresFound: data.flights.length })
-
-    log.info({ jobId: job.id, faresCount: count }, 'scraping_job_success')
   }
 }

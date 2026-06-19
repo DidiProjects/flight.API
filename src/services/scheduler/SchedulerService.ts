@@ -52,6 +52,9 @@ export { calcNextRunAt, calcBackoffNextRunAt }
 
 export class SchedulerService implements ISchedulerService {
   private readonly circuitBreakers = new Map<string, CircuitBreakerState>()
+  // Bucket diário já processado pela manutenção (agregação/cleanup). Permite
+  // catch-up: se o tick exato das 02:00 for perdido, roda no próximo tick.
+  private lastMaintenanceBucket: string | null = null
 
   constructor(
     private readonly scrapingJobRepo: IScrapingJobRepository,
@@ -73,7 +76,8 @@ export class SchedulerService implements ISchedulerService {
   async dispatchOne(routineId: string): Promise<void> {
     log.info({ routineId }, 'dispatchOne: manual dispatch requested')
     await this.scrapingJobRepo.upsertFromRoutine(routineId)
-    await this.dispatchForAirlines()
+    // Disparo manual despacha apenas um job por companhia.
+    await this.dispatchForAirlines(1)
   }
 
   // ---------------------------------------------------------------------------
@@ -109,7 +113,7 @@ export class SchedulerService implements ISchedulerService {
   private scheduleJobDispatch(): void {
     const tick = async () => {
       try {
-        await this.dispatchForAirlines()
+        await this.dispatchForAirlines(this.env.SCRAPE_DISPATCH_BATCH)
       } catch (err) {
         log.error({ err }, 'dispatch loop error')
       } finally {
@@ -122,20 +126,23 @@ export class SchedulerService implements ISchedulerService {
     setTimeout(tick, initial)
   }
 
-  private async dispatchForAirlines(): Promise<void> {
+  private async dispatchForAirlines(budget: number): Promise<void> {
     const airlines = await this.scrapingJobRepo.getActiveAirlines()
     for (const airline of airlines) {
-      if (this.isCircuitOpen(airline)) {
-        log.warn({ airline }, 'circuit_breaker_open: skipping airline')
-        continue
+      for (let i = 0; i < budget; i++) {
+        if (this.isCircuitOpen(airline)) {
+          log.warn({ airline }, 'circuit_breaker_open: skipping airline')
+          break
+        }
+        const dispatched = await this.dispatchNextJob(airline)
+        if (!dispatched) break
       }
-      await this.dispatchNextJob(airline)
     }
   }
 
-  private async dispatchNextJob(airline: string): Promise<void> {
+  private async dispatchNextJob(airline: string): Promise<boolean> {
     const job = await this.scrapingJobRepo.claimNextJob(airline)
-    if (!job) return
+    if (!job) return false
 
     log.info({ jobId: job.id, airline: job.airline, priority: job.priority }, 'scraping_job_claimed')
 
@@ -199,6 +206,8 @@ export class SchedulerService implements ISchedulerService {
         log.error({ jobId: job.id, airline, err }, 'scraping.API request failed')
       }
     }
+
+    return true
   }
 
   // ---------------------------------------------------------------------------
@@ -261,26 +270,35 @@ export class SchedulerService implements ISchedulerService {
 
     const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
     const d = new Date(now)
-    const hours = d.getHours()
-    const minutes = d.getMinutes()
 
-    if (hours === 2 && minutes === 0) {
+    // Manutenção diária a partir das 02:00, no máximo uma vez por dia. Em vez de
+    // exigir o minuto exato (que um tick perdido/atrasado pularia para sempre),
+    // roda no primeiro tick após as 02:00 cujo bucket ainda não foi processado.
+    if (d.getHours() >= 2) {
       const yesterday = new Date(d)
       yesterday.setDate(yesterday.getDate() - 1)
       const bucketDate = yesterday.toISOString().slice(0, 10)
 
-      const aggregated = await this.flightFaresRepo.aggregateToDailyBucket(bucketDate)
-      log.info({ bucketDate, aggregated }, 'daily bucket aggregated')
-
-      const deleted = await this.flightFaresRepo.cleanupOlderThan(30)
-      log.info({ deleted }, 'flight_fares cleanup: old raw data removed')
-
-      const runsDeleted = await this.analysisRunsRepo.cleanupOlderThan(60)
-      log.info({ runsDeleted }, 'analysis_runs cleanup: old runs removed')
-
-      const deadCleaned = await this.scrapingJobRepo.cleanupDeadJobs()
-      log.info({ deadCleaned }, 'scraping_jobs cleanup: dead jobs removed')
+      if (this.lastMaintenanceBucket !== bucketDate) {
+        // Marca antes de rodar para não duplicar caso a manutenção dure mais que o tick.
+        this.lastMaintenanceBucket = bucketDate
+        await this.runDailyMaintenance(bucketDate)
+      }
     }
+  }
+
+  private async runDailyMaintenance(bucketDate: string): Promise<void> {
+    const aggregated = await this.flightFaresRepo.aggregateToDailyBucket(bucketDate)
+    log.info({ bucketDate, aggregated }, 'daily bucket aggregated')
+
+    const deleted = await this.flightFaresRepo.cleanupOlderThan(30)
+    log.info({ deleted }, 'flight_fares cleanup: old raw data removed')
+
+    const runsDeleted = await this.analysisRunsRepo.cleanupOlderThan(60)
+    log.info({ runsDeleted }, 'analysis_runs cleanup: old runs removed')
+
+    const deadCleaned = await this.scrapingJobRepo.cleanupDeadJobs()
+    log.info({ deadCleaned }, 'scraping_jobs cleanup: dead jobs removed')
   }
 
   // ---------------------------------------------------------------------------

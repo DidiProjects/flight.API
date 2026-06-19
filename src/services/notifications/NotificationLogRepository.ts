@@ -56,6 +56,18 @@ export class NotificationLogRepository implements INotificationLogRepository {
     return rows[0].exists
   }
 
+  async hasNotificationSinceHours(routineId: string, type: string, hours: number): Promise<boolean> {
+    const { rows } = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM notification_log
+         WHERE routine_id = $1 AND type = $2
+           AND sent_at > NOW() - ($3 || ' hours')::interval
+       ) AS exists`,
+      [routineId, type, hours],
+    )
+    return rows[0].exists
+  }
+
   async insert(data: InsertNotificationLogData): Promise<void> {
     await this.db.query(
       `INSERT INTO notification_log

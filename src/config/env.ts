@@ -20,6 +20,11 @@ const envSchema = z.object({
 
   SCRAPE_INTERVAL_MS: z.coerce.number().default(300_000),
   SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(60_000),
+  // Quantos jobs por companhia despachar a cada tick. ATENÇÃO: na prática isto é
+  // o nº de sessões Playwright SIMULTÂNEAS contra o mesmo site, do mesmo IP —
+  // valores altos = forte sinal de bot. Default conservador (1) para stealth;
+  // só aumente com concorrência por companhia/rotação de IP no scraper.
+  SCRAPE_DISPATCH_BATCH: z.coerce.number().int().positive().default(1),
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
   SCRAPING_API_URL: z.string().url(),
   SCRAPING_API_KEY: z.string(),
