@@ -297,6 +297,10 @@ export class SchedulerService implements ISchedulerService {
     const runsDeleted = await this.analysisRunsRepo.cleanupOlderThan(60)
     log.info({ runsDeleted }, 'analysis_runs cleanup: old runs removed')
 
+    // Timeline de eventos tem retenção mais curta (alta cardinalidade).
+    const eventsDeleted = await this.analysisRunsRepo.cleanupEventsOlderThan(15)
+    log.info({ eventsDeleted }, 'analysis_run_events cleanup: old timeline removed')
+
     const deadCleaned = await this.scrapingJobRepo.cleanupDeadJobs()
     log.info({ deadCleaned }, 'scraping_jobs cleanup: dead jobs removed')
   }
