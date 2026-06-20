@@ -4,6 +4,7 @@ import { logger } from './utils/logger'
 import { pool } from './db/pool'
 import { container } from './container'
 import { attachWorkerGateway, closeWorkerGateway } from './realtime/workerGateway'
+import { startRealtimePersistence } from './realtime/realtimePersistence'
 
 async function main(): Promise<void> {
   const app = await buildApp()
@@ -11,6 +12,11 @@ async function main(): Promise<void> {
 
   // Canal WS hub ← workers (telemetria + cancelamento) sobre o mesmo http server.
   attachWorkerGateway(app.server)
+  // Persistência da telemetria (timeline + confirmação de cancelamento).
+  startRealtimePersistence({
+    analysisRunsRepo: container.analysisRunsRepo,
+    scrapingJobRepo: container.scrapingJobRepo,
+  })
 
   container.schedulerSvc.start()
 

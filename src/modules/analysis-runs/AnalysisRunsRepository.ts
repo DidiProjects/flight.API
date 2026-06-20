@@ -1,6 +1,8 @@
 import { Pool } from 'pg'
 import {
   AnalysisRunRow,
+  AnalysisRunEventRow,
+  AppendEventData,
   IAnalysisRunsRepository,
   InsertRunningData,
   MarkFinishedData,
@@ -29,6 +31,56 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
         WHERE request_id = $1 AND status = 'running'`,
       [requestId, data.status, data.faresFound ?? null, data.errorMessage ?? null],
     )
+  }
+
+  // Timeline append-only. Idempotente por (request_id, seq): telemetria é
+  // best-effort e pode reentregar na reconexão — duplicados são ignorados.
+  async appendEvent(data: AppendEventData): Promise<void> {
+    await this.db.query(
+      `INSERT INTO analysis_run_events (request_id, seq, type, level, payload)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (request_id, seq) DO NOTHING`,
+      [data.requestId, data.seq, data.type, data.level ?? null, JSON.stringify(data.payload ?? {})],
+    )
+  }
+
+  // Registra quem pediu o cancelamento (no momento do pedido, mesmo que a entrega
+  // ao worker seja diferida). Não muda o status.
+  async setCancelledBy(requestId: string, userId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE analysis_runs SET cancelled_by = $2
+        WHERE request_id = $1 AND status = 'running'`,
+      [requestId, userId],
+    )
+  }
+
+  // Confirmação do cancelamento (chega via telemetria job.finished cancelled).
+  async markCancelled(requestId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE analysis_runs
+          SET status = 'cancelled', finished_at = now()
+        WHERE request_id = $1 AND status = 'running'`,
+      [requestId],
+    )
+  }
+
+  async listEvents(requestId: string): Promise<AnalysisRunEventRow[]> {
+    const { rows } = await this.db.query<AnalysisRunEventRow>(
+      `SELECT id, request_id, seq, ts, type, level, payload
+         FROM analysis_run_events
+        WHERE request_id = $1
+        ORDER BY seq ASC`,
+      [requestId],
+    )
+    return rows
+  }
+
+  async cleanupEventsOlderThan(days: number): Promise<number> {
+    const { rowCount } = await this.db.query(
+      `DELETE FROM analysis_run_events WHERE ts < now() - ($1 || ' days')::interval`,
+      [days],
+    )
+    return rowCount ?? 0
   }
 
   async listByRoutineMatch(params: RoutineMatchParams): Promise<AnalysisRunRow[]> {

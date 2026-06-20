@@ -27,6 +27,7 @@ import { SchedulerService }     from './services/scheduler/SchedulerService'
 import { AirportsService }      from './modules/airports/AirportsService'
 import { EvaluationService }    from './services/evaluation/EvaluationService'
 import { AnalysisRunsService }  from './modules/analysis-runs/AnalysisRunsService'
+import { AdminService }         from './modules/admin/AdminService'
 
 // ── Repositories ──────────────────────────────────────────────────────────────
 const authRepo         = new AuthRepository(pool)
@@ -65,6 +66,7 @@ const unsubSvc     = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
 const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo)
 const airportsSvc  = new AirportsService(airportsRepo, airlinesRepo)
 const analysisRunsSvc = new AnalysisRunsService(routinesRepo, analysisRunsRepo)
+const adminSvc        = new AdminService(scrapingJobRepo, analysisRunsRepo)
 
 export const container = {
   airlinesSvc,
@@ -77,4 +79,7 @@ export const container = {
   schedulerSvc,
   flightFaresRepo,
   analysisRunsSvc,
+  adminSvc,
+  scrapingJobRepo,
+  analysisRunsRepo,
 } as const
