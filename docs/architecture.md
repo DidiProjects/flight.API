@@ -41,7 +41,7 @@ O usuário cria rotinas no FRONT. A API persiste e o scheduler trabalha em cima 
 
 ## Scheduler (`src/services/scheduler/SchedulerService.ts`)
 
-O agendamento não é por rotina. O scheduler deriva `scraping_jobs` — um job por `airline × origin × destination × flight_date` — e cada despacho registra uma linha em `analysis_runs` (a "análise" que o usuário vê).
+O agendamento não é por rotina. O scheduler deriva `scraping_jobs` — um job por `airline × origin × destination × flight_date × user_id` (o `user_id` é o dono do job; rotinas do mesmo usuário deduplicam, usuários distintos geram jobs separados) — e cada despacho registra uma linha em `analysis_runs` (a "análise" que o usuário vê). Jobs legados sem dono ficam com `user_id NULL` até expirarem.
 
 Loops (`start()`):
 

@@ -16,11 +16,13 @@ export interface ScrapingJobRow {
   running_timeout_min: number
   request_id: string | null
   cancel_requested_at: Date | null
+  user_id: string | null
   created_at: Date
   updated_at: Date
 }
 
 export interface AdminJobRow extends ScrapingJobRow {
+  user_email: string | null
   run_started_at: Date | null
   run_finished_at: Date | null
 }
@@ -44,6 +46,7 @@ export interface IScrapingJobRepository {
   setCancelRequested(requestId: string): Promise<void>
   releaseCancelled(requestId: string, nextRunAt: Date): Promise<void>
   listForAdmin(limit?: number): Promise<AdminJobRow[]>
+  findOwnerEmailByRequestId(requestId: string): Promise<string | null>
   findRunningOrphans(): Promise<ScrapingJobRow[]>
   markOrphansDead(): Promise<number>
 }

@@ -22,6 +22,7 @@ interface JobView {
   finishedAt: string | null
   lastStep?: string
   lastError: string | null
+  userEmail: string | null
 }
 
 interface Client {
@@ -47,6 +48,7 @@ function mapRow(j: AdminJobRow): JobView {
     startedAt: j.run_started_at ? new Date(j.run_started_at).toISOString() : null,
     finishedAt: j.run_finished_at ? new Date(j.run_finished_at).toISOString() : null,
     lastError: j.last_error,
+    userEmail: j.user_email,
   }
 }
 
@@ -127,6 +129,19 @@ export class SseHub {
     for (const c of this.clients) this.writeEvent(c, this.globalId, event, data)
   }
 
+  private enrichOwner(requestId: string): void {
+    this.scrapingJobRepo
+      .findOwnerEmailByRequestId(requestId)
+      .then((email) => {
+        const view = this.liveJobs.get(requestId)
+        if (view && email && view.userEmail !== email) {
+          view.userEmail = email
+          this.broadcast('job.upsert', view)
+        }
+      })
+      .catch(() => undefined)
+  }
+
   private consume(ev: TelemetryEvent): void {
     const msg = ev.message
     if (!msg.requestId) return
@@ -145,7 +160,12 @@ export class SseHub {
       startedAt: (p.startedAt as string) ?? new Date().toISOString(),
       finishedAt: null,
       lastError: null,
+      userEmail: null,
     }
+
+    // A telemetria do worker não conhece o usuário; o dono é do flight.API.
+    // Na 1ª aparição do job ao vivo, busca o email do dono e re-emite o upsert.
+    if (!prev) this.enrichOwner(msg.requestId)
 
     switch (msg.type) {
       case 'job.started':

@@ -8,7 +8,7 @@ import { envelope } from './protocol'
 let app: FastifyInstance
 let base: string
 let hubBus: HubBus
-const mockRepo = { listForAdmin: async () => [] }
+const mockRepo = { listForAdmin: async () => [], findOwnerEmailByRequestId: async () => null }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
