@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply } from 'fastify'
 import { hubBus, type TelemetryEvent } from './hubBus'
 import { envelope } from './protocol'
+import { env } from '../config/env'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 
 /**
@@ -144,11 +145,14 @@ export function sseAdminRoute(deps: SseDeps) {
         return reply.code(401).send({ error: 'unauthorized' })
       }
 
+      // writeHead escreve direto no socket cru, então o header de CORS do
+      // @fastify/cors (setado no reply) é descartado — precisa ir aqui à mão.
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no', // impede buffering do nginx que quebra SSE
+        'Access-Control-Allow-Origin': env.FRONTEND_URL,
       })
 
       const client: Client = { reply }
