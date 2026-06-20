@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply } from 'fastify'
 import { hubBus, type TelemetryEvent } from './hubBus'
 import { envelope } from './protocol'
 import { env } from '../config/env'
+import { toDateStr } from '../services/evaluation/EvaluationService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 
 /**
@@ -47,7 +48,7 @@ function mapRow(j: ScrapingJobRow): JobView {
     airline: j.airline,
     origin: j.origin,
     destination: j.destination,
-    flightDate: typeof j.flight_date === 'string' ? j.flight_date : String(j.flight_date),
+    flightDate: toDateStr(j.flight_date),
     status: j.status,
     runningSince: j.running_since ? new Date(j.running_since).toISOString() : null,
     lastError: j.last_error,
@@ -145,8 +146,6 @@ export function sseAdminRoute(deps: SseDeps) {
         return reply.code(401).send({ error: 'unauthorized' })
       }
 
-      // writeHead escreve direto no socket cru, então o header de CORS do
-      // @fastify/cors (setado no reply) é descartado — precisa ir aqui à mão.
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',

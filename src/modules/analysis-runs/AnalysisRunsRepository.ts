@@ -75,6 +75,23 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
     return rows
   }
 
+  async listEventsByJobId(jobId: string): Promise<AnalysisRunEventRow[]> {
+    const { rows } = await this.db.query<AnalysisRunEventRow>(
+      `SELECT e.id, e.request_id, e.seq, e.ts, e.type, e.level, e.payload
+         FROM analysis_run_events e
+         JOIN (
+           SELECT request_id
+             FROM analysis_runs
+            WHERE scraping_job_id = $1
+            ORDER BY started_at DESC
+            LIMIT 1
+         ) latest ON latest.request_id = e.request_id
+        ORDER BY e.seq ASC`,
+      [jobId],
+    )
+    return rows
+  }
+
   async cleanupEventsOlderThan(days: number): Promise<number> {
     const { rowCount } = await this.db.query(
       `DELETE FROM analysis_run_events WHERE ts < now() - ($1 || ' days')::interval`,

@@ -70,5 +70,6 @@ export interface IAnalysisRunsRepository {
   setCancelledBy(requestId: string, userId: string): Promise<void>
   markCancelled(requestId: string): Promise<void>
   listEvents(requestId: string): Promise<AnalysisRunEventRow[]>
+  listEventsByJobId(jobId: string): Promise<AnalysisRunEventRow[]>
   cleanupEventsOlderThan(days: number): Promise<number>
 }

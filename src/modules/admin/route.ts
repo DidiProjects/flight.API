@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { IAdminService } from './AdminService'
 
 const requestIdParam = z.object({ requestId: z.string().uuid() })
+const jobIdParam = z.object({ jobId: z.string().uuid() })
 
 export function adminRoute(adminSvc: IAdminService) {
   return async function handler(app: FastifyInstance): Promise<void> {
@@ -15,10 +16,14 @@ export function adminRoute(adminSvc: IAdminService) {
       reply.send({ jobs: await adminSvc.listJobs() })
     })
 
-    // Timeline de eventos de uma execução (replay do histórico detalhado).
     app.get('/jobs/:requestId/events', async (req, reply) => {
       const { requestId } = requestIdParam.parse(req.params)
       reply.send({ events: await adminSvc.getJobEvents(requestId) })
+    })
+
+    app.get('/jobs/:jobId/timeline', async (req, reply) => {
+      const { jobId } = jobIdParam.parse(req.params)
+      reply.send({ events: await adminSvc.getJobTimeline(jobId) })
     })
 
     // Interromper um job. A confirmação real chega depois via SSE (job.upsert).

@@ -11,6 +11,7 @@ export interface CancelJobResult {
 export interface IAdminService {
   listJobs(): Promise<ScrapingJobRow[]>
   getJobEvents(requestId: string): Promise<AnalysisRunEventRow[]>
+  getJobTimeline(jobId: string): Promise<AnalysisRunEventRow[]>
   cancelJob(requestId: string, userId: string): Promise<CancelJobResult>
 }
 
@@ -26,6 +27,10 @@ export class AdminService implements IAdminService {
 
   getJobEvents(requestId: string): Promise<AnalysisRunEventRow[]> {
     return this.analysisRunsRepo.listEvents(requestId)
+  }
+
+  getJobTimeline(jobId: string): Promise<AnalysisRunEventRow[]> {
+    return this.analysisRunsRepo.listEventsByJobId(jobId)
   }
 
   async cancelJob(requestId: string, userId: string): Promise<CancelJobResult> {
