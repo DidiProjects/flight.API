@@ -44,4 +44,6 @@ export interface IScrapingJobRepository {
   setCancelRequested(requestId: string): Promise<void>
   releaseCancelled(requestId: string, nextRunAt: Date): Promise<void>
   listForAdmin(limit?: number): Promise<AdminJobRow[]>
+  findRunningOrphans(): Promise<ScrapingJobRow[]>
+  markOrphansDead(): Promise<number>
 }

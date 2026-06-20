@@ -79,6 +79,7 @@ export function routinesRoute(
       } else {
         await routinesSvc.remove(id, req.user.sub)
       }
+      void schedulerSvc.pruneOrphans()
       reply.status(204).send()
     })
 
@@ -93,11 +94,11 @@ export function routinesRoute(
 
     app.patch('/:id/deactivate', async (req, reply) => {
       const { id } = req.params as { id: string }
-      if (req.user.role === 'admin') {
-        reply.send(await routinesSvc.adminDeactivate(id))
-      } else {
-        reply.send(await routinesSvc.deactivate(id, req.user.sub))
-      }
+      const routine = req.user.role === 'admin'
+        ? await routinesSvc.adminDeactivate(id)
+        : await routinesSvc.deactivate(id, req.user.sub)
+      void schedulerSvc.pruneOrphans()
+      reply.send(routine)
     })
 
     app.patch('/admin/:id', { preHandler: [app.requireAdmin] }, async (req, reply) => {

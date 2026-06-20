@@ -6,6 +6,7 @@ import { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
 import { IScraperClient } from '../scraper-client/IScraperClient'
+import { ICancelDispatcher } from '../../realtime/workerGateway'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 
@@ -68,7 +69,23 @@ export class SchedulerService implements ISchedulerService {
     private readonly env: Env,
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
     private readonly scraperClient: IScraperClient,
+    private readonly cancelDispatcher: ICancelDispatcher,
   ) {}
+
+  async pruneOrphans(): Promise<void> {
+    try {
+      const running = await this.scrapingJobRepo.findRunningOrphans()
+      for (const job of running) {
+        if (job.request_id) await this.cancelDispatcher.requestCancel(job.request_id)
+      }
+      const dead = await this.scrapingJobRepo.markOrphansDead()
+      if (running.length || dead) {
+        log.info({ cancelledRunning: running.length, markedDead: dead }, 'orphan jobs pruned')
+      }
+    } catch (err) {
+      log.error({ err }, 'prune orphans error')
+    }
+  }
 
   start(): void {
     this.scheduleJobDerivation()
@@ -99,6 +116,9 @@ export class SchedulerService implements ISchedulerService {
         if (upserted > 0) log.info({ upserted }, 'scraping jobs upserted from routines')
 
         await this.scrapingJobRepo.updatePriorities()
+
+        const orphans = await this.scrapingJobRepo.markOrphansDead()
+        if (orphans > 0) log.info({ orphans }, 'orphan jobs marked dead')
       } catch (err) {
         log.error({ err }, 'job derivation error')
       } finally {

@@ -1,8 +1,38 @@
 import { Pool } from 'pg'
 import { AdminJobRow, IScrapingJobRepository, ScrapingJobRow } from './interfaces/IScrapingJobRepository'
 
+const ORPHAN_PREDICATE = `
+  NOT EXISTS (
+    SELECT 1 FROM routines r
+    JOIN routine_airlines ra ON ra.routine_id = r.id
+    WHERE r.is_active = true
+      AND r.outbound_end >= CURRENT_DATE
+      AND ra.airline     = j.airline
+      AND r.origin       = j.origin
+      AND r.destination  = j.destination
+      AND j.flight_date BETWEEN r.outbound_start AND r.outbound_end
+  )`
+
 export class ScrapingJobRepository implements IScrapingJobRepository {
   constructor(private readonly db: Pool) {}
+
+  async findRunningOrphans(): Promise<ScrapingJobRow[]> {
+    const { rows } = await this.db.query<ScrapingJobRow>(
+      `SELECT * FROM scraping_jobs j WHERE j.status = 'running' AND ${ORPHAN_PREDICATE}`,
+    )
+    return rows
+  }
+
+  async markOrphansDead(): Promise<number> {
+    const { rowCount } = await this.db.query(
+      `UPDATE scraping_jobs j
+          SET status = 'dead', running_since = NULL, request_id = NULL,
+              last_error = 'Sem rotina ativa para esta rota', updated_at = NOW()
+        WHERE j.status IN ('pending', 'failed', 'success')
+          AND ${ORPHAN_PREDICATE}`,
+    )
+    return rowCount ?? 0
+  }
 
   async upsertFromRoutines(): Promise<number> {
     const { rowCount } = await this.db.query(`

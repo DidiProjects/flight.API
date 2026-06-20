@@ -81,6 +81,8 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     findByRequestId:     vi.fn().mockResolvedValue(null),
     getActiveAirlines:   vi.fn().mockResolvedValue(['azul']),
     cleanupDeadJobs:     vi.fn().mockResolvedValue(0),
+    findRunningOrphans:  vi.fn().mockResolvedValue([]),
+    markOrphansDead:     vi.fn().mockResolvedValue(0),
   } as unknown as IScrapingJobRepository
 }
 
@@ -121,7 +123,15 @@ function makeScraperClientMock(): IScraperClient & { dispatch: ReturnType<typeof
   return { dispatch: vi.fn().mockResolvedValue(undefined) }
 }
 
-function makeSvc(scrapingJobRepo: IScrapingJobRepository, scraperClient = makeScraperClientMock()) {
+function makeCancelDispatcherMock() {
+  return { requestCancel: vi.fn().mockResolvedValue({ delivery: 'no_worker' }) }
+}
+
+function makeSvc(
+  scrapingJobRepo: IScrapingJobRepository,
+  scraperClient = makeScraperClientMock(),
+  cancelDispatcher = makeCancelDispatcherMock(),
+) {
   const svc = new SchedulerService(
     scrapingJobRepo,
     makeFlightFaresRepoMock(),
@@ -130,8 +140,9 @@ function makeSvc(scrapingJobRepo: IScrapingJobRepository, scraperClient = makeSc
     makeEnv(),
     makeAnalysisRunsRepoMock(),
     scraperClient,
+    cancelDispatcher as never,
   )
-  return { svc, scraperClient }
+  return { svc, scraperClient, cancelDispatcher }
 }
 
 describe('SchedulerService — dispatch loop', () => {
@@ -219,6 +230,33 @@ describe('SchedulerService — dispatch loop', () => {
       job.id,
       expect.stringContaining('500'),
     )
+  })
+})
+
+describe('SchedulerService — pruneOrphans', () => {
+  it('aborta os running órfãos e terminaliza os demais como dead', async () => {
+    const scrapingJobRepo = makeScrapingJobRepoMock()
+    vi.mocked(scrapingJobRepo.findRunningOrphans).mockResolvedValue([
+      makeJob({ id: 'orphan-1', status: 'running', request_id: 'req-1' }),
+    ])
+    vi.mocked(scrapingJobRepo.markOrphansDead).mockResolvedValue(3)
+    const { svc, cancelDispatcher } = makeSvc(scrapingJobRepo)
+
+    await svc.pruneOrphans()
+
+    expect(cancelDispatcher.requestCancel).toHaveBeenCalledWith('req-1')
+    expect(scrapingJobRepo.markOrphansDead).toHaveBeenCalledOnce()
+  })
+
+  it('não aborta nada quando não há running órfão, mas ainda terminaliza pendentes', async () => {
+    const scrapingJobRepo = makeScrapingJobRepoMock()
+    vi.mocked(scrapingJobRepo.markOrphansDead).mockResolvedValue(2)
+    const { svc, cancelDispatcher } = makeSvc(scrapingJobRepo)
+
+    await svc.pruneOrphans()
+
+    expect(cancelDispatcher.requestCancel).not.toHaveBeenCalled()
+    expect(scrapingJobRepo.markOrphansDead).toHaveBeenCalledOnce()
   })
 })
 
