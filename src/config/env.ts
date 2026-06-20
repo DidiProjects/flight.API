@@ -49,6 +49,9 @@ const envSchema = z.object({
   GRAFANA_LOKI_URL:   z.string().url().optional(),
   GRAFANA_LOKI_USER:  z.string().optional(),
   GRAFANA_LOKI_TOKEN: z.string().optional(),
+
+  // Tempo real (WS hub ← workers, SSE → admin)
+  REALTIME_ENABLED: z.string().default('true'),
 })
 
 const parsed = envSchema.safeParse(process.env)
