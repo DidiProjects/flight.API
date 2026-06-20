@@ -11,7 +11,7 @@ const mockRepo = { listForAdmin: async () => [] }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-function sign(role: string): string {
+function sign(role: 'user' | 'admin'): string {
   return app.jwt.sign({ sub: 'u', role, email: 'e@x', mustChangePassword: false })
 }
 
