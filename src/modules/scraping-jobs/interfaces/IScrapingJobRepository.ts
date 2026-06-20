@@ -20,6 +20,11 @@ export interface ScrapingJobRow {
   updated_at: Date
 }
 
+export interface AdminJobRow extends ScrapingJobRow {
+  run_started_at: Date | null
+  run_finished_at: Date | null
+}
+
 export interface IScrapingJobRepository {
   upsertFromRoutines(): Promise<number>
   upsertFromRoutine(routineId: string): Promise<void>
@@ -38,5 +43,5 @@ export interface IScrapingJobRepository {
   cleanupDeadJobs(): Promise<number>
   setCancelRequested(requestId: string): Promise<void>
   releaseCancelled(requestId: string, nextRunAt: Date): Promise<void>
-  listForAdmin(limit?: number): Promise<ScrapingJobRow[]>
+  listForAdmin(limit?: number): Promise<AdminJobRow[]>
 }

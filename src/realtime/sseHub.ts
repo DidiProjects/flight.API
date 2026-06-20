@@ -3,7 +3,7 @@ import { envelope } from './protocol'
 import { HubBus, type TelemetryEvent } from './hubBus'
 import { env } from '../config/env'
 import { toDateStr } from '../services/evaluation/EvaluationService'
-import type { IScrapingJobRepository, ScrapingJobRow } from '../modules/scraping-jobs/interfaces/IScrapingJobRepository'
+import type { AdminJobRow, IScrapingJobRepository } from '../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 
 const HEARTBEAT_MS = 25_000
 const RING_SIZE = 500
@@ -18,6 +18,8 @@ interface JobView {
   flightDate: string
   status: string
   runningSince: string | null
+  startedAt: string | null
+  finishedAt: string | null
   lastStep?: string
   lastError: string | null
 }
@@ -32,7 +34,7 @@ interface RingEntry {
   data: string
 }
 
-function mapRow(j: ScrapingJobRow): JobView {
+function mapRow(j: AdminJobRow): JobView {
   return {
     requestId: j.request_id,
     jobId: j.id,
@@ -42,6 +44,8 @@ function mapRow(j: ScrapingJobRow): JobView {
     flightDate: toDateStr(j.flight_date),
     status: j.status,
     runningSince: j.running_since ? new Date(j.running_since).toISOString() : null,
+    startedAt: j.run_started_at ? new Date(j.run_started_at).toISOString() : null,
+    finishedAt: j.run_finished_at ? new Date(j.run_finished_at).toISOString() : null,
     lastError: j.last_error,
   }
 }
@@ -138,6 +142,8 @@ export class SseHub {
       flightDate: (p.flightDate as string) ?? '',
       status: 'running',
       runningSince: (p.startedAt as string) ?? new Date().toISOString(),
+      startedAt: (p.startedAt as string) ?? new Date().toISOString(),
+      finishedAt: null,
       lastError: null,
     }
 
@@ -149,12 +155,15 @@ export class SseHub {
         view.destination = (p.destination as string) ?? view.destination
         view.flightDate = (p.flightDate as string) ?? view.flightDate
         view.runningSince = (p.startedAt as string) ?? view.runningSince
+        view.startedAt = (p.startedAt as string) ?? view.startedAt
+        view.finishedAt = null
         break
       case 'job.progress':
         view.lastStep = p.step as string
         break
       case 'job.finished':
         view.status = (p.status as string) ?? view.status
+        view.finishedAt = new Date().toISOString()
         if (p.error) view.lastError = p.error as string
         break
     }

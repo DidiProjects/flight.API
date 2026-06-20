@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import { IScrapingJobRepository, ScrapingJobRow } from './interfaces/IScrapingJobRepository'
+import { AdminJobRow, IScrapingJobRepository, ScrapingJobRow } from './interfaces/IScrapingJobRepository'
 
 export class ScrapingJobRepository implements IScrapingJobRepository {
   constructor(private readonly db: Pool) {}
@@ -156,10 +156,17 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
 
   // Snapshot de todos os jobs relevantes para a visão Admin (estado + tempo de
   // execução via running_since). Running primeiro, depois mais recentes.
-  async listForAdmin(limit = 200): Promise<ScrapingJobRow[]> {
-    const { rows } = await this.db.query<ScrapingJobRow>(`
-      SELECT * FROM scraping_jobs
-      ORDER BY (status = 'running') DESC, running_since DESC NULLS LAST, updated_at DESC
+  async listForAdmin(limit = 200): Promise<AdminJobRow[]> {
+    const { rows } = await this.db.query<AdminJobRow>(`
+      SELECT j.*, r.started_at AS run_started_at, r.finished_at AS run_finished_at
+      FROM scraping_jobs j
+      LEFT JOIN LATERAL (
+        SELECT started_at, finished_at FROM analysis_runs ar
+        WHERE ar.scraping_job_id = j.id
+        ORDER BY ar.started_at DESC
+        LIMIT 1
+      ) r ON true
+      ORDER BY (j.status = 'running') DESC, r.started_at DESC NULLS LAST, j.updated_at DESC
       LIMIT $1
     `, [limit])
     return rows
