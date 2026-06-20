@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import http from 'node:http'
-import { attachWorkerGateway, requestCancel, hasWorkers, closeWorkerGateway } from './workerGateway'
-import { hubBus } from './hubBus'
+import { WorkerGateway } from './workerGateway'
+import { HubBus } from './hubBus'
 
 // FLIGHT_API_KEY vem do src/test/env-setup.ts ('test-key').
 const KEY = 'test-key'
@@ -9,17 +9,21 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 let server: http.Server
 let url: string
+let hubBus: HubBus
+let gateway: WorkerGateway
 
 beforeAll(async () => {
+  hubBus = new HubBus()
+  gateway = new WorkerGateway(hubBus)
   server = http.createServer()
-  attachWorkerGateway(server)
+  gateway.attach(server)
   await new Promise<void>((r) => server.listen(0, r))
   const addr = server.address() as { port: number }
   url = `ws://127.0.0.1:${addr.port}/realtime/worker`
 })
 
 afterAll(async () => {
-  closeWorkerGateway()
+  gateway.close()
   await new Promise<void>((r) => server.close(() => r()))
 })
 
@@ -41,7 +45,7 @@ describe('workerGateway', () => {
     const telemetry: Array<{ type: string; requestId?: string }> = []
     const onTel = (ev: { message: { type: string; requestId?: string } }) =>
       telemetry.push({ type: ev.message.type, requestId: ev.message.requestId })
-    hubBus.on('telemetry', onTel)
+    hubBus.onTelemetry(onTel as never)
 
     const ws = connect(`key=${KEY}&workerId=test`)
     const got: Array<{ type: string; id: string; requestId?: string }> = []
@@ -57,7 +61,7 @@ describe('workerGateway', () => {
     await wait(80)
 
     expect(got.some((m) => m.type === 'hello.ack')).toBe(true)
-    expect(hasWorkers()).toBe(true)
+    expect(gateway.hasWorkers()).toBe(true)
 
     // telemetria sobe ao hubBus
     ws.send(JSON.stringify({ v: 1, type: 'job.started', id: 'j', requestId: 'r1', seq: 1, ts: new Date().toISOString(), payload: { airline: 'azul' } }))
@@ -65,13 +69,12 @@ describe('workerGateway', () => {
     expect(telemetry.some((t) => t.type === 'job.started' && t.requestId === 'r1')).toBe(true)
 
     // cancel roundtrip
-    const dispatch = await requestCancel('r1')
+    const dispatch = await gateway.requestCancel('r1')
     expect(dispatch).toEqual({ delivery: 'dispatched', result: 'aborted' })
 
     // sem worker dono → no_worker
-    expect(await requestCancel('desconhecido')).toEqual({ delivery: 'no_worker' })
+    expect(await gateway.requestCancel('desconhecido')).toEqual({ delivery: 'no_worker' })
 
-    hubBus.off('telemetry', onTel)
     ws.close()
   })
 })

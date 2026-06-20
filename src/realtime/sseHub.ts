@@ -1,21 +1,13 @@
 import { FastifyInstance, FastifyReply } from 'fastify'
-import { hubBus, type TelemetryEvent } from './hubBus'
 import { envelope } from './protocol'
+import { HubBus, type TelemetryEvent } from './hubBus'
 import { env } from '../config/env'
 import { toDateStr } from '../services/evaluation/EvaluationService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 
-/**
- * Hub SSE → painel Admin. Fan-out em memória dos eventos do hubBus para todos os
- * admins conectados (features.md §3b, §18). Suficiente na escala atual; quando
- * houver flight.API horizontal, troca-se este fan-out por Redis pub/sub.
- *
- * Auth: o EventSource não envia header Authorization, então o JWT vem por query
- * param (?token=) e é verificado manualmente.
- */
-
 const HEARTBEAT_MS = 25_000
 const RING_SIZE = 500
+const JOB_RETENTION_MS = 60_000
 
 interface JobView {
   requestId: string | null
@@ -34,12 +26,11 @@ interface Client {
   reply: FastifyReply
 }
 
-const clients = new Set<Client>()
-const ring: { id: number; event: string; data: string }[] = []
-let globalId = 0
-
-// Estado vivo consolidado por requestId (alimentado pela telemetria).
-const liveJobs = new Map<string, JobView>()
+interface RingEntry {
+  id: number
+  event: string
+  data: string
+}
 
 function mapRow(j: ScrapingJobRow): JobView {
   return {
@@ -55,89 +46,25 @@ function mapRow(j: ScrapingJobRow): JobView {
   }
 }
 
-function writeEvent(client: Client, id: number, event: string, data: string): void {
-  const raw = client.reply.raw
-  if (raw.writableEnded) return
-  // Backpressure: se o buffer está cheio, descarta job.event (log) preservando
-  // job.upsert (estado) — estado nunca se perde (§18.4).
-  const ok = raw.write(`id: ${id}\nevent: ${event}\ndata: ${data}\n\n`)
-  if (!ok && event === 'job.event') { /* já escrito; só não insistimos em flush */ }
-}
+export class SseHub {
+  private readonly clients = new Set<Client>()
+  private readonly ring: RingEntry[] = []
+  private globalId = 0
+  private readonly liveJobs = new Map<string, JobView>()
 
-function broadcast(event: string, payload: unknown): void {
-  globalId++
-  const data = JSON.stringify(payload)
-  ring.push({ id: globalId, event, data })
-  if (ring.length > RING_SIZE) ring.shift()
-  for (const c of clients) writeEvent(c, globalId, event, data)
-}
-
-// ── Consolidação da telemetria em JobView + timeline ──────────────────────────
-hubBus.on('telemetry', (ev: TelemetryEvent) => {
-  const msg = ev.message
-  if (!msg.requestId) return
-  const p = msg.payload
-
-  const prev = liveJobs.get(msg.requestId)
-  const view: JobView = prev ?? {
-    requestId: msg.requestId,
-    jobId: (p.jobId as string) ?? '',
-    airline: (p.airline as string) ?? '',
-    origin: (p.origin as string) ?? '',
-    destination: (p.destination as string) ?? '',
-    flightDate: (p.flightDate as string) ?? '',
-    status: 'running',
-    runningSince: (p.startedAt as string) ?? new Date().toISOString(),
-    lastError: null,
+  constructor(
+    private readonly hubBus: HubBus,
+    private readonly scrapingJobRepo: IScrapingJobRepository,
+  ) {
+    this.hubBus.onTelemetry((ev) => this.consume(ev))
   }
 
-  switch (msg.type) {
-    case 'job.started':
-      view.status = 'running'
-      view.airline = (p.airline as string) ?? view.airline
-      view.origin = (p.origin as string) ?? view.origin
-      view.destination = (p.destination as string) ?? view.destination
-      view.flightDate = (p.flightDate as string) ?? view.flightDate
-      view.runningSince = (p.startedAt as string) ?? view.runningSince
-      break
-    case 'job.progress':
-      view.lastStep = p.step as string
-      break
-    case 'job.finished':
-      view.status = (p.status as string) ?? view.status
-      if (p.error) view.lastError = p.error as string
-      break
+  clientCount(): number {
+    return this.clients.size
   }
-  liveJobs.set(msg.requestId, view)
 
-  // Delta de estado + linha de timeline.
-  broadcast('job.upsert', view)
-  broadcast('job.event', {
-    requestId: msg.requestId,
-    seq: msg.seq ?? 0,
-    ts: msg.ts,
-    type: msg.type.replace('job.', ''),
-    level: (p.level as string) ?? undefined,
-    detail: (p.detail as string) ?? (p.step as string) ?? (p.msg as string) ?? undefined,
-  })
-
-  if (msg.type === 'job.finished') {
-    // Mantém por um tempo curto para o front refletir o estado final, depois some.
-    setTimeout(() => {
-      liveJobs.delete(msg.requestId!)
-      broadcast('job.removed', { requestId: msg.requestId })
-    }, 60_000)
-  }
-})
-
-export interface SseDeps {
-  scrapingJobRepo: IScrapingJobRepository
-}
-
-export function sseAdminRoute(deps: SseDeps) {
-  return async function handler(app: FastifyInstance): Promise<void> {
+  readonly plugin = async (app: FastifyInstance): Promise<void> => {
     app.get('/stream', async (req, reply) => {
-      // Auth manual via query param (?token=) — EventSource não manda header.
       const token = (req.query as { token?: string }).token
       try {
         const payload = app.jwt.verify<{ role: string }>(token ?? '')
@@ -150,25 +77,23 @@ export function sseAdminRoute(deps: SseDeps) {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no', // impede buffering do nginx que quebra SSE
+        'X-Accel-Buffering': 'no',
         'Access-Control-Allow-Origin': env.FRONTEND_URL,
       })
 
       const client: Client = { reply }
-      clients.add(client)
+      this.clients.add(client)
 
-      // 1º evento: snapshot autoritativo (DB) + estado vivo em memória.
-      const rows = await deps.scrapingJobRepo.listForAdmin()
+      const rows = await this.scrapingJobRepo.listForAdmin()
       const snapshot = rows.map(mapRow)
-      for (const v of liveJobs.values()) {
+      for (const v of this.liveJobs.values()) {
         if (!snapshot.some((s) => s.requestId && s.requestId === v.requestId)) snapshot.push(v)
       }
       reply.raw.write(`event: job.snapshot\ndata: ${JSON.stringify({ jobs: snapshot })}\n\n`)
 
-      // Replay de eventos perdidos via Last-Event-ID (reconexão sem buracos).
       const lastId = Number(req.headers['last-event-id'])
       if (Number.isFinite(lastId)) {
-        for (const e of ring) {
+        for (const e of this.ring) {
           if (e.id > lastId) reply.raw.write(`id: ${e.id}\nevent: ${e.event}\ndata: ${e.data}\n\n`)
         }
       }
@@ -179,13 +104,78 @@ export function sseAdminRoute(deps: SseDeps) {
 
       req.raw.on('close', () => {
         clearInterval(heartbeat)
-        clients.delete(client)
+        this.clients.delete(client)
       })
     })
   }
-}
 
-/** Nº de admins conectados — usado em testes/diagnóstico. */
-export function sseClientCount(): number {
-  return clients.size
+  private writeEvent(client: Client, id: number, event: string, data: string): void {
+    const raw = client.reply.raw
+    if (raw.writableEnded) return
+    raw.write(`id: ${id}\nevent: ${event}\ndata: ${data}\n\n`)
+  }
+
+  private broadcast(event: string, payload: unknown): void {
+    this.globalId++
+    const data = JSON.stringify(payload)
+    this.ring.push({ id: this.globalId, event, data })
+    if (this.ring.length > RING_SIZE) this.ring.shift()
+    for (const c of this.clients) this.writeEvent(c, this.globalId, event, data)
+  }
+
+  private consume(ev: TelemetryEvent): void {
+    const msg = ev.message
+    if (!msg.requestId) return
+    const p = msg.payload
+
+    const prev = this.liveJobs.get(msg.requestId)
+    const view: JobView = prev ?? {
+      requestId: msg.requestId,
+      jobId: (p.jobId as string) ?? '',
+      airline: (p.airline as string) ?? '',
+      origin: (p.origin as string) ?? '',
+      destination: (p.destination as string) ?? '',
+      flightDate: (p.flightDate as string) ?? '',
+      status: 'running',
+      runningSince: (p.startedAt as string) ?? new Date().toISOString(),
+      lastError: null,
+    }
+
+    switch (msg.type) {
+      case 'job.started':
+        view.status = 'running'
+        view.airline = (p.airline as string) ?? view.airline
+        view.origin = (p.origin as string) ?? view.origin
+        view.destination = (p.destination as string) ?? view.destination
+        view.flightDate = (p.flightDate as string) ?? view.flightDate
+        view.runningSince = (p.startedAt as string) ?? view.runningSince
+        break
+      case 'job.progress':
+        view.lastStep = p.step as string
+        break
+      case 'job.finished':
+        view.status = (p.status as string) ?? view.status
+        if (p.error) view.lastError = p.error as string
+        break
+    }
+    this.liveJobs.set(msg.requestId, view)
+
+    this.broadcast('job.upsert', view)
+    this.broadcast('job.event', {
+      requestId: msg.requestId,
+      seq: msg.seq ?? 0,
+      ts: msg.ts,
+      type: msg.type.replace('job.', ''),
+      level: (p.level as string) ?? undefined,
+      detail: (p.detail as string) ?? (p.step as string) ?? (p.msg as string) ?? undefined,
+    })
+
+    if (msg.type === 'job.finished') {
+      const requestId = msg.requestId
+      setTimeout(() => {
+        this.liveJobs.delete(requestId)
+        this.broadcast('job.removed', { requestId })
+      }, JOB_RETENTION_MS)
+    }
+  }
 }

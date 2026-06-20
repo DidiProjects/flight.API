@@ -1,6 +1,6 @@
 import type { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IAnalysisRunsRepository, AnalysisRunEventRow } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
-import { requestCancel } from '../../realtime/workerGateway'
+import type { ICancelDispatcher } from '../../realtime/workerGateway'
 
 export interface CancelJobResult {
   accepted: boolean
@@ -19,6 +19,7 @@ export class AdminService implements IAdminService {
   constructor(
     private readonly scrapingJobRepo: IScrapingJobRepository,
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
+    private readonly cancelDispatcher: ICancelDispatcher,
   ) {}
 
   listJobs(): Promise<ScrapingJobRow[]> {
@@ -40,7 +41,7 @@ export class AdminService implements IAdminService {
     await this.scrapingJobRepo.setCancelRequested(requestId)
     await this.analysisRunsRepo.setCancelledBy(requestId, userId)
 
-    const dispatch = await requestCancel(requestId)
+    const dispatch = await this.cancelDispatcher.requestCancel(requestId)
     return {
       accepted: true,
       delivery: dispatch.delivery === 'no_worker' ? 'queued' : 'dispatched',

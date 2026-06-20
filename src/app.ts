@@ -20,7 +20,6 @@ import { scrapeRoute }      from './modules/scrape/route'
 import { unsubscribeRoute } from './modules/unsubscribe/route'
 import { flightFaresRoute } from './modules/flight-fares/route'
 import { adminRoute }       from './modules/admin/route'
-import { sseAdminRoute }    from './realtime/sseHub'
 
 export interface JWTPayload {
   sub: string
@@ -92,9 +91,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     await api.register(scrapeRoute(container.scrapeSvc),              { prefix: '/scrape' })
     await api.register(airportsScrapeRoute(container.airportsSvc),    { prefix: '/scrape' })
     await api.register(unsubscribeRoute(container.unsubSvc),          { prefix: '/unsubscribe' })
-    await api.register(flightFaresRoute(container.flightFaresRepo),   { prefix: '/fares' })
+    await api.register(flightFaresRoute(container.flightFaresSvc),    { prefix: '/fares' })
     await api.register(adminRoute(container.adminSvc),               { prefix: '/admin' })
-    await api.register(sseAdminRoute({ scrapingJobRepo: container.scrapingJobRepo }), { prefix: '/admin' })
+    await api.register(container.sseHub.plugin,                       { prefix: '/admin' })
   }, { prefix: '/flight' })
 
   return app

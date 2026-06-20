@@ -1,13 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { AnyMessage, JobStateSnapshot } from './protocol'
 
-/**
- * Barramento interno do hub. O workerGateway publica aqui a telemetria recebida
- * dos workers; os consumidores (Stage 4: persistência; Stage 5: fan-out SSE)
- * assinam. Desacopla o transporte WS da persistência e do fan-out.
- */
-export const hubBus = new EventEmitter()
-
 export interface TelemetryEvent {
   workerId: string
   message: AnyMessage
@@ -18,17 +11,36 @@ export interface SnapshotEvent {
   jobs: JobStateSnapshot[]
 }
 
-/** Telemetria de um job (job.queued|started|progress|log|finished). */
-export function publishTelemetry(ev: TelemetryEvent): void {
-  hubBus.emit('telemetry', ev)
+export interface WorkerStatusEvent {
+  workerId: string
+  online: boolean
 }
 
-/** Snapshot de reconciliação enviado pelo worker ao (re)conectar. */
-export function publishSnapshot(ev: SnapshotEvent): void {
-  hubBus.emit('snapshot', ev)
-}
+export class HubBus {
+  private readonly emitter = new EventEmitter()
 
-/** Worker conectou/desconectou — usado para marcar jobs órfãos, etc. */
-export function publishWorkerStatus(workerId: string, online: boolean): void {
-  hubBus.emit('worker', { workerId, online })
+  publishTelemetry(ev: TelemetryEvent): void {
+    this.emitter.emit('telemetry', ev)
+  }
+
+  publishSnapshot(ev: SnapshotEvent): void {
+    this.emitter.emit('snapshot', ev)
+  }
+
+  publishWorkerStatus(workerId: string, online: boolean): void {
+    const ev: WorkerStatusEvent = { workerId, online }
+    this.emitter.emit('worker', ev)
+  }
+
+  onTelemetry(listener: (ev: TelemetryEvent) => void): void {
+    this.emitter.on('telemetry', listener)
+  }
+
+  onSnapshot(listener: (ev: SnapshotEvent) => void): void {
+    this.emitter.on('snapshot', listener)
+  }
+
+  onWorker(listener: (ev: WorkerStatusEvent) => void): void {
+    this.emitter.on('worker', listener)
+  }
 }
