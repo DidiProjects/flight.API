@@ -66,9 +66,21 @@ Recebe o callback da `scraping.API` (autenticado por `X-API-Key`/`FLIGHT_API_KEY
 
 Para cada rotina ativa: busca a tarifa mais recente por rota/companhia, ignorando tarifas mais velhas que 48h (`MAX_FARE_AGE_HOURS`). Filtra contra o alvo da rotina (`cash`/`pts`/`hyb`) com a margem configurada, escolhe a melhor e dispara alerta — respeitando rate-limit de 24h por rotina (`hasRecentAlert`).
 
+## Tempo real (`src/realtime/`)
+
+O flight.API é o **hub** entre o worker de scraping e o painel Admin. Detalhes de design em `flight-monitoring.IA/features.md` (§§13–19) e contrato em `flight-monitoring.IA/contracts/realtime-protocol.ts`.
+
+- **WS hub ← workers** (`workerGateway.ts`): `WebSocketServer` (lib `ws`) anexado ao http server do Fastify em `/realtime/worker`. O worker disca para cá (NAT-friendly) e autentica por query param `key` (= `FLIGHT_API_KEY`) no upgrade. Heartbeat ping/pong com flag `isAlive` derruba conexões mortas. Recebe telemetria (`job.queued|started|progress|log|finished`), roteia `cancel` ao worker dono do `request_id` e aguarda `cancel.ack`.
+- **Barramento interno** (`hubBus.ts`): desacopla o transporte da persistência e do fan-out.
+- **Persistência** (`realtimePersistence.ts`): grava cada evento em `analysis_run_events` (timeline idempotente por `seq`). `job.finished` com status `cancelled` é a **única fonte** (não há webhook em cancel) → marca `analysis_runs` cancelled e libera o job (volta a `pending`, não conta como falha).
+- **SSE → admin** (`sseHub.ts`): `GET /flight/admin/stream` (JWT admin por query param, pois `EventSource` não envia header). 1º evento `job.snapshot`; depois fan-out em memória de `job.upsert`/`job.event`/`job.removed`. Ring-buffer + `Last-Event-ID` para reconexão sem buracos.
+- **Controle REST** (`modules/admin`): `GET /admin/jobs`, `GET /admin/jobs/:requestId/events`, `POST /admin/jobs/:requestId/cancel`.
+
+> Escala atual: fan-out em memória. Para flight.API horizontal, trocar por Redis pub/sub (ver features.md §10).
+
 ## Variáveis de ambiente
 
-Definidas e validadas em `src/config/env.ts` (Zod). Toda nova var deve ir também ao `.env` e ao step `docker run` do `deploy.yml`.
+Definidas e validadas em `src/config/env.ts` (Zod). Toda nova var deve ir também ao `.env` e ao step `docker run` do `deploy.yml`. `REALTIME_ENABLED` (default `true`) liga/desliga o canal de tempo real (WS + SSE).
 
 | Variável | Default | Descrição |
 |---|---|---|
