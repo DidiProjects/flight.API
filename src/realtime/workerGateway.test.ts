@@ -19,7 +19,7 @@ beforeAll(async () => {
   gateway.attach(server)
   await new Promise<void>((r) => server.listen(0, r))
   const addr = server.address() as { port: number }
-  url = `ws://127.0.0.1:${addr.port}/realtime/worker`
+  url = `ws://127.0.0.1:${addr.port}/flight/realtime/worker`
 })
 
 afterAll(async () => {

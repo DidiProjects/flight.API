@@ -5,7 +5,7 @@ import { logger } from '../utils/logger'
 import { envelope, type AnyMessage, type CancelResult, type JobStateSnapshot } from './protocol'
 import { HubBus } from './hubBus'
 
-const WS_PATH = '/realtime/worker'
+const WS_PATH = '/flight/realtime/worker'
 const HEARTBEAT_MS = 30_000
 const CANCEL_ACK_TIMEOUT_MS = 5_000
 
