@@ -5,9 +5,8 @@ import type { IFlightFaresRepository } from '../../modules/flight-fares/interfac
 import type { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import type { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
+import type { IScraperClient } from '../scraper-client/IScraperClient'
 import type { Env } from '../../config/env'
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 function makeJob(overrides: Partial<ScrapingJobRow> = {}): ScrapingJobRow {
   return {
@@ -27,6 +26,7 @@ function makeJob(overrides: Partial<ScrapingJobRow> = {}): ScrapingJobRow {
     running_since:       null,
     running_timeout_min: 30,
     request_id:          null,
+    cancel_requested_at: null,
     created_at:          new Date(),
     updated_at:          new Date(),
     ...overrides,
@@ -114,41 +114,36 @@ function makeNotifMock(): INotificationsService {
 }
 
 function makeEvalMock(): IEvaluationService {
-  return {
-    runCycle: vi.fn().mockResolvedValue(undefined),
-  }
+  return { runCycle: vi.fn().mockResolvedValue(undefined) }
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
+function makeScraperClientMock(): IScraperClient & { dispatch: ReturnType<typeof vi.fn> } {
+  return { dispatch: vi.fn().mockResolvedValue(undefined) }
+}
+
+function makeSvc(scrapingJobRepo: IScrapingJobRepository, scraperClient = makeScraperClientMock()) {
+  const svc = new SchedulerService(
+    scrapingJobRepo,
+    makeFlightFaresRepoMock(),
+    makeNotifMock(),
+    makeEvalMock(),
+    makeEnv(),
+    makeAnalysisRunsRepoMock(),
+    scraperClient,
+  )
+  return { svc, scraperClient }
+}
 
 describe('SchedulerService — dispatch loop', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
-
-  beforeEach(() => {
-    fetchMock = vi.fn().mockResolvedValue({
-      ok:   true,
-      json: async () => ({}),
-    })
-    vi.stubGlobal('fetch', fetchMock)
-  })
-
-  it('envia payload correto para scraping.API ao despachar um job', async () => {
+  it('envia payload correto para o scraper ao despachar um job', async () => {
     const job = makeJob()
-    const scrapingJobRepo = makeScrapingJobRepoMock(job)
-    const svc = new SchedulerService(
-      scrapingJobRepo,
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(job))
 
     await svc.dispatchOne(job.id)
 
-    expect(fetchMock).toHaveBeenCalledOnce()
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(body).toMatchObject({
+    expect(scraperClient.dispatch).toHaveBeenCalledOnce()
+    const payload = scraperClient.dispatch.mock.calls[0][0]
+    expect(payload).toMatchObject({
       routineId:    job.id,
       airline:      'azul',
       origin:       'VCP',
@@ -157,39 +152,15 @@ describe('SchedulerService — dispatch loop', () => {
       outboundEnd:   '2026-08-15',
       passengers:    1,
     })
-    expect(body.requestId).toMatch(
+    expect(payload.requestId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     )
-  })
-
-  it('envia X-API-Key no header', async () => {
-    const job = makeJob()
-    const svc = new SchedulerService(
-      makeScrapingJobRepoMock(job),
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
-
-    await svc.dispatchOne(job.id)
-
-    const headers = fetchMock.mock.calls[0][1].headers
-    expect(headers['X-API-Key']).toBe('test-key')
   })
 
   it('chama upsertFromRoutine com o routineId correto e não chama upsertFromRoutines', async () => {
     const routineId = 'routine-uuid-123'
     const scrapingJobRepo = makeScrapingJobRepoMock(null)
-    const svc = new SchedulerService(
-      scrapingJobRepo,
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
+    const { svc } = makeSvc(scrapingJobRepo)
 
     await svc.dispatchOne(routineId)
 
@@ -204,48 +175,27 @@ describe('SchedulerService — dispatch loop', () => {
       .mockResolvedValueOnce(job)
       .mockResolvedValueOnce(job)
       .mockResolvedValueOnce(null)
-    const svc = new SchedulerService(
-      scrapingJobRepo,
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
+    const { svc, scraperClient } = makeSvc(scrapingJobRepo)
 
-    await (svc as any).dispatchForAirlines(5)
+    await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
 
-    // Dois jobs disponíveis para 'azul', depois null → exatamente 2 despachos.
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(scraperClient.dispatch).toHaveBeenCalledTimes(2)
   })
 
-  it('não faz chamada HTTP se não houver job elegível', async () => {
-    const svc = new SchedulerService(
-      makeScrapingJobRepoMock(null),
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
+  it('não despacha se não houver job elegível', async () => {
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(null))
 
     await svc.dispatchOne('any-id')
 
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(scraperClient.dispatch).not.toHaveBeenCalled()
   })
 
-  it('marca job como failed quando scraping.API retorna erro HTTP', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'unavailable' })
+  it('marca job como failed quando o scraper falha', async () => {
     const job = makeJob()
     const scrapingJobRepo = makeScrapingJobRepoMock(job)
-    const svc = new SchedulerService(
-      scrapingJobRepo,
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
+    const scraperClient = makeScraperClientMock()
+    scraperClient.dispatch.mockRejectedValueOnce(new Error('scraping.API 503: unavailable'))
+    const { svc } = makeSvc(scrapingJobRepo, scraperClient)
 
     await svc.dispatchOne(job.id)
 
@@ -257,17 +207,11 @@ describe('SchedulerService — dispatch loop', () => {
   })
 
   it('marca job como dead quando retry_count >= max_retries', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'error' })
     const job = makeJob({ retry_count: 2, max_retries: 3 })
     const scrapingJobRepo = makeScrapingJobRepoMock(job)
-    const svc = new SchedulerService(
-      scrapingJobRepo,
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
+    const scraperClient = makeScraperClientMock()
+    scraperClient.dispatch.mockRejectedValueOnce(new Error('scraping.API 500: error'))
+    const { svc } = makeSvc(scrapingJobRepo, scraperClient)
 
     await svc.dispatchOne(job.id)
 
@@ -278,68 +222,45 @@ describe('SchedulerService — dispatch loop', () => {
   })
 })
 
-// ── circuit breaker ───────────────────────────────────────────────────────────
-
 describe('SchedulerService — circuit breaker', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }))
-  })
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
 
-  afterEach(() => {
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  })
-
-  function makeSvc() {
-    return new SchedulerService(
-      makeScrapingJobRepoMock(),
-      makeFlightFaresRepoMock(),
-      makeNotifMock(),
-      makeEvalMock(),
-      makeEnv(),
-      makeAnalysisRunsRepoMock(),
-    )
+  function makeSvcCB() {
+    return makeSvc(makeScrapingJobRepoMock()).svc
   }
 
   it('abre após CIRCUIT_THRESHOLD falhas consecutivas', () => {
-    const svc = makeSvc()
-    for (let i = 0; i < 5; i++) {
-      ;(svc as any).recordFailure('azul')
-    }
-    expect((svc as any).isCircuitOpen('azul')).toBe(true)
+    const svc = makeSvcCB()
+    for (let i = 0; i < 5; i++) (svc as never as { recordFailure(a: string): void }).recordFailure('azul')
+    expect((svc as never as { isCircuitOpen(a: string): boolean }).isCircuitOpen('azul')).toBe(true)
   })
 
   it('fecha após o cooldown', () => {
-    const svc = makeSvc()
-    for (let i = 0; i < 5; i++) {
-      ;(svc as any).recordFailure('azul')
-    }
-    expect((svc as any).isCircuitOpen('azul')).toBe(true)
-
+    const svc = makeSvcCB() as never as { recordFailure(a: string): void; isCircuitOpen(a: string): boolean }
+    for (let i = 0; i < 5; i++) svc.recordFailure('azul')
+    expect(svc.isCircuitOpen('azul')).toBe(true)
     vi.advanceTimersByTime(15 * 60 * 1000 + 1)
-
-    expect((svc as any).isCircuitOpen('azul')).toBe(false)
+    expect(svc.isCircuitOpen('azul')).toBe(false)
   })
 
   it('isola por empresa — falhas em azul não afetam latam', () => {
-    const svc = makeSvc()
-    for (let i = 0; i < 5; i++) {
-      ;(svc as any).recordFailure('azul')
-    }
-    expect((svc as any).isCircuitOpen('azul')).toBe(true)
-    expect((svc as any).isCircuitOpen('latam')).toBe(false)
+    const svc = makeSvcCB() as never as { recordFailure(a: string): void; isCircuitOpen(a: string): boolean }
+    for (let i = 0; i < 5; i++) svc.recordFailure('azul')
+    expect(svc.isCircuitOpen('azul')).toBe(true)
+    expect(svc.isCircuitOpen('latam')).toBe(false)
   })
 
   it('recordSuccess zera contador de falhas e fecha o circuito', () => {
-    const svc = makeSvc()
-    for (let i = 0; i < 4; i++) {
-      ;(svc as any).recordFailure('azul')
+    const svc = makeSvcCB() as never as {
+      recordFailure(a: string): void
+      recordSuccess(a: string): void
+      isCircuitOpen(a: string): boolean
+      circuitBreakers: Map<string, { failures: number }>
     }
-    ;(svc as any).recordSuccess('azul')
-
-    expect((svc as any).isCircuitOpen('azul')).toBe(false)
-    const state = (svc as any).circuitBreakers.get('azul')
-    expect(state?.failures).toBe(0)
+    for (let i = 0; i < 4; i++) svc.recordFailure('azul')
+    svc.recordSuccess('azul')
+    expect(svc.isCircuitOpen('azul')).toBe(false)
+    expect(svc.circuitBreakers.get('azul')?.failures).toBe(0)
   })
 })

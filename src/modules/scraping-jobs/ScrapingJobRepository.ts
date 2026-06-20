@@ -133,6 +133,38 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [id, error])
   }
 
+  // Marca a intenção de cancelamento (entregue ao worker na reconexão se estiver
+  // offline). Auditoria + base do replay de cancel no snapshot.
+  async setCancelRequested(requestId: string): Promise<void> {
+    await this.db.query(`
+      UPDATE scraping_jobs SET cancel_requested_at = NOW(), updated_at = NOW()
+      WHERE request_id = $1
+    `, [requestId])
+  }
+
+  // Confirmação do cancelamento: o job volta a 'pending' com cooldown normal
+  // (reagendável). 'cancelled' é terminal só da EXECUÇÃO (analysis_runs); o job
+  // não morre. Cancelar NÃO é falha — retry_count não muda nem escala p/ 'dead' (§15.6).
+  async releaseCancelled(requestId: string, nextRunAt: Date): Promise<void> {
+    await this.db.query(`
+      UPDATE scraping_jobs
+      SET status = 'pending', running_since = NULL, request_id = NULL,
+          cancel_requested_at = NULL, next_run_at = $2, updated_at = NOW()
+      WHERE request_id = $1
+    `, [requestId, nextRunAt])
+  }
+
+  // Snapshot de todos os jobs relevantes para a visão Admin (estado + tempo de
+  // execução via running_since). Running primeiro, depois mais recentes.
+  async listForAdmin(limit = 200): Promise<ScrapingJobRow[]> {
+    const { rows } = await this.db.query<ScrapingJobRow>(`
+      SELECT * FROM scraping_jobs
+      ORDER BY (status = 'running') DESC, running_since DESC NULLS LAST, updated_at DESC
+      LIMIT $1
+    `, [limit])
+    return rows
+  }
+
   async pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number> {
     // IP block affects the whole airline, not a single job. Push every active job
     // of this airline past the cooldown and return it to 'pending' (including the

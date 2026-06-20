@@ -8,10 +8,13 @@ async function main(): Promise<void> {
   const app = await buildApp()
   await app.listen({ port: env.PORT, host: env.HOST })
 
+  container.workerGateway.attach(app.server)
+  container.realtimePersistence.start()
   container.schedulerSvc.start()
 
   const shutdown = async (signal: string) => {
     app.log.info(`${signal} — encerrando`)
+    container.workerGateway.close()
     await app.close()
     await pool.end()
     process.exit(0)

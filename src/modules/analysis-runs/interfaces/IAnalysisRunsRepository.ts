@@ -1,4 +1,7 @@
-export type AnalysisRunStatus = 'running' | 'success' | 'failed' | 'dead' | 'blocked'
+export type AnalysisRunStatus = 'running' | 'success' | 'failed' | 'dead' | 'blocked' | 'cancelled'
+
+export type AnalysisRunEventType = 'queued' | 'started' | 'progress' | 'log' | 'finished'
+export type AnalysisRunEventLevel = 'info' | 'warn' | 'error'
 
 export interface AnalysisRunRow {
   id: string
@@ -13,6 +16,24 @@ export interface AnalysisRunRow {
   fares_found: number | null
   started_at: Date
   finished_at: Date | null
+}
+
+export interface AnalysisRunEventRow {
+  id: string
+  request_id: string
+  seq: number
+  ts: Date
+  type: AnalysisRunEventType
+  level: AnalysisRunEventLevel | null
+  payload: Record<string, unknown>
+}
+
+export interface AppendEventData {
+  requestId: string
+  seq: number
+  type: AnalysisRunEventType
+  level?: AnalysisRunEventLevel | null
+  payload?: Record<string, unknown>
 }
 
 export interface InsertRunningData {
@@ -45,4 +66,10 @@ export interface IAnalysisRunsRepository {
   listByRoutineMatch(params: RoutineMatchParams): Promise<AnalysisRunRow[]>
   failStaleRunning(timeoutMin: number): Promise<number>
   cleanupOlderThan(days: number): Promise<number>
+  appendEvent(data: AppendEventData): Promise<void>
+  setCancelledBy(requestId: string, userId: string): Promise<void>
+  markCancelled(requestId: string): Promise<void>
+  listEvents(requestId: string): Promise<AnalysisRunEventRow[]>
+  listEventsByJobId(jobId: string): Promise<AnalysisRunEventRow[]>
+  cleanupEventsOlderThan(days: number): Promise<number>
 }

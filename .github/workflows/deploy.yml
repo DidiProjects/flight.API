@@ -111,6 +111,7 @@ jobs:
             -e API_BASE_URL="${{ vars.API_BASE_URL }}" \
             -e FRONTEND_URL="${{ vars.FRONTEND_URL }}" \
             -e LOG_LEVEL="${{ vars.LOG_LEVEL }}" \
+            -e REALTIME_ENABLED="${{ vars.REALTIME_ENABLED }}" \
             flight-api:latest
 
           EOF

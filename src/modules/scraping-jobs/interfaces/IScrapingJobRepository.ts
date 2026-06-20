@@ -4,7 +4,7 @@ export interface ScrapingJobRow {
   origin: string
   destination: string
   flight_date: string
-  status: 'pending' | 'running' | 'success' | 'failed' | 'dead'
+  status: 'pending' | 'running' | 'success' | 'failed' | 'dead' | 'cancelled'
   priority: number
   retry_count: number
   max_retries: number
@@ -15,6 +15,7 @@ export interface ScrapingJobRow {
   running_since: Date | null
   running_timeout_min: number
   request_id: string | null
+  cancel_requested_at: Date | null
   created_at: Date
   updated_at: Date
 }
@@ -35,4 +36,7 @@ export interface IScrapingJobRepository {
   findById(id: string): Promise<ScrapingJobRow | null>
   getActiveAirlines(): Promise<string[]>
   cleanupDeadJobs(): Promise<number>
+  setCancelRequested(requestId: string): Promise<void>
+  releaseCancelled(requestId: string, nextRunAt: Date): Promise<void>
+  listForAdmin(limit?: number): Promise<ScrapingJobRow[]>
 }

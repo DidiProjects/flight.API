@@ -5,6 +5,7 @@ import { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IF
 import { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
+import { IScraperClient } from '../scraper-client/IScraperClient'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 
@@ -66,6 +67,7 @@ export class SchedulerService implements ISchedulerService {
     private readonly evaluationSvc: IEvaluationService,
     private readonly env: Env,
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
+    private readonly scraperClient: IScraperClient,
   ) {}
 
   start(): void {
@@ -185,16 +187,7 @@ export class SchedulerService implements ISchedulerService {
     }, 'scraping_job_dispatched')
 
     try {
-      const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': this.env.SCRAPING_API_KEY },
-        body:    JSON.stringify(payload),
-        signal:  AbortSignal.timeout(10_000),
-      })
-      if (!res.ok) {
-        const body = await res.text().catch(() => '')
-        throw new Error(`scraping.API ${res.status}: ${body}`)
-      }
+      await this.scraperClient.dispatch(payload)
       this.recordSuccess(airline)
     } catch (err) {
       this.recordFailure(airline)
@@ -299,6 +292,10 @@ export class SchedulerService implements ISchedulerService {
 
     const runsDeleted = await this.analysisRunsRepo.cleanupOlderThan(60)
     log.info({ runsDeleted }, 'analysis_runs cleanup: old runs removed')
+
+    // Timeline de eventos tem retenção mais curta (alta cardinalidade).
+    const eventsDeleted = await this.analysisRunsRepo.cleanupEventsOlderThan(15)
+    log.info({ eventsDeleted }, 'analysis_run_events cleanup: old timeline removed')
 
     const deadCleaned = await this.scrapingJobRepo.cleanupDeadJobs()
     log.info({ deadCleaned }, 'scraping_jobs cleanup: dead jobs removed')
