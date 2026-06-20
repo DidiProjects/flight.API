@@ -1,11 +1,11 @@
 import type { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IAnalysisRunsRepository, AnalysisRunEventRow } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { ICancelDispatcher } from '../../realtime/workerGateway'
+import { calcNextRunAt } from '../../services/scheduler/SchedulerService'
 
 export interface CancelJobResult {
   accepted: boolean
-  /** 'dispatched' = comando entregue ao worker; 'queued' = worker offline, intenção persistida. */
-  delivery: 'dispatched' | 'queued'
+  delivery: 'dispatched' | 'recovered'
 }
 
 export interface IAdminService {
@@ -35,16 +35,17 @@ export class AdminService implements IAdminService {
   }
 
   async cancelJob(requestId: string, userId: string): Promise<CancelJobResult> {
-    // Registra a intenção + auditoria ANTES de despachar: se o worker estiver
-    // offline, a intenção fica persistida (cancel_requested_at) para entrega na
-    // reconexão; a confirmação real (status cancelled) chega via telemetria.
     await this.scrapingJobRepo.setCancelRequested(requestId)
     await this.analysisRunsRepo.setCancelledBy(requestId, userId)
 
     const dispatch = await this.cancelDispatcher.requestCancel(requestId)
-    return {
-      accepted: true,
-      delivery: dispatch.delivery === 'no_worker' ? 'queued' : 'dispatched',
+    if (dispatch.delivery === 'dispatched') {
+      return { accepted: true, delivery: 'dispatched' }
     }
+
+    const job = await this.scrapingJobRepo.findByRequestId(requestId)
+    await this.analysisRunsRepo.markCancelled(requestId)
+    if (job) await this.scrapingJobRepo.releaseCancelled(requestId, calcNextRunAt(job.flight_date))
+    return { accepted: true, delivery: 'recovered' }
   }
 }
