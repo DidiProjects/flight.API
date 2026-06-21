@@ -17,6 +17,7 @@ export interface ScrapingJobRow {
   request_id: string | null
   cancel_requested_at: Date | null
   user_id: string | null
+  orphaned_at: Date | null
   created_at: Date
   updated_at: Date
 }
@@ -48,5 +49,5 @@ export interface IScrapingJobRepository {
   listForAdmin(limit?: number): Promise<AdminJobRow[]>
   findOwnerEmailByRequestId(requestId: string): Promise<string | null>
   findRunningOrphans(): Promise<ScrapingJobRow[]>
-  markOrphansDead(): Promise<number>
+  retireOrphans(): Promise<number>
 }

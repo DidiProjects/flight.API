@@ -27,6 +27,8 @@ function makeJob(overrides: Partial<ScrapingJobRow> = {}): ScrapingJobRow {
     running_timeout_min: 30,
     request_id:          null,
     cancel_requested_at: null,
+    user_id:             null,
+    orphaned_at:         null,
     created_at:          new Date(),
     updated_at:          new Date(),
     ...overrides,
@@ -82,7 +84,7 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     getActiveAirlines:   vi.fn().mockResolvedValue(['azul']),
     cleanupDeadJobs:     vi.fn().mockResolvedValue(0),
     findRunningOrphans:  vi.fn().mockResolvedValue([]),
-    markOrphansDead:     vi.fn().mockResolvedValue(0),
+    retireOrphans:     vi.fn().mockResolvedValue(0),
   } as unknown as IScrapingJobRepository
 }
 
@@ -239,24 +241,24 @@ describe('SchedulerService — pruneOrphans', () => {
     vi.mocked(scrapingJobRepo.findRunningOrphans).mockResolvedValue([
       makeJob({ id: 'orphan-1', status: 'running', request_id: 'req-1' }),
     ])
-    vi.mocked(scrapingJobRepo.markOrphansDead).mockResolvedValue(3)
+    vi.mocked(scrapingJobRepo.retireOrphans).mockResolvedValue(3)
     const { svc, cancelDispatcher } = makeSvc(scrapingJobRepo)
 
     await svc.pruneOrphans()
 
     expect(cancelDispatcher.requestCancel).toHaveBeenCalledWith('req-1')
-    expect(scrapingJobRepo.markOrphansDead).toHaveBeenCalledOnce()
+    expect(scrapingJobRepo.retireOrphans).toHaveBeenCalledOnce()
   })
 
   it('não aborta nada quando não há running órfão, mas ainda terminaliza pendentes', async () => {
     const scrapingJobRepo = makeScrapingJobRepoMock()
-    vi.mocked(scrapingJobRepo.markOrphansDead).mockResolvedValue(2)
+    vi.mocked(scrapingJobRepo.retireOrphans).mockResolvedValue(2)
     const { svc, cancelDispatcher } = makeSvc(scrapingJobRepo)
 
     await svc.pruneOrphans()
 
     expect(cancelDispatcher.requestCancel).not.toHaveBeenCalled()
-    expect(scrapingJobRepo.markOrphansDead).toHaveBeenCalledOnce()
+    expect(scrapingJobRepo.retireOrphans).toHaveBeenCalledOnce()
   })
 })
 

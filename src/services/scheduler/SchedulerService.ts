@@ -78,9 +78,9 @@ export class SchedulerService implements ISchedulerService {
       for (const job of running) {
         if (job.request_id) await this.cancelDispatcher.requestCancel(job.request_id)
       }
-      const dead = await this.scrapingJobRepo.markOrphansDead()
-      if (running.length || dead) {
-        log.info({ cancelledRunning: running.length, markedDead: dead }, 'orphan jobs pruned')
+      const retired = await this.scrapingJobRepo.retireOrphans()
+      if (running.length || retired) {
+        log.info({ cancelledRunning: running.length, retired }, 'orphan jobs pruned')
       }
     } catch (err) {
       log.error({ err }, 'prune orphans error')
@@ -117,8 +117,8 @@ export class SchedulerService implements ISchedulerService {
 
         await this.scrapingJobRepo.updatePriorities()
 
-        const orphans = await this.scrapingJobRepo.markOrphansDead()
-        if (orphans > 0) log.info({ orphans }, 'orphan jobs marked dead')
+        const retired = await this.scrapingJobRepo.retireOrphans()
+        if (retired > 0) log.info({ retired }, 'orphan jobs retired')
       } catch (err) {
         log.error({ err }, 'job derivation error')
       } finally {

@@ -23,6 +23,7 @@ interface JobView {
   lastStep?: string
   lastError: string | null
   userEmail: string | null
+  orphanedAt: string | null
 }
 
 interface Client {
@@ -49,6 +50,7 @@ function mapRow(j: AdminJobRow): JobView {
     finishedAt: j.run_finished_at ? new Date(j.run_finished_at).toISOString() : null,
     lastError: j.last_error,
     userEmail: j.user_email,
+    orphanedAt: j.orphaned_at ? new Date(j.orphaned_at).toISOString() : null,
   }
 }
 
@@ -161,6 +163,7 @@ export class SseHub {
       finishedAt: null,
       lastError: null,
       userEmail: null,
+      orphanedAt: null,
     }
 
     // A telemetria do worker não conhece o usuário; o dono é do flight.API.

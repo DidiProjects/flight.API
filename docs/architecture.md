@@ -45,7 +45,7 @@ O agendamento não é por rotina. O scheduler deriva `scraping_jobs` — um job 
 
 Loops (`start()`):
 
-- **Derivação** (a cada `SCRAPE_INTERVAL_MS`) — expira jobs antigos, faz upsert de jobs a partir das rotinas ativas, recalcula prioridades.
+- **Derivação** (a cada `SCRAPE_INTERVAL_MS`) — expira jobs antigos, faz upsert de jobs a partir das rotinas ativas (revivendo aposentados cuja rota voltou a ter rotina), recalcula prioridades e **aposenta órfãos** (`retireOrphans`: sem rotina ativa → `orphaned_at = NOW()`, preservando o status da última execução). `orphaned_at IS NULL` é o que mantém o job no pool de despacho (`claimNextJob`) — não vira mais `dead`.
 - **Dispatch** (a cada `SCRAPE_INTERVAL_MS`) — por companhia, reivindica até `SCRAPE_DISPATCH_BATCH` jobs, marca `running`, cria a `analysis_run` e faz `POST /scrape` na `scraping.API`. Circuit breaker por companhia (5 falhas → abre por 15min).
 - **Heartbeat** (2min) — recupera jobs travados e marca como falha `analysis_runs` paradas em `running` há mais de 15min.
 - **Evaluation** (5min) — `EvaluationService.runCycle()`.

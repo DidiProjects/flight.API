@@ -26,12 +26,15 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rows
   }
 
-  async markOrphansDead(): Promise<number> {
+  async retireOrphans(): Promise<number> {
+    // Aposenta jobs sem rotina ativa: marca orphaned_at e PRESERVA o status da
+    // última execução (ex.: success). orphaned_at IS NULL no claimNextJob é o que
+    // tira o job do pool de despacho — não precisa virar 'dead'.
     const { rowCount } = await this.db.query(
       `UPDATE scraping_jobs j
-          SET status = 'dead', running_since = NULL, request_id = NULL,
-              last_error = 'Sem rotina ativa para esta rota', updated_at = NOW()
-        WHERE j.status IN ('pending', 'failed', 'success')
+          SET orphaned_at = NOW(), updated_at = NOW()
+        WHERE j.orphaned_at IS NULL
+          AND j.status IN ('pending', 'failed', 'success')
           AND ${ORPHAN_PREDICATE}`,
     )
     return rowCount ?? 0
@@ -50,7 +53,10 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       JOIN routine_airlines ra ON ra.routine_id = r.id
       WHERE r.is_active = true
         AND r.outbound_end >= CURRENT_DATE
-      ON CONFLICT (airline, origin, destination, flight_date, user_id) DO NOTHING
+      ON CONFLICT (airline, origin, destination, flight_date, user_id) DO UPDATE
+        -- Revive job aposentado cuja rota voltou a ter rotina ativa.
+        SET orphaned_at = NULL, next_run_at = NOW(), updated_at = NOW()
+        WHERE scraping_jobs.orphaned_at IS NOT NULL
     `)
     return rowCount ?? 0
   }
@@ -71,6 +77,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       ON CONFLICT (airline, origin, destination, flight_date, user_id) DO UPDATE
         SET next_run_at = NOW(),
             priority    = 100,
+            orphaned_at = NULL,
             status      = CASE
               WHEN scraping_jobs.status = 'running' THEN 'running'
               ELSE 'pending'
@@ -120,6 +127,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
         SELECT id FROM scraping_jobs
         WHERE airline = $1
           AND status IN ('pending', 'failed', 'success')
+          AND orphaned_at IS NULL
           AND next_run_at <= NOW()
           AND retry_count < max_retries
         ORDER BY priority DESC, next_run_at ASC
