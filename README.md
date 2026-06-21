@@ -80,7 +80,7 @@ ADMIN_EMAIL=
 ADMIN_PASSWORD_INITIAL=        # temporary password, changed on first login
 
 API_BASE_URL=http://localhost:3011   # used in unsubscribe links in emails
-FRONTEND_URL=http://localhost:3000   # used in password reset link
+FRONTEND_URL=http://localhost:3001   # used in password reset link
 
 LOG_LEVEL=debug
 ```

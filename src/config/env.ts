@@ -40,7 +40,7 @@ const envSchema = z.object({
   ADMIN_PASSWORD_INITIAL: z.string().min(8),
 
   API_BASE_URL: z.string().url().default('http://localhost:3011/flight'),
-  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+  FRONTEND_URL: z.string().url().default('http://localhost:3001'),
 
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
