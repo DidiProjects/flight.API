@@ -178,6 +178,12 @@ export class SseHub {
         }
         let changed = false
         if (view.jobId !== job.id) { view.jobId = job.id; changed = true }
+        // Backfill da rota a partir do banco: se a 1ª telemetria recebida não foi
+        // job.started (ex.: hub reconectou no meio do job), o view nasce sem rota.
+        if (!view.airline && job.airline) { view.airline = job.airline; changed = true }
+        if (!view.origin && job.origin) { view.origin = job.origin; changed = true }
+        if (!view.destination && job.destination) { view.destination = job.destination; changed = true }
+        if (!view.flightDate && job.flight_date) { view.flightDate = toDateStr(job.flight_date); changed = true }
         const email = await this.scrapingJobRepo.findOwnerEmailByRequestId(requestId)
         if (email && view.userEmail !== email) { view.userEmail = email; changed = true }
         if (changed) this.broadcast('job.upsert', view)
