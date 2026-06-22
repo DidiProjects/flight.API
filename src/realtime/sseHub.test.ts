@@ -8,7 +8,11 @@ import { envelope } from './protocol'
 let app: FastifyInstance
 let base: string
 let hubBus: HubBus
-const mockRepo = { listForAdmin: async () => [], findOwnerEmailByRequestId: async () => null }
+const mockRepo = {
+  listForAdmin: async () => [],
+  findByRequestId: async (rid: string) => (rid === 'orphan' ? null : { id: `job-${rid}` }),
+  findOwnerEmailByRequestId: async () => null,
+}
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -75,6 +79,23 @@ describe('sseHub /admin/stream', () => {
     expect(stream.buf()).toContain('event: job.upsert')
     expect(stream.buf()).toContain('"requestId":"rX"')
     expect(stream.buf()).toContain('event: job.event')
+
+    stream.stop()
+  })
+
+  it('descarta telemetria órfã (sem job correspondente no banco)', async () => {
+    const res = await fetch(`${base}?token=${sign('admin')}`)
+    const stream = drain(res)
+    await wait(100)
+
+    hubBus.publishTelemetry({
+      workerId: 'w1',
+      message: envelope('job.started', { airline: 'azul', origin: 'VCP', destination: 'GRU', flightDate: '2026-07-01', startedAt: new Date().toISOString() }, { requestId: 'orphan', seq: 1 }),
+    })
+    await wait(150)
+
+    expect(stream.buf()).toContain('event: job.removed')
+    expect(stream.buf()).toContain('"requestId":"orphan"')
 
     stream.stop()
   })

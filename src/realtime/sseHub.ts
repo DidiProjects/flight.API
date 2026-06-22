@@ -2,12 +2,18 @@ import { FastifyInstance, FastifyReply } from 'fastify'
 import { envelope } from './protocol'
 import { HubBus, type TelemetryEvent } from './hubBus'
 import { env } from '../config/env'
+import { logger } from '../utils/logger'
 import { toDateStr } from '../services/evaluation/EvaluationService'
 import type { AdminJobRow, IScrapingJobRepository } from '../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 
 const HEARTBEAT_MS = 25_000
 const RING_SIZE = 500
 const JOB_RETENTION_MS = 60_000
+const SWEEP_INTERVAL_MS = 60_000
+// Entrada 'running' sem evento terminal por mais que isso é considerada órfã
+// (worker caiu ou deploy no meio da execução) e é removida do liveJobs. Acima do
+// running_timeout_min (10min) do job, dando margem ao término normal.
+const STALE_LIVE_JOB_MS = 15 * 60_000
 
 interface JobView {
   requestId: string | null
@@ -60,15 +66,38 @@ export class SseHub {
   private globalId = 0
   private readonly liveJobs = new Map<string, JobView>()
 
+  private readonly sweepTimer: ReturnType<typeof setInterval>
+
   constructor(
     private readonly hubBus: HubBus,
     private readonly scrapingJobRepo: IScrapingJobRepository,
   ) {
     this.hubBus.onTelemetry((ev) => this.consume(ev))
+    this.sweepTimer = setInterval(() => this.sweepStaleJobs(), SWEEP_INTERVAL_MS)
+    this.sweepTimer.unref?.()
   }
 
   clientCount(): number {
     return this.clients.size
+  }
+
+  stop(): void {
+    clearInterval(this.sweepTimer)
+  }
+
+  // Remove entradas 'running' órfãs (worker caiu/deploy no meio): sem evento
+  // terminal além do timeout, elas ficariam eternamente como "Executando" e
+  // seriam reentregues a cada conexão SSE. Limpa e avisa os clientes.
+  private sweepStaleJobs(): void {
+    const now = Date.now()
+    for (const [requestId, view] of this.liveJobs) {
+      if (view.status !== 'running') continue
+      const since = view.runningSince ? new Date(view.runningSince).getTime() : NaN
+      if (Number.isNaN(since) || now - since <= STALE_LIVE_JOB_MS) continue
+      this.liveJobs.delete(requestId)
+      this.broadcast('job.removed', { requestId })
+      logger.warn({ requestId, ageMs: now - since }, 'Realtime: liveJob órfão removido (sem evento terminal)')
+    }
   }
 
   readonly plugin = async (app: FastifyInstance): Promise<void> => {
@@ -131,15 +160,27 @@ export class SseHub {
     for (const c of this.clients) this.writeEvent(c, this.globalId, event, data)
   }
 
-  private enrichOwner(requestId: string): void {
+  // Na 1ª aparição de um job ao vivo: casa a telemetria com a linha do banco
+  // pelo requestId. Se existir, preenche o jobId (o worker não o conhece) e o
+  // dono. Se NÃO existir, é telemetria órfã (job já finalizado/removido) — não
+  // pode virar "Executando", então remove na hora.
+  private enrichLiveJob(requestId: string): void {
     this.scrapingJobRepo
-      .findOwnerEmailByRequestId(requestId)
-      .then((email) => {
+      .findByRequestId(requestId)
+      .then(async (job) => {
         const view = this.liveJobs.get(requestId)
-        if (view && email && view.userEmail !== email) {
-          view.userEmail = email
-          this.broadcast('job.upsert', view)
+        if (!view) return
+        if (!job) {
+          this.liveJobs.delete(requestId)
+          this.broadcast('job.removed', { requestId })
+          logger.warn({ requestId }, 'Realtime: telemetria órfã descartada (sem job no banco)')
+          return
         }
+        let changed = false
+        if (view.jobId !== job.id) { view.jobId = job.id; changed = true }
+        const email = await this.scrapingJobRepo.findOwnerEmailByRequestId(requestId)
+        if (email && view.userEmail !== email) { view.userEmail = email; changed = true }
+        if (changed) this.broadcast('job.upsert', view)
       })
       .catch(() => undefined)
   }
@@ -166,9 +207,9 @@ export class SseHub {
       orphanedAt: null,
     }
 
-    // A telemetria do worker não conhece o usuário; o dono é do flight.API.
-    // Na 1ª aparição do job ao vivo, busca o email do dono e re-emite o upsert.
-    if (!prev) this.enrichOwner(msg.requestId)
+    // A telemetria do worker não conhece jobId nem dono; ambos vêm do banco.
+    // Na 1ª aparição, casa pelo requestId, preenche jobId/dono ou descarta órfão.
+    if (!prev) this.enrichLiveJob(msg.requestId)
 
     switch (msg.type) {
       case 'job.started':
