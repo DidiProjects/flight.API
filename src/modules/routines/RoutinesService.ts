@@ -3,6 +3,7 @@ import { IRoutinesService } from './interfaces/IRoutinesService'
 import { IRoutinesRepository, CreateRoutineData } from './interfaces/IRoutinesRepository'
 import { IAirlinesRepository } from '../airlines/interfaces/IAirlinesRepository'
 import { IAirportsRepository } from '../airports/interfaces/IAirportsRepository'
+import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../utils/errors'
 
 const MAX_ROUTINES = 10
@@ -12,33 +13,54 @@ export class RoutinesService implements IRoutinesService {
     private readonly routinesRepo: IRoutinesRepository,
     private readonly airlinesRepo: IAirlinesRepository,
     private readonly airportsRepo: IAirportsRepository,
+    private readonly flightFaresRepo: IFlightFaresRepository,
   ) {}
 
   /**
-   * Moeda da rotina = moeda do mercado da ORIGEM (ponto de venda).
-   * Resolvida por airports.currency(airline, origin) para cada companhia.
-   * Todas as companhias precisam resolver a mesma moeda na origem.
+   * Moeda da rotina, resolvida na ordem:
+   *   1. moeda fixa da companhia (airlines.currency), quando definida — prioridade máxima;
+   *   2. moeda já observada em tarifas coletadas para o trajeto/companhias;
+   *   3. moeda do aeroporto de ORIGEM (resolução pelo trajeto);
+   *   4. indefinida (null) — quando nada está disponível ainda, a UI não exibe moeda.
+   * Não há bloqueio por companhias com moedas diferentes.
    */
-  private async resolveCurrencyByOrigin(airlines: string[], origin: string): Promise<string> {
-    const resolved: { airline: string; currency: string | null }[] = []
+  private async resolveCurrency(
+    airlines: string[],
+    origin: string,
+    destination: string,
+  ): Promise<string | null> {
     for (const code of airlines) {
-      resolved.push({ airline: code, currency: await this.airportsRepo.getCurrency(code, origin) })
+      const airline = await this.airlinesRepo.findByCode(code)
+      if (airline?.currency) return airline.currency
     }
 
-    const missing = resolved.filter((r) => !r.currency)
-    if (missing.length > 0) {
-      throw new BadRequestError(
-        `Sem moeda cadastrada para a origem ${origin} em: ${missing.map((m) => m.airline).join(', ')}`,
-      )
-    }
+    const known = await this.flightFaresRepo.getKnownCurrency(airlines, origin, destination)
+    if (known) return known
 
-    const currencies = [...new Set(resolved.map((r) => r.currency as string))]
-    if (currencies.length > 1) {
-      throw new BadRequestError(
-        `As companhias usam moedas diferentes na origem ${origin} (${resolved.map((r) => `${r.airline}=${r.currency}`).join(', ')})`,
-      )
+    for (const code of airlines) {
+      const fromOrigin = await this.airportsRepo.getCurrency(code, origin)
+      if (fromOrigin) return fromOrigin
     }
-    return currencies[0]
+    return null
+  }
+
+  /**
+   * Não permite companhia que não cubra ambos os pontos (origem e destino) do trajeto:
+   * sem cobertura não há scraping possível para aquela perna.
+   */
+  private async assertCoverage(airlines: string[], origin: string, destination: string): Promise<void> {
+    for (const code of airlines) {
+      const [hasOrigin, hasDest] = await Promise.all([
+        this.airportsRepo.hasAirport(code, origin),
+        this.airportsRepo.hasAirport(code, destination),
+      ])
+      if (!hasOrigin || !hasDest) {
+        const missing = [!hasOrigin ? origin : null, !hasDest ? destination : null].filter(Boolean).join(', ')
+        throw new BadRequestError(
+          `Companhia '${code}' não cobre ${missing} no trajeto ${origin}→${destination}`,
+        )
+      }
+    }
   }
 
   async list(userId: string): Promise<RoutineRow[]> {
@@ -66,7 +88,9 @@ export class RoutinesService implements IRoutinesService {
       if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
     }
 
-    const currency = await this.resolveCurrencyByOrigin(data.airlines, data.origin)
+    await this.assertCoverage(data.airlines, data.origin, data.destination)
+
+    const currency = await this.resolveCurrency(data.airlines, data.origin, data.destination)
 
     const today = new Date().toISOString().slice(0, 10)
     if (data.outboundEnd < today) {
@@ -88,16 +112,18 @@ export class RoutinesService implements IRoutinesService {
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
     const changingAirlines = !!fields.airlines && fields.airlines.length > 0
-    if (changingAirlines || fields.origin != null) {
+    if (changingAirlines || fields.origin != null || fields.destination != null) {
       const airlines = changingAirlines ? fields.airlines! : existing.airlines
       const origin = fields.origin ?? existing.origin
+      const destination = fields.destination ?? existing.destination
       if (changingAirlines) {
         for (const code of airlines) {
           const airline = await this.airlinesRepo.findByCode(code)
           if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
         }
       }
-      fields = { ...fields, currency: await this.resolveCurrencyByOrigin(airlines, origin) }
+      await this.assertCoverage(airlines, origin, destination)
+      fields = { ...fields, currency: await this.resolveCurrency(airlines, origin, destination) }
     }
 
     const updated = await this.routinesRepo.update(id, userId, fields)
@@ -142,16 +168,18 @@ export class RoutinesService implements IRoutinesService {
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
     const changingAirlines = !!fields.airlines && fields.airlines.length > 0
-    if (changingAirlines || fields.origin != null) {
+    if (changingAirlines || fields.origin != null || fields.destination != null) {
       const airlines = changingAirlines ? fields.airlines! : existing.airlines
       const origin = fields.origin ?? existing.origin
+      const destination = fields.destination ?? existing.destination
       if (changingAirlines) {
         for (const code of airlines) {
           const airline = await this.airlinesRepo.findByCode(code)
           if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
         }
       }
-      fields = { ...fields, currency: await this.resolveCurrencyByOrigin(airlines, origin) }
+      await this.assertCoverage(airlines, origin, destination)
+      fields = { ...fields, currency: await this.resolveCurrency(airlines, origin, destination) }
     }
 
     const updated = await this.routinesRepo.updateById(id, fields)

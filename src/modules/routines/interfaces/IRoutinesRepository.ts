@@ -9,7 +9,7 @@ export interface CreateRoutineData {
   outboundStart: string
   outboundEnd: string
   passengers: number
-  currency: string
+  currency: string | null
   targetCash?: number | null
   targetPts?: number | null
   targetHybPts?: number | null

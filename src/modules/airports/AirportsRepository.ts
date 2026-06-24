@@ -65,6 +65,16 @@ export class AirportsRepository implements IAirportsRepository {
     return { inserted, updated, unchanged }
   }
 
+  async hasAirport(airlineCode: string, airportCode: string): Promise<boolean> {
+    const { rows } = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM airports WHERE airline_code = $1 AND airport_code = $2
+       ) AS exists`,
+      [airlineCode, airportCode.toUpperCase()],
+    )
+    return rows[0].exists
+  }
+
   async getCurrency(airlineCode: string, airportCode: string): Promise<string | null> {
     const { rows } = await this.db.query<{ currency: string | null }>(
       `SELECT currency FROM airports WHERE airline_code = $1 AND airport_code = $2`,

@@ -68,6 +68,8 @@ export interface IFlightFaresRepository {
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceHistory>
   getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<CurrentBest>
   getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceByDate[]>
+  /** Moeda já observada em tarifas coletadas para o trajeto/companhias (fonte primária da rotina). */
+  getKnownCurrency(airlines: string[], origin: string, destination: string): Promise<string | null>
   aggregateToDailyBucket(bucketDate: string): Promise<number>
   cleanupOlderThan(days: number): Promise<number>
 }

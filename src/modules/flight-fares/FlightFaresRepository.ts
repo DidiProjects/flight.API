@@ -244,6 +244,23 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     return rows
   }
 
+  async getKnownCurrency(
+    airlines: string[],
+    origin: string,
+    destination: string,
+  ): Promise<string | null> {
+    const { rows } = await this.db.query<{ currency: string | null }>(`
+      SELECT currency
+      FROM flight_fares
+      WHERE airline = ANY($1::text[])
+        AND origin = $2 AND destination = $3
+        AND currency IS NOT NULL
+      ORDER BY scraped_at DESC
+      LIMIT 1
+    `, [airlines, origin, destination])
+    return rows[0]?.currency ?? null
+  }
+
   async aggregateToDailyBucket(bucketDate: string): Promise<number> {
     let total = 0
 
