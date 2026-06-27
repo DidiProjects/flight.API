@@ -28,7 +28,7 @@ interface JobView {
   finishedAt: string | null
   lastStep?: string
   lastError: string | null
-  userEmail: string | null
+  userEmails: string[]
   orphanedAt: string | null
 }
 
@@ -55,7 +55,7 @@ function mapRow(j: AdminJobRow): JobView {
     startedAt: j.run_started_at ? new Date(j.run_started_at).toISOString() : null,
     finishedAt: j.run_finished_at ? new Date(j.run_finished_at).toISOString() : null,
     lastError: j.last_error,
-    userEmail: j.user_email,
+    userEmails: j.user_emails ?? [],
     orphanedAt: j.orphaned_at ? new Date(j.orphaned_at).toISOString() : null,
   }
 }
@@ -184,8 +184,11 @@ export class SseHub {
         if (!view.origin && job.origin) { view.origin = job.origin; changed = true }
         if (!view.destination && job.destination) { view.destination = job.destination; changed = true }
         if (!view.flightDate && job.flight_date) { view.flightDate = toDateStr(job.flight_date); changed = true }
-        const email = await this.scrapingJobRepo.findOwnerEmailByRequestId(requestId)
-        if (email && view.userEmail !== email) { view.userEmail = email; changed = true }
+        const emails = await this.scrapingJobRepo.findOwnerEmailsByRequestId(requestId)
+        if (emails.length && JSON.stringify(view.userEmails) !== JSON.stringify(emails)) {
+          view.userEmails = emails
+          changed = true
+        }
         if (changed) this.broadcast('job.upsert', view)
       })
       .catch(() => undefined)
@@ -209,7 +212,7 @@ export class SseHub {
       startedAt: (p.startedAt as string) ?? new Date().toISOString(),
       finishedAt: null,
       lastError: null,
-      userEmail: null,
+      userEmails: [],
       orphanedAt: null,
     }
 

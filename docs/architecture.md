@@ -51,7 +51,9 @@ Loops (`start()`):
 - **Evaluation** (5min) — `EvaluationService.runCycle()`.
 - **Daily** (tick de 1min) — a partir das 02:00, uma vez/dia: agrega `flight_fares` no bucket diário, limpa dados crus > 30d, `analysis_runs` > 60d e jobs `dead`.
 
-Reagendamento adaptativo após sucesso (`calcNextRunAt`, por proximidade do voo): ≤7d → 1h; ≤14d → 2h; ≤30d → 4h; ≤60d → 6h; >60d → 12h. Falhas usam backoff exponencial com jitter (`calcBackoffNextRunAt`).
+Reagendamento adaptativo após sucesso (`calcNextRunAt`, por proximidade do voo): ≤45d → 1h (mínimo); ≤90d → 3h; >90d → 6h. Falhas usam backoff exponencial com jitter (`calcBackoffNextRunAt`).
+
+O scrape é dedupado por **rota** (`scraping_jobs` único por `airline, origin, destination, flight_date`): um único job serve todos os usuários que monitoram a rota+data, evitando coletas idênticas redundantes. A posse (donos) é derivada por join `routines→users` em tempo de consulta no Admin/realtime, não armazenada no job.
 
 ## Webhook — `POST /flight/scrape/results`
 

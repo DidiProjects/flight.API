@@ -27,7 +27,6 @@ function makeJob(overrides: Partial<ScrapingJobRow> = {}): ScrapingJobRow {
     running_timeout_min: 30,
     request_id:          null,
     cancel_requested_at: null,
-    user_id:             null,
     orphaned_at:         null,
     created_at:          new Date(),
     updated_at:          new Date(),

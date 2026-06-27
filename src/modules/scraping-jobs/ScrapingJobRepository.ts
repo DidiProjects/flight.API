@@ -11,10 +11,19 @@ const ORPHAN_PREDICATE = `
       AND r.origin       = j.origin
       AND r.destination  = j.destination
       AND j.flight_date BETWEEN r.outbound_start AND r.outbound_end
-      -- Jobs com dono só "casam" com rotinas do mesmo usuário; jobs legados
-      -- (user_id NULL) mantêm o casamento user-agnostic até expirarem.
-      AND (j.user_id IS NULL OR r.user_id = j.user_id)
   )`
+
+const OWNER_EMAILS_BY_ROUTE = `
+  SELECT array_agg(DISTINCT u.email ORDER BY u.email) AS emails
+  FROM routines rt
+  JOIN routine_airlines ra ON ra.routine_id = rt.id
+  JOIN users u ON u.id = rt.user_id
+  WHERE rt.is_active = true
+    AND ra.airline     = j.airline
+    AND rt.origin      = j.origin
+    AND rt.destination = j.destination
+    AND j.flight_date BETWEEN rt.outbound_start AND rt.outbound_end
+`
 
 export class ScrapingJobRepository implements IScrapingJobRepository {
   constructor(private readonly db: Pool) {}
@@ -42,18 +51,17 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
 
   async upsertFromRoutines(): Promise<number> {
     const { rowCount } = await this.db.query(`
-      INSERT INTO scraping_jobs (airline, origin, destination, flight_date, user_id)
+      INSERT INTO scraping_jobs (airline, origin, destination, flight_date)
       SELECT DISTINCT
         ra.airline,
         r.origin,
         r.destination,
-        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date,
-        r.user_id
+        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date
       FROM routines r
       JOIN routine_airlines ra ON ra.routine_id = r.id
       WHERE r.is_active = true
         AND r.outbound_end >= CURRENT_DATE
-      ON CONFLICT (airline, origin, destination, flight_date, user_id) DO UPDATE
+      ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
         -- Revive job aposentado cuja rota voltou a ter rotina ativa.
         SET orphaned_at = NULL, next_run_at = NOW(), updated_at = NOW()
         WHERE scraping_jobs.orphaned_at IS NOT NULL
@@ -63,18 +71,17 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
 
   async upsertFromRoutine(routineId: string): Promise<void> {
     await this.db.query(`
-      INSERT INTO scraping_jobs (airline, origin, destination, flight_date, user_id)
+      INSERT INTO scraping_jobs (airline, origin, destination, flight_date)
       SELECT DISTINCT
         ra.airline,
         r.origin,
         r.destination,
-        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date,
-        r.user_id
+        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date
       FROM routines r
       JOIN routine_airlines ra ON ra.routine_id = r.id
       WHERE r.id = $1
         AND r.outbound_end >= CURRENT_DATE
-      ON CONFLICT (airline, origin, destination, flight_date, user_id) DO UPDATE
+      ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
         SET next_run_at = NOW(),
             priority    = 100,
             orphaned_at = NULL,
@@ -201,10 +208,11 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   // execução via running_since). Running primeiro, depois mais recentes.
   async listForAdmin(limit = 200): Promise<AdminJobRow[]> {
     const { rows } = await this.db.query<AdminJobRow>(`
-      SELECT j.*, u.email AS user_email,
+      SELECT j.*,
+             COALESCE(o.emails, '{}') AS user_emails,
              r.started_at AS run_started_at, r.finished_at AS run_finished_at
       FROM scraping_jobs j
-      LEFT JOIN users u ON u.id = j.user_id
+      LEFT JOIN LATERAL (${OWNER_EMAILS_BY_ROUTE}) o ON true
       LEFT JOIN LATERAL (
         SELECT started_at, finished_at FROM analysis_runs ar
         WHERE ar.scraping_job_id = j.id
@@ -217,15 +225,13 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rows
   }
 
-  async findOwnerEmailByRequestId(requestId: string): Promise<string | null> {
-    const { rows } = await this.db.query<{ email: string }>(
-      `SELECT u.email
-         FROM scraping_jobs j
-         JOIN users u ON u.id = j.user_id
-        WHERE j.request_id = $1`,
-      [requestId],
-    )
-    return rows[0]?.email ?? null
+  async findOwnerEmailsByRequestId(requestId: string): Promise<string[]> {
+    const { rows } = await this.db.query<{ emails: string[] }>(`
+      SELECT (${OWNER_EMAILS_BY_ROUTE}) AS emails
+      FROM scraping_jobs j
+      WHERE j.request_id = $1
+    `, [requestId])
+    return rows[0]?.emails ?? []
   }
 
   async pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number> {

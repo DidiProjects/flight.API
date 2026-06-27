@@ -11,7 +11,7 @@ let hubBus: HubBus
 const mockRepo = {
   listForAdmin: async () => [],
   findByRequestId: async (rid: string) => (rid === 'orphan' ? null : { id: `job-${rid}` }),
-  findOwnerEmailByRequestId: async () => null,
+  findOwnerEmailsByRequestId: async () => [],
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
