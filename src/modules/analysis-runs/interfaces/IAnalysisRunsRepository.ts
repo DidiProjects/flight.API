@@ -63,6 +63,7 @@ export interface RoutineMatchParams {
 export interface IAnalysisRunsRepository {
   insertRunning(data: InsertRunningData): Promise<void>
   markFinished(requestId: string, data: MarkFinishedData): Promise<void>
+  resetStartedAt(requestId: string): Promise<void>
   listByRoutineMatch(params: RoutineMatchParams): Promise<AnalysisRunRow[]>
   failStaleRunning(timeoutMin: number): Promise<number>
   cleanupOlderThan(days: number): Promise<number>

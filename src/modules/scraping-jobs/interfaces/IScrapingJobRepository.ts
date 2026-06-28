@@ -14,6 +14,7 @@ export interface ScrapingJobRow {
   last_error: string | null
   running_since: Date | null
   running_timeout_min: number
+  started_at: Date | null
   request_id: string | null
   cancel_requested_at: Date | null
   orphaned_at: Date | null
@@ -34,11 +35,12 @@ export interface IScrapingJobRepository {
   updatePriorities(): Promise<void>
   claimNextJob(airline: string): Promise<ScrapingJobRow | null>
   markRunning(id: string, requestId: string): Promise<void>
+  markStarted(requestId: string): Promise<void>
   markSuccess(id: string, nextRunAt: Date): Promise<void>
   markFailed(id: string, error: string, nextRunAt: Date): Promise<void>
   markDead(id: string, error: string): Promise<void>
   pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number>
-  recoverStuckJobs(): Promise<number>
+  recoverStuckJobs(queueWaitMin: number): Promise<{ requeued: string[]; retried: string[] }>
   findByRequestId(requestId: string): Promise<ScrapingJobRow | null>
   findById(id: string): Promise<ScrapingJobRow | null>
   getActiveAirlines(): Promise<string[]>

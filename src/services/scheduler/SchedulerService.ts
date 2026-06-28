@@ -23,9 +23,12 @@ const CIRCUIT_COOLDOWN_MS = 15 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000
 const EVALUATION_INTERVAL_MS = 5 * 60 * 1000
 const DAILY_TICK_INTERVAL_MS = 60_000
-// Runs sem callback (scraper travou/sumiu) são marcadas como falha após esse tempo.
-// Maior que o running_timeout_min do job (10min) para dar margem ao recovery normal.
-const STALE_RUN_TIMEOUT_MIN = 15
+// Job que nunca iniciou (só esperou na fila do scraper) por mais que isso é
+// re-enfileirado sem penalidade — não é falha do job, é saturação do scraper.
+const QUEUE_WAIT_TIMEOUT_MIN = 20
+// Runs sem callback marcadas como falha após esse tempo (rede de segurança).
+// Acima do scrape mais lento observado (~16min) para não matar execução legítima.
+const STALE_RUN_TIMEOUT_MIN = 25
 
 function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
@@ -33,14 +36,14 @@ function daysBetween(a: Date, b: Date): number {
 
 function calcNextRunAt(flightDate: string): Date {
   const days = daysBetween(new Date(), new Date(flightDate))
-  // Frequência por distância da data do voo: janela próxima (≤45 dias) com
-  // análise horária, janela intermediária (46–90 dias) a cada 3h e zona
-  // distante (>90 dias) a cada 6h.
   const intervalMs =
     days <= 45 ? 1 * 60 * 60 * 1000 :
     days <= 90 ? 3 * 60 * 60 * 1000 :
                  6 * 60 * 60 * 1000
-  return new Date(Date.now() + intervalMs)
+  // Jitter de ±20% desincroniza grids de datas que reagendariam no mesmo instante,
+  // evitando rajadas (thundering herd) a cada ciclo de cadência.
+  const jitter = (Math.random() * 2 - 1) * intervalMs * 0.2
+  return new Date(Date.now() + intervalMs + jitter)
 }
 
 function calcBackoffNextRunAt(retryCount: number): Date {
@@ -231,8 +234,22 @@ export class SchedulerService implements ISchedulerService {
   private scheduleHeartbeat(): void {
     const tick = async () => {
       try {
-        const count = await this.scrapingJobRepo.recoverStuckJobs()
-        if (count > 0) log.info({ count }, 'heartbeat_recovered')
+        const { requeued, retried } = await this.scrapingJobRepo.recoverStuckJobs(QUEUE_WAIT_TIMEOUT_MIN)
+
+        // Cancela a task antiga no scraper (mata o zumbi na fila ou aborta o processo
+        // travado) antes que ela rode e gere callback órfão.
+        for (const requestId of [...requeued, ...retried]) {
+          await this.cancelDispatcher.requestCancel(requestId).catch(() => {})
+        }
+        // Fecha a run dos re-enfileirados com mensagem clara (não foi falha real).
+        for (const requestId of requeued) {
+          await this.analysisRunsRepo
+            .markFinished(requestId, { status: 'failed', errorMessage: 'Re-enfileirado: scraper saturado (não iniciou)' })
+            .catch(() => {})
+        }
+        if (requeued.length || retried.length) {
+          log.info({ requeued: requeued.length, retried: retried.length }, 'heartbeat_recovered')
+        }
 
         const staleRuns = await this.analysisRunsRepo.failStaleRunning(STALE_RUN_TIMEOUT_MIN)
         if (staleRuns > 0) log.info({ staleRuns }, 'heartbeat: stale analysis_runs failed')

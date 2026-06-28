@@ -41,6 +41,13 @@ export class RealtimePersistence {
         payload: msg.payload,
       })
 
+      if (type === 'started') {
+        // Início real do scrape: o relógio do timeout passa a contar daqui, não do
+        // dispatch — job que esperou na fila não conta como "rodando".
+        await this.scrapingJobRepo.markStarted(msg.requestId)
+        await this.analysisRunsRepo.resetStartedAt(msg.requestId)
+      }
+
       if (type === 'finished' && msg.payload.status === 'cancelled') {
         const job = await this.scrapingJobRepo.findByRequestId(msg.requestId)
         await this.analysisRunsRepo.markCancelled(msg.requestId)

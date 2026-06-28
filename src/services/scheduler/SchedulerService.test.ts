@@ -78,7 +78,7 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     markSuccess:         vi.fn().mockResolvedValue(undefined),
     markFailed:          vi.fn().mockResolvedValue(undefined),
     markDead:            vi.fn().mockResolvedValue(undefined),
-    recoverStuckJobs:    vi.fn().mockResolvedValue(0),
+    recoverStuckJobs:    vi.fn().mockResolvedValue({ requeued: [], retried: [] }),
     findByRequestId:     vi.fn().mockResolvedValue(null),
     getActiveAirlines:   vi.fn().mockResolvedValue(['azul']),
     cleanupDeadJobs:     vi.fn().mockResolvedValue(0),

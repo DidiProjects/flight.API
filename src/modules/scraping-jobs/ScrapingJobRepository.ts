@@ -25,6 +25,17 @@ const OWNER_EMAILS_BY_ROUTE = `
     AND j.flight_date BETWEEN rt.outbound_start AND rt.outbound_end
 `
 
+// Janela de espalhamento do next_run_at na criação/revival, casada com a cadência
+// por proximidade — distribui o grid de datas ao longo do ciclo em vez de todas
+// vencerem juntas.
+const spreadWindow = (col: string) => `(CASE
+  WHEN ${col} - CURRENT_DATE <= 45 THEN interval '1 hour'
+  WHEN ${col} - CURRENT_DATE <= 90 THEN interval '3 hours'
+  ELSE interval '6 hours'
+END)`
+const SPREAD_WINDOW = spreadWindow('flight_date')
+const SPREAD_WINDOW_CONFLICT = spreadWindow('scraping_jobs.flight_date')
+
 export class ScrapingJobRepository implements IScrapingJobRepository {
   constructor(private readonly db: Pool) {}
 
@@ -51,19 +62,25 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
 
   async upsertFromRoutines(): Promise<number> {
     const { rowCount } = await this.db.query(`
-      INSERT INTO scraping_jobs (airline, origin, destination, flight_date)
-      SELECT DISTINCT
-        ra.airline,
-        r.origin,
-        r.destination,
-        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date
-      FROM routines r
-      JOIN routine_airlines ra ON ra.routine_id = r.id
-      WHERE r.is_active = true
-        AND r.outbound_end >= CURRENT_DATE
+      INSERT INTO scraping_jobs (airline, origin, destination, flight_date, next_run_at)
+      SELECT airline, origin, destination, flight_date,
+             NOW() + random() * ${SPREAD_WINDOW}
+      FROM (
+        SELECT DISTINCT
+          ra.airline,
+          r.origin,
+          r.destination,
+          generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date
+        FROM routines r
+        JOIN routine_airlines ra ON ra.routine_id = r.id
+        WHERE r.is_active = true
+          AND r.outbound_end >= CURRENT_DATE
+      ) g
       ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
-        -- Revive job aposentado cuja rota voltou a ter rotina ativa.
-        SET orphaned_at = NULL, next_run_at = NOW(), updated_at = NOW()
+        -- Revive job aposentado cuja rota voltou a ter rotina ativa, também espalhado.
+        SET orphaned_at = NULL,
+            next_run_at = NOW() + random() * ${SPREAD_WINDOW_CONFLICT},
+            updated_at = NOW()
         WHERE scraping_jobs.orphaned_at IS NOT NULL
     `)
     return rowCount ?? 0
@@ -129,7 +146,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   async claimNextJob(airline: string): Promise<ScrapingJobRow | null> {
     const { rows } = await this.db.query<ScrapingJobRow>(`
       UPDATE scraping_jobs
-      SET status = 'running', running_since = NOW(), updated_at = NOW()
+      SET status = 'running', running_since = NOW(), started_at = NULL, updated_at = NOW()
       WHERE id = (
         SELECT id FROM scraping_jobs
         WHERE airline = $1
@@ -152,6 +169,16 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       SET request_id = $2, updated_at = NOW()
       WHERE id = $1
     `, [id, requestId])
+  }
+
+  // Início real do scrape (telemetria job.started). A partir daqui o job conta como
+  // "rodando de fato" — antes disso estava só na fila do scraper.
+  async markStarted(requestId: string): Promise<void> {
+    await this.db.query(`
+      UPDATE scraping_jobs
+      SET started_at = NOW(), updated_at = NOW()
+      WHERE request_id = $1 AND started_at IS NULL
+    `, [requestId])
   }
 
   async markSuccess(id: string, nextRunAt: Date): Promise<void> {
@@ -254,22 +281,53 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rowCount ?? 0
   }
 
-  async recoverStuckJobs(): Promise<number> {
-    const { rowCount } = await this.db.query(`
-      UPDATE scraping_jobs
-      SET status = CASE WHEN retry_count + 1 >= max_retries THEN 'dead' ELSE 'pending' END,
-          running_since = NULL, request_id = NULL,
-          retry_count = retry_count + 1,
-          last_error = CASE WHEN retry_count + 1 >= max_retries
-                            THEN COALESCE(last_error, 'Stuck running: sem callback após timeout — max retries atingido')
-                            ELSE last_error END,
-          last_failure_at = CASE WHEN retry_count + 1 >= max_retries THEN NOW() ELSE last_failure_at END,
+  // Recupera jobs presos em 'running', separando dois casos:
+  // - requeued: nunca iniciaram (started_at NULL) e esperaram demais na fila do
+  //   scraper. NÃO é falha do job → volta a 'pending' sem incrementar retry nem
+  //   escalar para 'dead'. O request_id antigo é devolvido para cancelar o zumbi.
+  // - retried: iniciaram de fato (started_at preenchido) mas não retornaram no
+  //   running_timeout_min → falha real: incrementa retry / vira 'dead' no limite.
+  async recoverStuckJobs(queueWaitMin: number): Promise<{ requeued: string[]; retried: string[] }> {
+    const requeued = await this.db.query<{ request_id: string | null }>(`
+      WITH stuck AS (
+        SELECT id, request_id FROM scraping_jobs
+        WHERE status = 'running'
+          AND started_at IS NULL
+          AND running_since < NOW() - ($1 || ' minutes')::interval
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE scraping_jobs j
+      SET status = 'pending', running_since = NULL, request_id = NULL, started_at = NULL,
+          next_run_at = NOW() + random() * INTERVAL '5 minutes',
+          updated_at = NOW()
+      FROM stuck WHERE j.id = stuck.id
+      RETURNING stuck.request_id
+    `, [queueWaitMin])
+
+    const retried = await this.db.query<{ request_id: string | null }>(`
+      WITH stuck AS (
+        SELECT id, request_id FROM scraping_jobs
+        WHERE status = 'running'
+          AND started_at IS NOT NULL
+          AND started_at < NOW() - (running_timeout_min || ' minutes')::interval
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE scraping_jobs j
+      SET status = CASE WHEN j.retry_count + 1 >= j.max_retries THEN 'dead' ELSE 'pending' END,
+          running_since = NULL, request_id = NULL, started_at = NULL,
+          retry_count = j.retry_count + 1,
+          last_error = CASE WHEN j.retry_count + 1 >= j.max_retries
+                            THEN COALESCE(j.last_error, 'Stuck running: scraper iniciou mas não retornou — max retries atingido')
+                            ELSE j.last_error END,
+          last_failure_at = CASE WHEN j.retry_count + 1 >= j.max_retries THEN NOW() ELSE j.last_failure_at END,
           next_run_at = NOW() + INTERVAL '2 minutes',
           updated_at = NOW()
-      WHERE status = 'running'
-        AND running_since < NOW() - (running_timeout_min || ' minutes')::interval
+      FROM stuck WHERE j.id = stuck.id
+      RETURNING stuck.request_id
     `)
-    return rowCount ?? 0
+
+    const ids = (r: { request_id: string | null }[]) => r.map((x) => x.request_id).filter((x): x is string => !!x)
+    return { requeued: ids(requeued.rows), retried: ids(retried.rows) }
   }
 
   async findByRequestId(requestId: string): Promise<ScrapingJobRow | null> {

@@ -33,6 +33,15 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
     )
   }
 
+  // Início real do scrape (telemetria job.started): zera o relógio do timeout de
+  // stale, que antes contava desde o dispatch (job ainda na fila contava errado).
+  async resetStartedAt(requestId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE analysis_runs SET started_at = now() WHERE request_id = $1 AND status = 'running'`,
+      [requestId],
+    )
+  }
+
   // Timeline append-only. Idempotente por (request_id, seq): telemetria é
   // best-effort e pode reentregar na reconexão — duplicados são ignorados.
   async appendEvent(data: AppendEventData): Promise<void> {
