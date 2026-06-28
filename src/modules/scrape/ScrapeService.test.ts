@@ -201,8 +201,11 @@ describe('ScrapeService.processCallback', () => {
     await svc.processCallback(makeCallback({ flights: [offer1, offer2] }))
 
     expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
-    const [calledJobId, calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    const [calledJobId, calledRequestId, calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
     expect(calledJobId).toBe(job.id)
+    // request_id da execução é repassado para virar o discriminador de snapshot
+    // no flight_fares (sem ele, re-coletas da mesma rota congelariam o preço).
+    expect(calledRequestId).toBe('req-00000-0000-0000-0000-000000000001')
     expect(calledFares).toHaveLength(2)
     expect(calledFares[0]).toMatchObject({
       flight_number:  'AD1234',

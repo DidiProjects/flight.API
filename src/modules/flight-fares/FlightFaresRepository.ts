@@ -6,20 +6,25 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
   async insertMany(
     jobId: string,
-    fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'scraped_at'>[],
+    requestId: string,
+    fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'request_id' | 'scraped_at'>[],
   ): Promise<number> {
     if (fares.length === 0) return 0
 
+    // Um único timestamp por coleta: todas as tarifas da mesma execução
+    // compartilham scraped_at (a frescura é da run, não de cada linha).
+    const scrapedAt = new Date()
     const values: unknown[] = []
     const placeholders: string[] = []
     let i = 1
 
     for (const f of fares) {
       placeholders.push(
-        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
+        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
       )
       values.push(
         jobId,
+        requestId,
         f.flight_number,
         f.flight_date,
         f.is_return,
@@ -35,18 +40,21 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         f.fare_pts,
         f.fare_hyb_pts,
         f.fare_hyb_cash,
-        new Date(),
+        scrapedAt,
       )
     }
 
+    // Dedup por EXECUÇÃO (request_id), não por job: scraping_jobs é por rota
+    // (permanente), então conflitar em scraping_job_id congelaria o snapshot na
+    // primeira coleta. Cada run grava seu próprio snapshot (histórico de preço).
     const { rowCount } = await this.db.query(
       `INSERT INTO flight_fares
-         (scraping_job_id, flight_number, flight_date, is_return, origin, destination, airline,
+         (scraping_job_id, request_id, flight_number, flight_date, is_return, origin, destination, airline,
           departure_time, arrival_time, duration_min, stops, currency,
           fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, scraped_at)
        VALUES ${placeholders.join(', ')}
-       ON CONFLICT (scraping_job_id, flight_date, is_return, flight_number)
-         WHERE flight_number IS NOT NULL
+       ON CONFLICT (request_id, flight_date, is_return, flight_number)
+         WHERE flight_number IS NOT NULL AND request_id IS NOT NULL
        DO NOTHING`,
       values,
     )
@@ -75,16 +83,17 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       FROM flight_fares f
       INNER JOIN (
         SELECT DISTINCT ON (flight_date, is_return)
-          flight_date, is_return, scraping_job_id
+          flight_date, is_return, request_id, scraping_job_id
         FROM flight_fares
         WHERE airline = $1 AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
           ${freshFilter}
         ORDER BY flight_date, is_return, scraped_at DESC
       ) latest_job
-        ON f.flight_date     = latest_job.flight_date
-       AND f.is_return       = latest_job.is_return
-       AND f.scraping_job_id = latest_job.scraping_job_id
+        ON f.flight_date = latest_job.flight_date
+       AND f.is_return   = latest_job.is_return
+       AND COALESCE(f.request_id::text, f.scraping_job_id::text)
+         = COALESCE(latest_job.request_id::text, latest_job.scraping_job_id::text)
       WHERE f.airline = $1 AND f.origin = $2 AND f.destination = $3
       ORDER BY f.flight_date, f.is_return, f.fare_cash ASC NULLS LAST
     `, params)
@@ -130,7 +139,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     const { rows } = await this.db.query<PriceHistory>(`
       WITH latest_per_date AS (
         SELECT DISTINCT ON (flight_date, is_return)
-          flight_date, is_return, scraping_job_id
+          flight_date, is_return, request_id, scraping_job_id
         FROM flight_fares
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
@@ -148,9 +157,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         MIN(f.fare_pts)                                                 AS min_pts_30d
       FROM flight_fares f
       INNER JOIN latest_per_date lpd
-        ON f.flight_date     = lpd.flight_date
-       AND f.is_return       = lpd.is_return
-       AND f.scraping_job_id = lpd.scraping_job_id
+        ON f.flight_date = lpd.flight_date
+       AND f.is_return   = lpd.is_return
+       AND COALESCE(f.request_id::text, f.scraping_job_id::text)
+         = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[])
         AND f.origin = $2 AND f.destination = $3
         AND f.stops = 0
@@ -175,7 +185,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     const { rows } = await this.db.query<CurrentBest>(`
       WITH latest_per_date AS (
         SELECT DISTINCT ON (flight_date)
-          flight_date, scraping_job_id, scraped_at
+          flight_date, request_id, scraping_job_id, scraped_at
         FROM flight_fares
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
@@ -193,8 +203,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         MAX(lpd.scraped_at)  AS scraped_at
       FROM flight_fares f
       INNER JOIN latest_per_date lpd
-        ON f.flight_date     = lpd.flight_date
-       AND f.scraping_job_id = lpd.scraping_job_id
+        ON f.flight_date = lpd.flight_date
+       AND COALESCE(f.request_id::text, f.scraping_job_id::text)
+         = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
     `, [airlines, origin, destination, dateFrom, dateTo])
 
@@ -218,7 +229,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     const { rows } = await this.db.query<PriceByDate>(`
       WITH latest_per_date AS (
         SELECT DISTINCT ON (flight_date)
-          flight_date, scraping_job_id
+          flight_date, request_id, scraping_job_id
         FROM flight_fares
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
@@ -235,8 +246,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         MIN(f.fare_hyb_cash) AS best_hyb_cash
       FROM flight_fares f
       INNER JOIN latest_per_date lpd
-        ON f.flight_date     = lpd.flight_date
-       AND f.scraping_job_id = lpd.scraping_job_id
+        ON f.flight_date = lpd.flight_date
+       AND COALESCE(f.request_id::text, f.scraping_job_id::text)
+         = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
       GROUP BY f.flight_date
       ORDER BY f.flight_date

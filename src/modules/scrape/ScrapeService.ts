@@ -65,7 +65,7 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
-    const count = await this.flightFaresRepo.insertMany(job.id, this.toFareRows(data))
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data))
 
     const nextRunAt = calcNextRunAt(job.flight_date)
     await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
@@ -100,8 +100,8 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
-    // Persiste a coleta (ON CONFLICT protege contra duplicata).
-    const count = await this.flightFaresRepo.insertMany(job.id, this.toFareRows(data))
+    // Persiste a coleta (ON CONFLICT protege contra duplicata na mesma execução).
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data))
 
     // Só reagenda o job se ele NÃO estiver no meio de uma nova coleta (re-despacho
     // já em voo com outro request_id) — nesse caso evitamos sobrescrever o estado.

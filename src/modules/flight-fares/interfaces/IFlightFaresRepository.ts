@@ -1,6 +1,7 @@
 export interface FlightFareRow {
   id: string
   scraping_job_id: string
+  request_id: string
   flight_number: string | null
   flight_date: string
   is_return: boolean
@@ -62,7 +63,7 @@ export interface PriceByDate {
 }
 
 export interface IFlightFaresRepository {
-  insertMany(jobId: string, fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'scraped_at'>[]): Promise<number>
+  insertMany(jobId: string, requestId: string, fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'request_id' | 'scraped_at'>[]): Promise<number>
   getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string, maxAgeHours?: number): Promise<LatestFaresByDate[]>
   getPriceHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceHistory>
