@@ -92,12 +92,34 @@ export class SchedulerService implements ISchedulerService {
     }
   }
 
+  private stopped = false
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>()
+
   start(): void {
+    this.stopped = false
     this.scheduleJobDerivation()
     this.scheduleJobDispatch()
     this.scheduleHeartbeat()
     this.scheduleEvaluation()
     this.scheduleDailyJobs()
+  }
+
+  // Shutdown gracioso: para de agendar/disparar ciclos. Um tick já em execução
+  // termina; nenhum novo é armado. Chamado no SIGTERM antes de fechar HTTP/DB.
+  stop(): void {
+    this.stopped = true
+    for (const t of this.timers) clearTimeout(t)
+    this.timers.clear()
+  }
+
+  private arm(fn: () => void | Promise<void>, delay: number): void {
+    if (this.stopped) return
+    const t = setTimeout(() => {
+      this.timers.delete(t)
+      if (this.stopped) return
+      void fn()
+    }, delay)
+    this.timers.add(t)
   }
 
   async dispatchOne(routineId: string): Promise<void> {
@@ -129,11 +151,11 @@ export class SchedulerService implements ISchedulerService {
       } finally {
         const jitter = (Math.random() * 2 - 1) * this.env.SCRAPE_INTERVAL_JITTER_MS
         const delay = Math.max(this.env.SCRAPE_INTERVAL_MS + jitter, 60_000)
-        setTimeout(tick, delay)
+        this.arm(tick,delay)
       }
     }
     const initial = this.env.SCRAPE_INTERVAL_MS + Math.random() * this.env.SCRAPE_INTERVAL_JITTER_MS
-    setTimeout(tick, initial)
+    this.arm(tick, initial)
   }
 
   // ---------------------------------------------------------------------------
@@ -149,11 +171,11 @@ export class SchedulerService implements ISchedulerService {
       } finally {
         const jitter = (Math.random() * 2 - 1) * this.env.SCRAPE_INTERVAL_JITTER_MS
         const delay = Math.max(this.env.SCRAPE_INTERVAL_MS + jitter, 60_000)
-        setTimeout(tick, delay)
+        this.arm(tick,delay)
       }
     }
     const initial = this.env.SCRAPE_INTERVAL_MS + Math.random() * this.env.SCRAPE_INTERVAL_JITTER_MS
-    setTimeout(tick, initial)
+    this.arm(tick, initial)
   }
 
   private async dispatchForAirlines(budget: number): Promise<void> {
@@ -248,10 +270,10 @@ export class SchedulerService implements ISchedulerService {
       } catch (err) {
         log.error({ err }, 'heartbeat error')
       } finally {
-        setTimeout(tick, HEARTBEAT_INTERVAL_MS)
+        this.arm(tick,HEARTBEAT_INTERVAL_MS)
       }
     }
-    setTimeout(tick, HEARTBEAT_INTERVAL_MS)
+    this.arm(tick, HEARTBEAT_INTERVAL_MS)
   }
 
   // Reconciliação por lease: reclama jobs cujo worker sumiu (lost, sem penalidade)
@@ -292,10 +314,10 @@ export class SchedulerService implements ISchedulerService {
       } catch (err) {
         log.error({ err }, 'evaluation loop error')
       } finally {
-        setTimeout(tick, EVALUATION_INTERVAL_MS)
+        this.arm(tick,EVALUATION_INTERVAL_MS)
       }
     }
-    setTimeout(tick, EVALUATION_INTERVAL_MS)
+    this.arm(tick, EVALUATION_INTERVAL_MS)
   }
 
   // ---------------------------------------------------------------------------
@@ -309,10 +331,10 @@ export class SchedulerService implements ISchedulerService {
       } catch (err) {
         log.error({ err }, 'daily jobs error')
       } finally {
-        setTimeout(tick, DAILY_TICK_INTERVAL_MS)
+        this.arm(tick,DAILY_TICK_INTERVAL_MS)
       }
     }
-    setTimeout(tick, DAILY_TICK_INTERVAL_MS)
+    this.arm(tick, DAILY_TICK_INTERVAL_MS)
   }
 
   private async runDailyTasks(): Promise<void> {

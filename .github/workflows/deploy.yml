@@ -74,7 +74,9 @@ jobs:
             echo "Aviso: flight-db não está rodando. Suba o banco manualmente com docker-compose."
           fi
 
-          sudo docker stop flight-api 2>/dev/null || true
+          # -t 30: SIGTERM e aguarda o shutdown gracioso (para scheduler, drena HTTP)
+          # antes do SIGKILL.
+          sudo docker stop -t 30 flight-api 2>/dev/null || true
           sudo docker rm   flight-api 2>/dev/null || true
 
           sudo docker run -d --name flight-api \

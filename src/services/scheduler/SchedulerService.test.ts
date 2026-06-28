@@ -50,6 +50,7 @@ function makeEnv(): Env {
     SCRAPE_INTERVAL_MS:        3_600_000,
     SCRAPE_INTERVAL_JITTER_MS: 300_000,
     SCRAPE_DISPATCH_BATCH:     5,
+    SCRAPE_MAX_IN_FLIGHT:      6,
     EVALUATION_INTERVAL_MS:    300_000,
     SCRAPING_API_URL:          'http://scraping-api',
     SCRAPING_API_KEY:          'test-key',
@@ -236,6 +237,27 @@ describe('SchedulerService — dispatch loop', () => {
       job.id,
       expect.stringContaining('500'),
     )
+  })
+})
+
+describe('SchedulerService — graceful stop', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('stop() interrompe os loops: nenhum tick roda depois', async () => {
+    const repo = makeScrapingJobRepoMock()
+    const { svc } = makeSvc(repo)
+
+    // Sonda: o heartbeat (2min) chama reclaimExpiredJobs — dispara várias vezes em 30min.
+    svc.start()
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+    const callsBefore = vi.mocked(repo.reclaimExpiredJobs).mock.calls.length
+    expect(callsBefore).toBeGreaterThan(0)
+
+    svc.stop()
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+
+    expect(vi.mocked(repo.reclaimExpiredJobs).mock.calls.length).toBe(callsBefore)
   })
 })
 
