@@ -28,6 +28,7 @@ interface JobView {
   finishedAt: string | null
   lastStep?: string
   lastError: string | null
+  faresFound?: number | null
   userEmails: string[]
   orphanedAt: string | null
 }
@@ -237,6 +238,7 @@ export class SseHub {
       case 'job.finished':
         view.status = (p.status as string) ?? view.status
         view.finishedAt = new Date().toISOString()
+        if (p.faresFound != null) view.faresFound = p.faresFound as number
         if (p.error) view.lastError = p.error as string
         break
     }
