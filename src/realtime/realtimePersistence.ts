@@ -25,6 +25,19 @@ export class RealtimePersistence {
 
   start(): void {
     this.hubBus.onTelemetry((ev) => { void this.persist(ev) })
+    // Lease: heartbeat e snapshot do worker renovam last_heartbeat_at dos jobs que
+    // ele ainda detém (na fila ou rodando) — job vivo não é reclamado.
+    this.hubBus.onHeartbeat((ev) => { void this.renewLease(ev.activeRequestIds) })
+    this.hubBus.onSnapshot((ev) => { void this.renewLease(ev.jobs.map((j) => j.requestId)) })
+  }
+
+  private async renewLease(requestIds: string[]): Promise<void> {
+    if (requestIds.length === 0) return
+    try {
+      await this.scrapingJobRepo.markHeartbeat(requestIds)
+    } catch (err) {
+      logger.warn({ err }, 'Realtime: falha ao renovar lease (heartbeat)')
+    }
   }
 
   private async persist(ev: TelemetryEvent): Promise<void> {

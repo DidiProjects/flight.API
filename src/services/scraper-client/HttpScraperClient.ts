@@ -1,5 +1,5 @@
 import { Env } from '../../config/env'
-import { IScraperClient, ScrapeDispatch } from './IScraperClient'
+import { IScraperClient, ScrapeDispatch, ScraperBusyError } from './IScraperClient'
 
 const DISPATCH_TIMEOUT_MS = 10_000
 
@@ -13,6 +13,10 @@ export class HttpScraperClient implements IScraperClient {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
     })
+    if (res.status === 503) {
+      const data = await res.json().catch(() => ({})) as { retryAfterMs?: number }
+      throw new ScraperBusyError(typeof data.retryAfterMs === 'number' ? data.retryAfterMs : 60_000)
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       throw new Error(`scraping.API ${res.status}: ${body}`)

@@ -16,6 +16,11 @@ export interface WorkerStatusEvent {
   online: boolean
 }
 
+export interface HeartbeatEvent {
+  workerId: string
+  activeRequestIds: string[]
+}
+
 export class HubBus {
   private readonly emitter = new EventEmitter()
 
@@ -32,6 +37,10 @@ export class HubBus {
     this.emitter.emit('worker', ev)
   }
 
+  publishHeartbeat(ev: HeartbeatEvent): void {
+    this.emitter.emit('heartbeat', ev)
+  }
+
   onTelemetry(listener: (ev: TelemetryEvent) => void): void {
     this.emitter.on('telemetry', listener)
   }
@@ -42,5 +51,9 @@ export class HubBus {
 
   onWorker(listener: (ev: WorkerStatusEvent) => void): void {
     this.emitter.on('worker', listener)
+  }
+
+  onHeartbeat(listener: (ev: HeartbeatEvent) => void): void {
+    this.emitter.on('heartbeat', listener)
   }
 }

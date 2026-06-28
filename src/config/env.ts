@@ -25,6 +25,9 @@ const envSchema = z.object({
   // valores altos = forte sinal de bot. Default conservador (1) para stealth;
   // só aumente com concorrência por companhia/rotação de IP no scraper.
   SCRAPE_DISPATCH_BATCH: z.coerce.number().int().positive().default(1),
+  // Teto de jobs em voo (≈ capacidade do scraper). A API não reivindica além disto
+  // — backpressure para não inflar a fila do scraper.
+  SCRAPE_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(6),
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
   SCRAPING_API_URL: z.string().url(),
   SCRAPING_API_KEY: z.string(),

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { HttpScraperClient } from './HttpScraperClient'
 import type { Env } from '../../config/env'
-import type { ScrapeDispatch } from './IScraperClient'
+import { ScraperBusyError, type ScrapeDispatch } from './IScraperClient'
 
 const env = { SCRAPING_API_URL: 'http://scraping-api', SCRAPING_API_KEY: 'test-key' } as Env
 
@@ -37,7 +37,16 @@ describe('HttpScraperClient', () => {
   })
 
   it('lança erro com o status quando a resposta não é ok', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'unavailable' })
-    await expect(new HttpScraperClient(env).dispatch(payload)).rejects.toThrow(/503/)
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'error' })
+    await expect(new HttpScraperClient(env).dispatch(payload)).rejects.toThrow(/500/)
+  })
+
+  it('lança ScraperBusyError com retryAfterMs no 503 (fila cheia)', async () => {
+    fetchMock.mockResolvedValueOnce({ status: 503, json: async () => ({ retryAfterMs: 30_000 }) })
+    await expect(new HttpScraperClient(env).dispatch(payload)).rejects.toMatchObject({
+      name: 'ScraperBusyError',
+      retryAfterMs: 30_000,
+    })
+    expect(ScraperBusyError).toBeDefined()
   })
 })

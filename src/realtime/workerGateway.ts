@@ -144,8 +144,12 @@ export class WorkerGateway implements ICancelDispatcher {
         this.hubBus.publishSnapshot({ workerId, jobs })
         break
       }
-      case 'worker.heartbeat':
+      case 'worker.heartbeat': {
+        const activeRequestIds = (msg.payload.activeJobs as string[]) ?? []
+        activeRequestIds.forEach((rid) => this.requestToWorker.set(rid, workerId))
+        this.hubBus.publishHeartbeat({ workerId, activeRequestIds })
         break
+      }
       case 'job.queued':
       case 'job.started':
       case 'job.progress':

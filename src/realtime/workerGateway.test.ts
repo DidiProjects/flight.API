@@ -77,4 +77,17 @@ describe('workerGateway', () => {
 
     ws.close()
   })
+
+  it('roteia worker.heartbeat para o hubBus com os requestIds ativos', async () => {
+    const beats: string[][] = []
+    hubBus.onHeartbeat((ev) => beats.push(ev.activeRequestIds))
+
+    const ws = connect(`key=${KEY}&workerId=hb`)
+    await new Promise<void>((r) => ws.addEventListener('open', () => r()))
+    ws.send(JSON.stringify({ v: 1, type: 'worker.heartbeat', id: 'h', ts: new Date().toISOString(), payload: { activeJobs: ['r1', 'r2'] } }))
+    await wait(80)
+
+    expect(beats.some((b) => b.length === 2 && b.includes('r1') && b.includes('r2'))).toBe(true)
+    ws.close()
+  })
 })

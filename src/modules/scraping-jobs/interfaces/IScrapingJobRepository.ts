@@ -34,13 +34,16 @@ export interface IScrapingJobRepository {
   expireOldJobs(): Promise<number>
   updatePriorities(): Promise<void>
   claimNextJob(airline: string): Promise<ScrapingJobRow | null>
+  countInFlight(): Promise<number>
+  deferJob(id: string, nextRunAt: Date): Promise<void>
   markRunning(id: string, requestId: string): Promise<void>
   markStarted(requestId: string): Promise<void>
+  markHeartbeat(requestIds: string[]): Promise<void>
   markSuccess(id: string, nextRunAt: Date): Promise<void>
   markFailed(id: string, error: string, nextRunAt: Date): Promise<void>
   markDead(id: string, error: string): Promise<void>
   pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number>
-  recoverStuckJobs(queueWaitMin: number): Promise<{ requeued: string[]; retried: string[] }>
+  reclaimExpiredJobs(leaseTimeoutSec: number, graceSec: number, maxRunMin: number): Promise<{ lost: string[]; hung: string[] }>
   findByRequestId(requestId: string): Promise<ScrapingJobRow | null>
   findById(id: string): Promise<ScrapingJobRow | null>
   getActiveAirlines(): Promise<string[]>

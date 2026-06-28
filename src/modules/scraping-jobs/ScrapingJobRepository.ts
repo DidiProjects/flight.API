@@ -163,6 +163,23 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rows[0] ?? null
   }
 
+  async countInFlight(): Promise<number> {
+    const { rows } = await this.db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM scraping_jobs WHERE status = 'running'`,
+    )
+    return Number(rows[0]?.count ?? 0)
+  }
+
+  // Segura o job sem penalidade: scraper saturado (503) não é falha do job.
+  async deferJob(id: string, nextRunAt: Date): Promise<void> {
+    await this.db.query(`
+      UPDATE scraping_jobs
+      SET status = 'pending', running_since = NULL, request_id = NULL, started_at = NULL,
+          next_run_at = $2, updated_at = NOW()
+      WHERE id = $1
+    `, [id, nextRunAt])
+  }
+
   async markRunning(id: string, requestId: string): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs
@@ -179,6 +196,15 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       SET started_at = NOW(), updated_at = NOW()
       WHERE request_id = $1 AND started_at IS NULL
     `, [requestId])
+  }
+
+  // Renova o lease dos jobs que o worker declarou deter (heartbeat/snapshot).
+  async markHeartbeat(requestIds: string[]): Promise<void> {
+    if (requestIds.length === 0) return
+    await this.db.query(`
+      UPDATE scraping_jobs SET last_heartbeat_at = NOW()
+      WHERE status = 'running' AND request_id = ANY($1::uuid[])
+    `, [requestIds])
   }
 
   async markSuccess(id: string, nextRunAt: Date): Promise<void> {
@@ -281,53 +307,62 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rowCount ?? 0
   }
 
-  // Recupera jobs presos em 'running', separando dois casos:
-  // - requeued: nunca iniciaram (started_at NULL) e esperaram demais na fila do
-  //   scraper. NÃO é falha do job → volta a 'pending' sem incrementar retry nem
-  //   escalar para 'dead'. O request_id antigo é devolvido para cancelar o zumbi.
-  // - retried: iniciaram de fato (started_at preenchido) mas não retornaram no
-  //   running_timeout_min → falha real: incrementa retry / vira 'dead' no limite.
-  async recoverStuckJobs(queueWaitMin: number): Promise<{ requeued: string[]; retried: string[] }> {
-    const requeued = await this.db.query<{ request_id: string | null }>(`
-      WITH stuck AS (
+  // Reclama jobs 'running' por LEASE, não por relógio cego:
+  // - lost: o lease expirou (heartbeat parou, ou nunca chegou após a graça) →
+  //   worker morto/indisponível. NÃO é falha do job → volta a 'pending' sem
+  //   penalidade. Job ainda vivo na fila do worker continua heartbeatando e NÃO
+  //   é reclamado.
+  // - hung: ainda com lease, mas rodando além do teto absoluto (watchdog deveria
+  //   ter matado) → falha real: incrementa retry / vira 'dead' no limite.
+  async reclaimExpiredJobs(
+    leaseTimeoutSec: number,
+    graceSec: number,
+    maxRunMin: number,
+  ): Promise<{ lost: string[]; hung: string[] }> {
+    const lost = await this.db.query<{ request_id: string | null }>(`
+      WITH expired AS (
         SELECT id, request_id FROM scraping_jobs
         WHERE status = 'running'
-          AND started_at IS NULL
-          AND running_since < NOW() - ($1 || ' minutes')::interval
+          AND (
+            (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - ($1 || ' seconds')::interval)
+            OR (last_heartbeat_at IS NULL AND running_since < NOW() - ($2 || ' seconds')::interval)
+          )
         FOR UPDATE SKIP LOCKED
       )
       UPDATE scraping_jobs j
-      SET status = 'pending', running_since = NULL, request_id = NULL, started_at = NULL,
+      SET status = 'pending', running_since = NULL, request_id = NULL,
+          started_at = NULL, last_heartbeat_at = NULL,
           next_run_at = NOW() + random() * INTERVAL '5 minutes',
           updated_at = NOW()
-      FROM stuck WHERE j.id = stuck.id
-      RETURNING stuck.request_id
-    `, [queueWaitMin])
+      FROM expired WHERE j.id = expired.id
+      RETURNING expired.request_id
+    `, [leaseTimeoutSec, graceSec])
 
-    const retried = await this.db.query<{ request_id: string | null }>(`
+    const hung = await this.db.query<{ request_id: string | null }>(`
       WITH stuck AS (
         SELECT id, request_id FROM scraping_jobs
         WHERE status = 'running'
+          AND last_heartbeat_at >= NOW() - ($1 || ' seconds')::interval
           AND started_at IS NOT NULL
-          AND started_at < NOW() - (running_timeout_min || ' minutes')::interval
+          AND started_at < NOW() - ($2 || ' minutes')::interval
         FOR UPDATE SKIP LOCKED
       )
       UPDATE scraping_jobs j
       SET status = CASE WHEN j.retry_count + 1 >= j.max_retries THEN 'dead' ELSE 'pending' END,
-          running_since = NULL, request_id = NULL, started_at = NULL,
+          running_since = NULL, request_id = NULL, started_at = NULL, last_heartbeat_at = NULL,
           retry_count = j.retry_count + 1,
           last_error = CASE WHEN j.retry_count + 1 >= j.max_retries
-                            THEN COALESCE(j.last_error, 'Stuck running: scraper iniciou mas não retornou — max retries atingido')
+                            THEN COALESCE(j.last_error, 'Excedeu o tempo máximo de execução — max retries atingido')
                             ELSE j.last_error END,
           last_failure_at = CASE WHEN j.retry_count + 1 >= j.max_retries THEN NOW() ELSE j.last_failure_at END,
           next_run_at = NOW() + INTERVAL '2 minutes',
           updated_at = NOW()
       FROM stuck WHERE j.id = stuck.id
       RETURNING stuck.request_id
-    `)
+    `, [leaseTimeoutSec, maxRunMin])
 
     const ids = (r: { request_id: string | null }[]) => r.map((x) => x.request_id).filter((x): x is string => !!x)
-    return { requeued: ids(requeued.rows), retried: ids(retried.rows) }
+    return { lost: ids(lost.rows), hung: ids(hung.rows) }
   }
 
   async findByRequestId(requestId: string): Promise<ScrapingJobRow | null> {

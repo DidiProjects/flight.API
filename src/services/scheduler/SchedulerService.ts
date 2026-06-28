@@ -5,7 +5,7 @@ import { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IF
 import { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
-import { IScraperClient } from '../scraper-client/IScraperClient'
+import { IScraperClient, ScraperBusyError } from '../scraper-client/IScraperClient'
 import { ICancelDispatcher } from '../../realtime/workerGateway'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
@@ -23,11 +23,15 @@ const CIRCUIT_COOLDOWN_MS = 15 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000
 const EVALUATION_INTERVAL_MS = 5 * 60 * 1000
 const DAILY_TICK_INTERVAL_MS = 60_000
-// Job que nunca iniciou (só esperou na fila do scraper) por mais que isso é
-// re-enfileirado sem penalidade — não é falha do job, é saturação do scraper.
-const QUEUE_WAIT_TIMEOUT_MIN = 20
+// Lease: o worker manda heartbeat a cada ~15s. Sem heartbeat por mais que isso, o
+// job é dado como perdido (worker morto/indisponível) e reclamado sem penalidade.
+const LEASE_TIMEOUT_SEC = 90
+// Job 'running' que nunca apareceu em nenhum heartbeat após esta graça = nunca foi
+// aceito pelo worker → reclamado sem penalidade.
+const LEASE_GRACE_SEC = 60
+// Teto absoluto de execução (backstop do watchdog do scraper, que é ~18min).
+const MAX_RUN_MIN = 25
 // Runs sem callback marcadas como falha após esse tempo (rede de segurança).
-// Acima do scrape mais lento observado (~16min) para não matar execução legítima.
 const STALE_RUN_TIMEOUT_MIN = 25
 
 function daysBetween(a: Date, b: Date): number {
@@ -153,40 +157,37 @@ export class SchedulerService implements ISchedulerService {
   }
 
   private async dispatchForAirlines(budget: number): Promise<void> {
+    const cap = this.env.SCRAPE_MAX_IN_FLIGHT
+    let inFlight = await this.scrapingJobRepo.countInFlight()
     const airlines = await this.scrapingJobRepo.getActiveAirlines()
     for (const airline of airlines) {
       for (let i = 0; i < budget; i++) {
+        if (inFlight >= cap) {
+          log.info({ inFlight, cap }, 'dispatch paused: in-flight cap reached')
+          return
+        }
         if (this.isCircuitOpen(airline)) {
           log.warn({ airline }, 'circuit_breaker_open: skipping airline')
           break
         }
-        const dispatched = await this.dispatchNextJob(airline)
-        if (!dispatched) break
+        const result = await this.dispatchNextJob(airline)
+        if (result === 'dispatched') inFlight++
+        else if (result === 'busy') {
+          log.warn('dispatch paused: scraper queue full (503)')
+          return
+        } else break // 'empty' ou 'error': sem mais jobs/airline travada
       }
     }
   }
 
-  private async dispatchNextJob(airline: string): Promise<boolean> {
+  private async dispatchNextJob(airline: string): Promise<'dispatched' | 'empty' | 'busy' | 'error'> {
     const job = await this.scrapingJobRepo.claimNextJob(airline)
-    if (!job) return false
-
-    log.info({ jobId: job.id, airline: job.airline, priority: job.priority }, 'scraping_job_claimed')
+    if (!job) return 'empty'
 
     const requestId = randomUUID()
-    await this.scrapingJobRepo.markRunning(job.id, requestId)
-
     const flightDate = typeof job.flight_date === 'string'
       ? job.flight_date.slice(0, 10)
       : (job.flight_date as unknown as Date).toISOString().slice(0, 10)
-
-    await this.analysisRunsRepo.insertRunning({
-      jobId:       job.id,
-      requestId,
-      airline:     job.airline,
-      origin:      job.origin,
-      destination: job.destination,
-      flightDate,
-    })
 
     const payload = {
       requestId,
@@ -199,32 +200,41 @@ export class SchedulerService implements ISchedulerService {
       passengers:    1,
     }
 
-    log.info({
-      airline:     job.airline,
-      origin:      job.origin,
-      destination: job.destination,
-      flight_date: job.flight_date,
-      requestId,
-    }, 'scraping_job_dispatched')
+    const runData = { jobId: job.id, requestId, airline: job.airline, origin: job.origin, destination: job.destination, flightDate }
 
     try {
       await this.scraperClient.dispatch(payload)
-      this.recordSuccess(airline)
     } catch (err) {
+      // Fila cheia: segura o job (pending) sem penalidade e para o dispatch.
+      if (err instanceof ScraperBusyError) {
+        await this.scrapingJobRepo.deferJob(job.id, new Date(Date.now() + err.retryAfterMs))
+        log.info({ jobId: job.id, retryAfterMs: err.retryAfterMs }, 'dispatch deferred: scraper queue full')
+        return 'busy'
+      }
+      // Falha real de dispatch: registra a tentativa e aplica backoff/dead.
       this.recordFailure(airline)
-      const nextRunAt = calcBackoffNextRunAt(job.retry_count)
+      await this.analysisRunsRepo.insertRunning(runData)
       if (job.retry_count + 1 >= job.max_retries) {
         await this.scrapingJobRepo.markDead(job.id, String(err))
         await this.analysisRunsRepo.markFinished(requestId, { status: 'dead', errorMessage: String(err) })
         log.error({ jobId: job.id, airline, err }, 'scraping_job_dead: max retries reached on dispatch')
       } else {
-        await this.scrapingJobRepo.markFailed(job.id, String(err), nextRunAt)
+        await this.scrapingJobRepo.markFailed(job.id, String(err), calcBackoffNextRunAt(job.retry_count))
         await this.analysisRunsRepo.markFinished(requestId, { status: 'failed', errorMessage: String(err) })
         log.error({ jobId: job.id, airline, err }, 'scraping.API request failed')
       }
+      return 'error'
     }
 
-    return true
+    // 202 aceito: só agora o job "existe" para o scraper — amarra request_id e run.
+    await this.scrapingJobRepo.markRunning(job.id, requestId)
+    await this.analysisRunsRepo.insertRunning(runData)
+    this.recordSuccess(airline)
+    log.info({
+      jobId: job.id, airline: job.airline, origin: job.origin,
+      destination: job.destination, flight_date: job.flight_date, requestId,
+    }, 'scraping_job_dispatched')
+    return 'dispatched'
   }
 
   // ---------------------------------------------------------------------------
@@ -234,25 +244,7 @@ export class SchedulerService implements ISchedulerService {
   private scheduleHeartbeat(): void {
     const tick = async () => {
       try {
-        const { requeued, retried } = await this.scrapingJobRepo.recoverStuckJobs(QUEUE_WAIT_TIMEOUT_MIN)
-
-        // Cancela a task antiga no scraper (mata o zumbi na fila ou aborta o processo
-        // travado) antes que ela rode e gere callback órfão.
-        for (const requestId of [...requeued, ...retried]) {
-          await this.cancelDispatcher.requestCancel(requestId).catch(() => {})
-        }
-        // Fecha a run dos re-enfileirados com mensagem clara (não foi falha real).
-        for (const requestId of requeued) {
-          await this.analysisRunsRepo
-            .markFinished(requestId, { status: 'failed', errorMessage: 'Re-enfileirado: scraper saturado (não iniciou)' })
-            .catch(() => {})
-        }
-        if (requeued.length || retried.length) {
-          log.info({ requeued: requeued.length, retried: retried.length }, 'heartbeat_recovered')
-        }
-
-        const staleRuns = await this.analysisRunsRepo.failStaleRunning(STALE_RUN_TIMEOUT_MIN)
-        if (staleRuns > 0) log.info({ staleRuns }, 'heartbeat: stale analysis_runs failed')
+        await this.runHeartbeatCycle()
       } catch (err) {
         log.error({ err }, 'heartbeat error')
       } finally {
@@ -260,6 +252,33 @@ export class SchedulerService implements ISchedulerService {
       }
     }
     setTimeout(tick, HEARTBEAT_INTERVAL_MS)
+  }
+
+  // Reconciliação por lease: reclama jobs cujo worker sumiu (lost, sem penalidade)
+  // ou que estouraram o teto absoluto (hung, com penalidade). Jobs ainda vivos no
+  // worker seguem heartbeatando e NÃO são tocados.
+  async runHeartbeatCycle(): Promise<void> {
+    const { lost, hung } = await this.scrapingJobRepo.reclaimExpiredJobs(
+      LEASE_TIMEOUT_SEC, LEASE_GRACE_SEC, MAX_RUN_MIN,
+    )
+
+    for (const requestId of [...lost, ...hung]) {
+      await this.cancelDispatcher.requestCancel(requestId).catch(() => {})
+    }
+    for (const requestId of lost) {
+      await this.analysisRunsRepo
+        .markFinished(requestId, { status: 'failed', errorMessage: 'Lease expirado: worker indisponível (re-enfileirado)' })
+        .catch(() => {})
+    }
+    for (const requestId of hung) {
+      await this.analysisRunsRepo
+        .markFinished(requestId, { status: 'failed', errorMessage: 'Excedeu o tempo máximo de execução' })
+        .catch(() => {})
+    }
+    if (lost.length || hung.length) log.info({ lost: lost.length, hung: hung.length }, 'lease_reclaim')
+
+    const staleRuns = await this.analysisRunsRepo.failStaleRunning(STALE_RUN_TIMEOUT_MIN)
+    if (staleRuns > 0) log.info({ staleRuns }, 'heartbeat: stale analysis_runs failed')
   }
 
   // ---------------------------------------------------------------------------

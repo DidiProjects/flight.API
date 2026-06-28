@@ -74,11 +74,15 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     expireOldJobs:       vi.fn().mockResolvedValue(0),
     updatePriorities:    vi.fn().mockResolvedValue(undefined),
     claimNextJob:        vi.fn().mockResolvedValue(job),
+    countInFlight:       vi.fn().mockResolvedValue(0),
+    deferJob:            vi.fn().mockResolvedValue(undefined),
     markRunning:         vi.fn().mockResolvedValue(undefined),
+    markStarted:         vi.fn().mockResolvedValue(undefined),
+    markHeartbeat:       vi.fn().mockResolvedValue(undefined),
     markSuccess:         vi.fn().mockResolvedValue(undefined),
     markFailed:          vi.fn().mockResolvedValue(undefined),
     markDead:            vi.fn().mockResolvedValue(undefined),
-    recoverStuckJobs:    vi.fn().mockResolvedValue({ requeued: [], retried: [] }),
+    reclaimExpiredJobs:  vi.fn().mockResolvedValue({ lost: [], hung: [] }),
     findByRequestId:     vi.fn().mockResolvedValue(null),
     getActiveAirlines:   vi.fn().mockResolvedValue(['azul']),
     cleanupDeadJobs:     vi.fn().mockResolvedValue(0),
@@ -133,17 +137,18 @@ function makeSvc(
   scraperClient = makeScraperClientMock(),
   cancelDispatcher = makeCancelDispatcherMock(),
 ) {
+  const analysisRunsRepo = makeAnalysisRunsRepoMock()
   const svc = new SchedulerService(
     scrapingJobRepo,
     makeFlightFaresRepoMock(),
     makeNotifMock(),
     makeEvalMock(),
     makeEnv(),
-    makeAnalysisRunsRepoMock(),
+    analysisRunsRepo,
     scraperClient,
     cancelDispatcher as never,
   )
-  return { svc, scraperClient, cancelDispatcher }
+  return { svc, scraperClient, cancelDispatcher, analysisRunsRepo }
 }
 
 describe('SchedulerService — dispatch loop', () => {
@@ -231,6 +236,43 @@ describe('SchedulerService — dispatch loop', () => {
       job.id,
       expect.stringContaining('500'),
     )
+  })
+})
+
+describe('SchedulerService — lease reclaim (runHeartbeatCycle)', () => {
+  it('reclama lost (sem penalidade) e hung: cancela a task e fecha a run de cada', async () => {
+    const scrapingJobRepo = makeScrapingJobRepoMock()
+    vi.mocked(scrapingJobRepo.reclaimExpiredJobs).mockResolvedValue({ lost: ['r-lost'], hung: ['r-hung'] })
+    const { svc, cancelDispatcher, analysisRunsRepo } = makeSvc(scrapingJobRepo)
+
+    await svc.runHeartbeatCycle()
+
+    expect(cancelDispatcher.requestCancel).toHaveBeenCalledWith('r-lost')
+    expect(cancelDispatcher.requestCancel).toHaveBeenCalledWith('r-hung')
+    expect(analysisRunsRepo.markFinished).toHaveBeenCalledWith(
+      'r-lost', expect.objectContaining({ status: 'failed' }),
+    )
+    expect(analysisRunsRepo.markFinished).toHaveBeenCalledWith(
+      'r-hung', expect.objectContaining({ status: 'failed' }),
+    )
+    // mensagens distintas: lost = lease, hung = tempo máximo
+    const msgs = vi.mocked(analysisRunsRepo.markFinished).mock.calls.map((c) => c[1].errorMessage)
+    expect(msgs).toEqual(expect.arrayContaining([
+      expect.stringMatching(/lease/i),
+      expect.stringMatching(/máximo/i),
+    ]))
+  })
+
+  it('sem jobs expirados: não cancela nem fecha run, mas roda o failStaleRunning', async () => {
+    const scrapingJobRepo = makeScrapingJobRepoMock()
+    vi.mocked(scrapingJobRepo.reclaimExpiredJobs).mockResolvedValue({ lost: [], hung: [] })
+    const { svc, cancelDispatcher, analysisRunsRepo } = makeSvc(scrapingJobRepo)
+
+    await svc.runHeartbeatCycle()
+
+    expect(cancelDispatcher.requestCancel).not.toHaveBeenCalled()
+    expect(analysisRunsRepo.markFinished).not.toHaveBeenCalled()
+    expect(analysisRunsRepo.failStaleRunning).toHaveBeenCalledOnce()
   })
 })
 

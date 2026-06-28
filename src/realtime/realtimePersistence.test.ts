@@ -8,10 +8,13 @@ const tick = () => new Promise((r) => setTimeout(r, 10))
 const analysisRunsRepo = {
   appendEvent: vi.fn().mockResolvedValue(undefined),
   markCancelled: vi.fn().mockResolvedValue(undefined),
+  resetStartedAt: vi.fn().mockResolvedValue(undefined),
 }
 const scrapingJobRepo = {
   findByRequestId: vi.fn().mockResolvedValue({ id: 'j1', flight_date: '2026-08-15' }),
   releaseCancelled: vi.fn().mockResolvedValue(undefined),
+  markStarted: vi.fn().mockResolvedValue(undefined),
+  markHeartbeat: vi.fn().mockResolvedValue(undefined),
 }
 
 const hubBus = new HubBus()
@@ -50,5 +53,32 @@ describe('realtimePersistence', () => {
     hubBus.publishTelemetry({ workerId: 'w', message: envelope('worker.heartbeat', { activeJobs: [] }) })
     await tick()
     expect(analysisRunsRepo.appendEvent).not.toHaveBeenCalled()
+  })
+
+  it('job.started reseta o relógio: marca started_at no job e na run', async () => {
+    hubBus.publishTelemetry({ workerId: 'w', message: envelope('job.started', { airline: 'azul' }, { requestId: 'rs', seq: 1 }) })
+    await tick()
+    expect(scrapingJobRepo.markStarted).toHaveBeenCalledWith('rs')
+    expect(analysisRunsRepo.resetStartedAt).toHaveBeenCalledWith('rs')
+  })
+
+  it('heartbeat renova o lease dos jobs ativos', async () => {
+    hubBus.publishHeartbeat({ workerId: 'w', activeRequestIds: ['a', 'b'] })
+    await tick()
+    expect(scrapingJobRepo.markHeartbeat).toHaveBeenCalledWith(['a', 'b'])
+  })
+
+  it('snapshot renova o lease dos requestIds listados', async () => {
+    hubBus.publishSnapshot({ workerId: 'w', jobs: [
+      { requestId: 'x', phase: 'queued', airline: 'azul', origin: 'VCP', destination: 'LIS', flightDate: '2026-08-15', startedAt: '2026-06-27T00:00:00Z' },
+    ] })
+    await tick()
+    expect(scrapingJobRepo.markHeartbeat).toHaveBeenCalledWith(['x'])
+  })
+
+  it('heartbeat vazio não chama markHeartbeat', async () => {
+    hubBus.publishHeartbeat({ workerId: 'w', activeRequestIds: [] })
+    await tick()
+    expect(scrapingJobRepo.markHeartbeat).not.toHaveBeenCalled()
   })
 })
