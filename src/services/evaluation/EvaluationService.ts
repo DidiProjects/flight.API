@@ -15,7 +15,17 @@ function toDateStr(v: string | Date): string {
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
 }
 
-export { toDateStr }
+// Janela do anti-spam do alerta target, derivada da frequência da rotina.
+function frequencyToHours(freq: string): number {
+  switch (freq) {
+    case 'hourly':  return 1
+    case 'monthly': return 24 * 30
+    case 'daily':
+    default:        return 24
+  }
+}
+
+export { toDateStr, frequencyToHours }
 
 export class EvaluationService implements IEvaluationService {
   constructor(
@@ -43,6 +53,9 @@ export class EvaluationService implements IEvaluationService {
   }
 
   private async evaluateRoutine(routine: RoutineRow): Promise<void> {
+    // Só alerta quem optou pelo modo 'target'.
+    if (!routine.notification_modes.includes('target')) return
+
     const allOutbound: LatestFaresByDate[] = []
 
     for (const airline of routine.airlines) {
@@ -62,7 +75,7 @@ export class EvaluationService implements IEvaluationService {
     const bestMatch = this.findBestMatch(allOutbound, routine)
     if (!bestMatch) return
 
-    const recentAlert = await this.notifSvc.hasRecentAlert(routine.id, 24)
+    const recentAlert = await this.notifSvc.hasRecentAlert(routine.id, frequencyToHours(routine.notification_frequency))
     if (recentAlert) return
 
     const history = await this.flightFaresRepo.getPriceHistory(

@@ -66,7 +66,7 @@ Recebe o callback da `scraping.API` (autenticado por `X-API-Key`/`FLIGHT_API_KEY
 
 ## Avaliação (`src/services/evaluation/EvaluationService.ts`)
 
-Para cada rotina ativa: busca a tarifa mais recente por rota/companhia, ignorando tarifas mais velhas que 48h (`MAX_FARE_AGE_HOURS`). Filtra contra o alvo da rotina (`cash`/`pts`/`hyb`) com a margem configurada, escolhe a melhor e dispara alerta — respeitando rate-limit de 24h por rotina (`hasRecentAlert`).
+Para cada rotina ativa **com o modo `target`** em `notification_modes`: busca a tarifa mais recente por rota/companhia, ignorando tarifas mais velhas que 48h (`MAX_FARE_AGE_HOURS`). Filtra contra o alvo da rotina (`cash`/`pts`/`hyb`) com a margem configurada, escolhe a melhor e dispara alerta — respeitando o rate-limit por rotina, cuja janela vem da `notification_frequency` (`hourly`→1h, `daily`→24h, `monthly`→720h) via `hasRecentAlert`.
 
 ## Tempo real (`src/realtime/`)
 

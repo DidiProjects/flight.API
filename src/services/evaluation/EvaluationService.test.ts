@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EvaluationService } from './EvaluationService'
+import { EvaluationService, frequencyToHours } from './EvaluationService'
 import type { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
 import type { IFlightFaresRepository, LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import type { INotificationsService } from '../notifications/interfaces/INotificationsService'
@@ -25,8 +25,8 @@ function makeRoutine(overrides: Partial<RoutineRow> = {}): RoutineRow {
     target_hyb_cash:        null,
     margin:                 0.1,
     priority:               'cash',
-    notification_modes:     ['email'],
-    notification_frequency: 'immediate',
+    notification_modes:     ['target'],
+    notification_frequency: 'daily',
     scheduled_time:         null,
     cc_emails:              [],
     is_active:              true,
@@ -140,6 +140,32 @@ describe('EvaluationService', () => {
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, fare, null, history)
   })
 
+  it('rotina sem modo target — não avalia nem chama dispatchAlert', async () => {
+    const routine = makeRoutine({ notification_modes: ['scheduled'], target_cash: 2000, margin: 0 })
+    const fare    = makeFare({ fare_cash: 1500 }) // bateria o target, mas modo é só scheduled
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
+
+    await svc.runCycle()
+
+    expect(mockFlightFaresRepo.getLatestByRoute).not.toHaveBeenCalled()
+    expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+  })
+
+  it('anti-spam usa a janela da notification_frequency (hourly→1h, monthly→720h)', async () => {
+    const hourly  = makeRoutine({ id: 'r-hourly',  notification_frequency: 'hourly' })
+    const monthly = makeRoutine({ id: 'r-monthly', notification_frequency: 'monthly' })
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([hourly, monthly])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([makeFare({ fare_cash: 1500 })])
+    vi.mocked(mockNotifSvc.hasRecentAlert).mockResolvedValue(true) // corta antes do dispatch
+
+    await svc.runCycle()
+
+    expect(mockNotifSvc.hasRecentAlert).toHaveBeenCalledWith('r-hourly', 1)
+    expect(mockNotifSvc.hasRecentAlert).toHaveBeenCalledWith('r-monthly', 24 * 30)
+  })
+
   it('fare acima do target — não chama dispatchAlert', async () => {
     const routine = makeRoutine({ target_cash: 1000, margin: 0 })
     const fare    = makeFare({ fare_cash: 1500 })
@@ -190,5 +216,14 @@ describe('EvaluationService', () => {
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
     const dispatchedFare = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0][1]
     expect(dispatchedFare.flight_date).toBe('2026-12-08') // o £652, não o £1076
+  })
+})
+
+describe('frequencyToHours', () => {
+  it('mapeia hourly/daily/monthly e cai em 24h no desconhecido', () => {
+    expect(frequencyToHours('hourly')).toBe(1)
+    expect(frequencyToHours('daily')).toBe(24)
+    expect(frequencyToHours('monthly')).toBe(24 * 30)
+    expect(frequencyToHours('qualquer-outro')).toBe(24)
   })
 })
