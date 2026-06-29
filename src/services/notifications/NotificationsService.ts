@@ -151,19 +151,26 @@ export class NotificationsService implements INotificationsService {
       })),
     )
 
-    // Headline = oferta mais barata; o histórico (% abaixo da média) é dela.
-    const headline = outboundFares.reduce((best, f) =>
-      (this.fareAmount(f, routine.priority) ?? Infinity) < (this.fareAmount(best, routine.priority) ?? Infinity) ? f : best,
-    )
+    // Headline = oferta mais barata; empate de preço → tarifa coletada mais
+    // recentemente (scraped_at). O histórico (% abaixo da média) é dela.
+    const headline = outboundFares.reduce((best, f) => {
+      const fv = this.fareAmount(f, routine.priority) ?? Infinity
+      const bv = this.fareAmount(best, routine.priority) ?? Infinity
+      if (fv < bv) return f
+      if (fv === bv && new Date(f.scraped_at).getTime() > new Date(best.scraped_at).getTime()) return f
+      return best
+    })
     const historyNote = this.buildHistoryNote(headline, history, routine.priority)
 
-    // Um card por data do grid que melhorou (o template já empilha airlineOffers).
-    const airlineOffers: AirlineOfferPair[] = outboundFares.map((fare) => ({
-      airline:  fare.airline,
-      currency: fare.currency ?? routine.currency ?? 'BRL',
-      outbound: this.fareToBlock(fare, routine.origin, routine.destination),
+    // Apenas UMA tarifa por rotina no email: a headline. As demais datas que
+    // avançaram já foram gravadas no watermark (target_alert_state) pelo
+    // EvaluationService — só não são exibidas aqui.
+    const airlineOffers: AirlineOfferPair[] = [{
+      airline:  headline.airline,
+      currency: headline.currency ?? routine.currency ?? 'BRL',
+      outbound: this.fareToBlock(headline, routine.origin, routine.destination),
       return:   null,
-    }))
+    }]
 
     await this.emailSvc.sendFlightAlert({
       primaryEmail:     owner.email,
