@@ -33,5 +33,6 @@ export interface IAirportsRepository {
   upsertBatch(airlineCode: string, airports: AirportInput[]): Promise<UpsertResult>
   listByAirline(airlineCode: string): Promise<AirportRow[]>
   getCurrency(airlineCode: string, airportCode: string): Promise<string | null>
+  getCountryCode(airportCode: string): Promise<string | null>
   hasAirport(airlineCode: string, airportCode: string): Promise<boolean>
 }

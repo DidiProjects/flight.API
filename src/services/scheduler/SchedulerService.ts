@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { ISchedulerService } from './interfaces/ISchedulerService'
 import { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import { IAirportsRepository } from '../../modules/airports/interfaces/IAirportsRepository'
 import { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
@@ -75,6 +76,7 @@ export class SchedulerService implements ISchedulerService {
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
     private readonly scraperClient: IScraperClient,
     private readonly cancelDispatcher: ICancelDispatcher,
+    private readonly airportsRepo: IAirportsRepository,
   ) {}
 
   async pruneOrphans(): Promise<void> {
@@ -211,6 +213,11 @@ export class SchedulerService implements ISchedulerService {
       ? job.flight_date.slice(0, 10)
       : (job.flight_date as unknown as Date).toISOString().slice(0, 10)
 
+    const [originCountry, destinationCountry] = await Promise.all([
+      this.airportsRepo.getCountryCode(job.origin),
+      this.airportsRepo.getCountryCode(job.destination),
+    ])
+
     const payload = {
       requestId,
       routineId:     job.id,
@@ -220,6 +227,8 @@ export class SchedulerService implements ISchedulerService {
       outboundStart: flightDate,
       outboundEnd:   flightDate,
       passengers:    1,
+      originCountry:      originCountry ?? undefined,
+      destinationCountry: destinationCountry ?? undefined,
     }
 
     const runData = { jobId: job.id, requestId, airline: job.airline, origin: job.origin, destination: job.destination, flightDate }

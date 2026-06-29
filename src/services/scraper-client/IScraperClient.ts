@@ -7,6 +7,8 @@ export interface ScrapeDispatch {
   outboundStart: string
   outboundEnd: string
   passengers: number
+  originCountry?: string
+  destinationCountry?: string
 }
 
 export interface IScraperClient {

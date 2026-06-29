@@ -148,6 +148,7 @@ function makeSvc(
     analysisRunsRepo,
     scraperClient,
     cancelDispatcher as never,
+    { getCountryCode: vi.fn().mockResolvedValue(null) } as never,
   )
   return { svc, scraperClient, cancelDispatcher, analysisRunsRepo }
 }
