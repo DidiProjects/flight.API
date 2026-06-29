@@ -13,6 +13,7 @@ import { AirportsRepository }         from './modules/airports/AirportsRepositor
 import { ScrapingJobRepository }      from './modules/scraping-jobs/ScrapingJobRepository'
 import { FlightFaresRepository }      from './modules/flight-fares/FlightFaresRepository'
 import { AnalysisRunsRepository }     from './modules/analysis-runs/AnalysisRunsRepository'
+import { TargetAlertStateRepository } from './modules/target-alert-state/TargetAlertStateRepository'
 
 // Services
 import { HttpScraperClient }    from './services/scraper-client/HttpScraperClient'
@@ -49,6 +50,7 @@ const airportsRepo     = new AirportsRepository(pool)
 const scrapingJobRepo  = new ScrapingJobRepository(pool)
 const flightFaresRepo  = new FlightFaresRepository(pool)
 const analysisRunsRepo = new AnalysisRunsRepository(pool)
+const alertStateRepo   = new TargetAlertStateRepository(pool)
 
 // ── Realtime ────────────────────────────────────────────────────────────────
 const hubBus              = new HubBus()
@@ -71,7 +73,7 @@ const notifSvc = new NotificationsService(
   env,
 )
 
-const evaluationSvc = new EvaluationService(routinesRepo, flightFaresRepo, notifSvc)
+const evaluationSvc = new EvaluationService(routinesRepo, flightFaresRepo, alertStateRepo, notifSvc)
 
 const authSvc      = new AuthService(usersRepo, authRepo, refreshTokenRepo, emailSvc)
 const usersSvc     = new UsersService(usersRepo, emailSvc)

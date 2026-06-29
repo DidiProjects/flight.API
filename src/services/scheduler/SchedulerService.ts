@@ -384,6 +384,9 @@ export class SchedulerService implements ISchedulerService {
 
     const deadCleaned = await this.scrapingJobRepo.cleanupDeadJobs()
     log.info({ deadCleaned }, 'scraping_jobs cleanup: dead jobs removed')
+
+    const alertStateCleaned = await this.evaluationSvc.cleanupAlertState()
+    log.info({ alertStateCleaned }, 'target_alert_state cleanup: past-date cells removed')
   }
 
   // ---------------------------------------------------------------------------

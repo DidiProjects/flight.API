@@ -66,7 +66,9 @@ Recebe o callback da `scraping.API` (autenticado por `X-API-Key`/`FLIGHT_API_KEY
 
 ## Avaliação (`src/services/evaluation/EvaluationService.ts`)
 
-Para cada rotina ativa **com o modo `target`** em `notification_modes`: busca a tarifa mais recente por rota/companhia, ignorando tarifas mais velhas que 48h (`MAX_FARE_AGE_HOURS`). Filtra contra o alvo da rotina (`cash`/`pts`/`hyb`) com a margem configurada, escolhe a melhor e dispara alerta — respeitando o rate-limit por rotina, cuja janela vem da `notification_frequency` (`hourly`→1h, `daily`→24h, `monthly`→720h) via `hasRecentAlert`.
+Para cada rotina ativa **com o modo `target`** em `notification_modes`: busca a tarifa mais recente de todas as companhias no grid de datas, ignorando tarifas mais velhas que 48h (`MAX_FARE_AGE_HOURS`). Reduz a **melhor tarifa dentro do alvo por data** (`cash`/`pts`/`hyb` com a margem; companhias colapsadas — vale o menor preço da data).
+
+O anti-repetição é um **watermark por célula** `(rotina, data, tipo)` na tabela `target_alert_state`: o alerta de uma data só dispara **na primeira vez que ela entra no alvo, ou quando o melhor preço daquela data cai abaixo do `notified_amount` já alertado**. A gravação é um upsert monotônico-descendente com `RETURNING` (`recordNotified`) — o banco devolve só as datas que de fato avançaram, então ciclos sobrepostos não disparam em dobro (sem cooldown por tempo). Todas as datas que avançaram num ciclo vão num **único e-mail** (um card por data, headline = a mais barata; `dispatchAlert` recebe `LatestFaresByDate[]`). Watermarks de datas passadas são limpos na manutenção diária (`cleanupAlertState`). A `notification_frequency` governa apenas a cadência do digest `scheduled`, não o alerta `target`.
 
 ## Tempo real (`src/realtime/`)
 

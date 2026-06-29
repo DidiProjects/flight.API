@@ -129,16 +129,13 @@ export class NotificationsService implements INotificationsService {
     }
   }
 
-  async hasRecentAlert(routineId: string, hours: number): Promise<boolean> {
-    return this.notifLogRepo.hasAlertSinceHours(routineId, hours)
-  }
-
   async dispatchAlert(
     routine: RoutineRow,
-    outboundFare: LatestFaresByDate,
-    returnFare: LatestFaresByDate | null,
+    outboundFares: LatestFaresByDate[],
     history: PriceHistory,
   ): Promise<void> {
+    if (outboundFares.length === 0) return
+
     const owner = await this.usersRepo.findById(routine.user_id)
     if (!owner) {
       log.warn({ routineId: routine.id, userId: routine.user_id }, 'dispatchAlert skipped — user not found')
@@ -154,14 +151,19 @@ export class NotificationsService implements INotificationsService {
       })),
     )
 
-    const historyNote = this.buildHistoryNote(outboundFare, history, routine.priority)
+    // Headline = oferta mais barata; o histórico (% abaixo da média) é dela.
+    const headline = outboundFares.reduce((best, f) =>
+      (this.fareAmount(f, routine.priority) ?? Infinity) < (this.fareAmount(best, routine.priority) ?? Infinity) ? f : best,
+    )
+    const historyNote = this.buildHistoryNote(headline, history, routine.priority)
 
-    const airlineOffers: AirlineOfferPair[] = [{
-      airline:  outboundFare.airline,
-      currency: outboundFare.currency ?? routine.currency ?? 'BRL',
-      outbound: this.fareToBlock(outboundFare, routine.origin, routine.destination),
-      return:   returnFare ? this.fareToBlock(returnFare, routine.destination, routine.origin) : null,
-    }]
+    // Um card por data do grid que melhorou (o template já empilha airlineOffers).
+    const airlineOffers: AirlineOfferPair[] = outboundFares.map((fare) => ({
+      airline:  fare.airline,
+      currency: fare.currency ?? routine.currency ?? 'BRL',
+      outbound: this.fareToBlock(fare, routine.origin, routine.destination),
+      return:   null,
+    }))
 
     await this.emailSvc.sendFlightAlert({
       primaryEmail:     owner.email,
@@ -178,25 +180,24 @@ export class NotificationsService implements INotificationsService {
     })
 
     log.info({
-      routineId:    routine.id,
-      userId:       owner.id,
-      routineName:  routine.name,
-      airline:      outboundFare.airline,
-      flightDate:   outboundFare.flight_date,
-      fareCash:     outboundFare.fare_cash,
-      farePts:      outboundFare.fare_pts,
-      avgCash30d:   history.avg_cash_30d,
-      type:         'alert',
-      status:       'success',
+      routineId:       routine.id,
+      userId:          owner.id,
+      routineName:     routine.name,
+      dates:           outboundFares.map((f) => toDateStr(f.flight_date)),
+      headlineAirline: headline.airline,
+      headlineAmount:  this.fareAmount(headline, routine.priority),
+      avgCash30d:      history.avg_cash_30d,
+      type:            'alert',
+      status:          'success',
     }, 'evaluation alert dispatched')
 
     await this.notifLogRepo.insert({
       routineId:      routine.id,
-      airline:        outboundFare.airline,
+      airline:        headline.airline,
       type:           'alert',
       fareType:       routine.priority,
-      outboundAmount: this.fareAmount(outboundFare, routine.priority),
-      returnAmount:   returnFare ? this.fareAmount(returnFare, routine.priority) : null,
+      outboundAmount: this.fareAmount(headline, routine.priority),
+      returnAmount:   null,
       emailTo:        owner.email,
       emailCc:        activeCc.map((c) => c.email).join(',') || null,
     })

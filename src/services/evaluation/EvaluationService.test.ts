@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EvaluationService, frequencyToHours } from './EvaluationService'
+import { EvaluationService } from './EvaluationService'
 import type { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
 import type { IFlightFaresRepository, LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import type { ITargetAlertStateRepository, AlertWatermark } from '../../modules/target-alert-state/interfaces/ITargetAlertStateRepository'
 import type { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import type { RoutineRow } from '../../types/index'
 
@@ -75,15 +76,23 @@ function makeMocks() {
 
   const mockFlightFaresRepo = {
     getLatestByRoute: vi.fn(),
-    getPriceHistory:  vi.fn(),
+    getPriceHistory:  vi.fn().mockResolvedValue(makeHistory()),
   } satisfies Partial<IFlightFaresRepository> as unknown as IFlightFaresRepository
 
+  // Por padrão o "banco" confirma como avançadas todas as datas candidatas.
+  const mockAlertStateRepo = {
+    getWatermarks:   vi.fn().mockResolvedValue(new Map<string, number>()),
+    recordNotified:  vi.fn().mockImplementation(
+      async (_r: string, _f: string, entries: AlertWatermark[]) => new Set(entries.map((e) => e.flightDate)),
+    ),
+    cleanupPastDates: vi.fn().mockResolvedValue(0),
+  } satisfies Partial<ITargetAlertStateRepository> as unknown as ITargetAlertStateRepository
+
   const mockNotifSvc = {
-    hasRecentAlert: vi.fn(),
-    dispatchAlert:  vi.fn(),
+    dispatchAlert: vi.fn().mockResolvedValue(undefined),
   } satisfies Partial<INotificationsService> as unknown as INotificationsService
 
-  return { mockRoutinesRepo, mockFlightFaresRepo, mockNotifSvc }
+  return { mockRoutinesRepo, mockFlightFaresRepo, mockAlertStateRepo, mockNotifSvc }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -91,16 +100,18 @@ function makeMocks() {
 describe('EvaluationService', () => {
   let mockRoutinesRepo: IRoutinesRepository
   let mockFlightFaresRepo: IFlightFaresRepository
+  let mockAlertStateRepo: ITargetAlertStateRepository
   let mockNotifSvc: INotificationsService
   let svc: EvaluationService
 
   beforeEach(() => {
     const mocks = makeMocks()
-    mockRoutinesRepo  = mocks.mockRoutinesRepo
+    mockRoutinesRepo    = mocks.mockRoutinesRepo
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
-    mockNotifSvc      = mocks.mockNotifSvc
+    mockAlertStateRepo  = mocks.mockAlertStateRepo
+    mockNotifSvc        = mocks.mockNotifSvc
 
-    svc = new EvaluationService(mockRoutinesRepo, mockFlightFaresRepo, mockNotifSvc)
+    svc = new EvaluationService(mockRoutinesRepo, mockFlightFaresRepo, mockAlertStateRepo, mockNotifSvc)
   })
 
   it('sem fares recentes — não chama dispatchAlert', async () => {
@@ -110,42 +121,13 @@ describe('EvaluationService', () => {
     await svc.runCycle()
 
     expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
-  })
-
-  it('rate limited — hasRecentAlert=true — não chama dispatchAlert', async () => {
-    const fare = makeFare({ fare_cash: 1500 })
-    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([makeRoutine()])
-    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
-    vi.mocked(mockNotifSvc.hasRecentAlert).mockResolvedValue(true)
-
-    await svc.runCycle()
-
-    expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
-  })
-
-  it('fare abaixo do target — dispatchAlert chamado com fare e histórico corretos', async () => {
-    const routine = makeRoutine({ target_cash: 2000, margin: 0 })
-    const fare    = makeFare({ fare_cash: 1900 })
-    const history = makeHistory()
-
-    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
-    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
-    vi.mocked(mockNotifSvc.hasRecentAlert).mockResolvedValue(false)
-    vi.mocked(mockFlightFaresRepo.getPriceHistory).mockResolvedValue(history)
-    vi.mocked(mockNotifSvc.dispatchAlert).mockResolvedValue(undefined)
-
-    await svc.runCycle()
-
-    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
-    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, fare, null, history)
+    expect(mockAlertStateRepo.recordNotified).not.toHaveBeenCalled()
   })
 
   it('rotina sem modo target — não avalia nem chama dispatchAlert', async () => {
     const routine = makeRoutine({ notification_modes: ['scheduled'], target_cash: 2000, margin: 0 })
-    const fare    = makeFare({ fare_cash: 1500 }) // bateria o target, mas modo é só scheduled
-
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
-    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([makeFare({ fare_cash: 1500 })])
 
     await svc.runCycle()
 
@@ -153,77 +135,185 @@ describe('EvaluationService', () => {
     expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
   })
 
-  it('anti-spam usa a janela da notification_frequency (hourly→1h, monthly→720h)', async () => {
-    const hourly  = makeRoutine({ id: 'r-hourly',  notification_frequency: 'hourly' })
-    const monthly = makeRoutine({ id: 'r-monthly', notification_frequency: 'monthly' })
-    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([hourly, monthly])
+  it('fare acima do target — não chama dispatchAlert', async () => {
+    const routine = makeRoutine({ target_cash: 1000, margin: 0 })
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([makeFare({ fare_cash: 1500 })])
-    vi.mocked(mockNotifSvc.hasRecentAlert).mockResolvedValue(true) // corta antes do dispatch
 
     await svc.runCycle()
 
-    expect(mockNotifSvc.hasRecentAlert).toHaveBeenCalledWith('r-hourly', 1)
-    expect(mockNotifSvc.hasRecentAlert).toHaveBeenCalledWith('r-monthly', 24 * 30)
+    expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+    expect(mockAlertStateRepo.recordNotified).not.toHaveBeenCalled()
   })
 
-  it('fare acima do target — não chama dispatchAlert', async () => {
-    const routine = makeRoutine({ target_cash: 1000, margin: 0 })
-    const fare    = makeFare({ fare_cash: 1500 })
+  it('primeira oferta no alvo (sem watermark) — dispara com a fare e o histórico da data', async () => {
+    const routine = makeRoutine({ target_cash: 2000, margin: 0 })
+    const fare    = makeFare({ fare_cash: 1900 })
+    const history = makeHistory()
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
+    vi.mocked(mockFlightFaresRepo.getPriceHistory).mockResolvedValue(history)
+
+    await svc.runCycle()
+
+    expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledWith(
+      routine.id, 'cash', [{ flightDate: '2026-08-15', amount: 1900, airline: 'azul' }],
+    )
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, [fare], history)
+  })
+
+  it('mesma tarifa já alertada (watermark == preço) — não vira candidata, não dispara', async () => {
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const fare    = makeFare({ flight_date: '2026-08-15', fare_cash: 3350 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2026-08-15', 3350]]))
+
+    await svc.runCycle()
+
+    expect(mockAlertStateRepo.recordNotified).not.toHaveBeenCalled()
+    expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+  })
+
+  it('preço subiu vs. watermark — não dispara', async () => {
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const fare    = makeFare({ flight_date: '2026-08-15', fare_cash: 3500 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2026-08-15', 3350]]))
 
     await svc.runCycle()
 
     expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
   })
 
-  it('erro em getLatestByRoute — ciclo continua avaliando outras rotinas', async () => {
-    const routine1 = makeRoutine({ id: 'routine-1111-0000-0000-000000000001' })
-    const routine2 = makeRoutine({ id: 'routine-2222-0000-0000-000000000002' })
-    const fare2    = makeFare({ fare_cash: 1500 })
-    const history  = makeHistory()
+  it('preço caiu vs. watermark — dispara só essa data', async () => {
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const fare    = makeFare({ flight_date: '2026-08-15', fare_cash: 3100 })
 
-    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine1, routine2])
-    vi.mocked(mockFlightFaresRepo.getLatestByRoute)
-      .mockRejectedValueOnce(new Error('DB connection failed'))
-      .mockResolvedValueOnce([fare2])
-    vi.mocked(mockNotifSvc.hasRecentAlert).mockResolvedValue(false)
-    vi.mocked(mockFlightFaresRepo.getPriceHistory).mockResolvedValue(history)
-    vi.mocked(mockNotifSvc.dispatchAlert).mockResolvedValue(undefined)
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2026-08-15', 3350]]))
+
+    await svc.runCycle()
+
+    expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledWith(
+      routine.id, 'cash', [{ flightDate: '2026-08-15', amount: 3100, airline: 'azul' }],
+    )
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, [fare], expect.anything())
+  })
+
+  it('grid com várias datas no alvo — UM dispatch com todas, ordenadas da mais barata para a mais cara', async () => {
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const d22 = makeFare({ flight_date: '2027-02-22', fare_cash: 3350 })
+    const d25 = makeFare({ flight_date: '2027-02-25', fare_cash: 3100 })
+    const d28 = makeFare({ flight_date: '2027-02-28', fare_cash: 3900 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([d22, d25, d28])
 
     await svc.runCycle()
 
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
-    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine2, fare2, null, history)
+    const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
+    expect(fares.map((f) => f.flight_date)).toEqual(['2027-02-25', '2027-02-22', '2027-02-28'])
+    // watermarks gravados para as 3 datas
+    const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
+    expect(entries.map((e: AlertWatermark) => e.flightDate).sort()).toEqual(['2027-02-22', '2027-02-25', '2027-02-28'])
+  })
+
+  it('grid parcial — só a data que melhorou entra no e-mail', async () => {
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const d22 = makeFare({ flight_date: '2027-02-22', fare_cash: 3350 }) // == watermark → ignorada
+    const d25 = makeFare({ flight_date: '2027-02-25', fare_cash: 3100 }) // < watermark → melhora
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([d22, d25])
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([
+      ['2027-02-22', 3350],
+      ['2027-02-25', 3300],
+    ]))
+
+    await svc.runCycle()
+
+    const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
+    expect(entries).toEqual([{ flightDate: '2027-02-25', amount: 3100, airline: 'azul' }])
+    const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
+    expect(fares.map((f) => f.flight_date)).toEqual(['2027-02-25'])
+  })
+
+  it('corrida — recordNotified devolve vazio (banco cortou) — não dispara', async () => {
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const fare    = makeFare({ flight_date: '2026-08-15', fare_cash: 3100 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
+    vi.mocked(mockAlertStateRepo.recordNotified).mockResolvedValue(new Set<string>())
+
+    await svc.runCycle()
+
+    expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledOnce()
+    expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+  })
+
+  it('multi-companhia na mesma data — escolhe a mais barata da data', async () => {
+    const routine = makeRoutine({ airlines: ['azul', 'latam'], target_cash: 4000, margin: 0 })
+    const azul  = makeFare({ airline: 'azul',  flight_date: '2027-02-22', fare_cash: 3350 })
+    const latam = makeFare({ airline: 'latam', flight_date: '2027-02-22', fare_cash: 3100 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockImplementation(
+      async (airline: string) => (airline === 'azul' ? [azul] : [latam]),
+    )
+
+    await svc.runCycle()
+
+    const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
+    expect(fares).toEqual([latam])
+    const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
+    expect(entries).toEqual([{ flightDate: '2027-02-22', amount: 3100, airline: 'latam' }])
   })
 
   it('escolhe o menor preço NUMÉRICO quando fare_cash vem como string do pg (regressão)', async () => {
     const routine = makeRoutine({ target_cash: 2000, margin: 0 })
     // pg devolve NUMERIC como string; "1076.00" < "652.00" é true lexicograficamente.
-    const expensive = makeFare({ flight_date: '2026-12-11', fare_cash: '1076.00' as unknown as number })
-    const cheap     = makeFare({ flight_date: '2026-12-08', fare_cash: '652.00' as unknown as number })
-    const history   = makeHistory()
+    const expensive = makeFare({ flight_date: '2026-08-11', fare_cash: '1076.00' as unknown as number })
+    const cheap     = makeFare({ flight_date: '2026-08-11', fare_cash: '652.00' as unknown as number })
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([expensive, cheap])
-    vi.mocked(mockNotifSvc.hasRecentAlert).mockResolvedValue(false)
-    vi.mocked(mockFlightFaresRepo.getPriceHistory).mockResolvedValue(history)
-    vi.mocked(mockNotifSvc.dispatchAlert).mockResolvedValue(undefined)
+
+    await svc.runCycle()
+
+    const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
+    expect(entries).toEqual([{ flightDate: '2026-08-11', amount: 652, airline: 'azul' }])
+  })
+
+  it('erro em getLatestByRoute — ciclo continua avaliando outras rotinas', async () => {
+    const routine1 = makeRoutine({ id: 'routine-1111-0000-0000-000000000001' })
+    const routine2 = makeRoutine({ id: 'routine-2222-0000-0000-000000000002' })
+    const fare2    = makeFare({ fare_cash: 1500 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine1, routine2])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute)
+      .mockRejectedValueOnce(new Error('DB connection failed'))
+      .mockResolvedValueOnce([fare2])
 
     await svc.runCycle()
 
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
-    const dispatchedFare = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0][1]
-    expect(dispatchedFare.flight_date).toBe('2026-12-08') // o £652, não o £1076
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine2, [fare2], expect.anything())
   })
-})
 
-describe('frequencyToHours', () => {
-  it('mapeia hourly/daily/monthly e cai em 24h no desconhecido', () => {
-    expect(frequencyToHours('hourly')).toBe(1)
-    expect(frequencyToHours('daily')).toBe(24)
-    expect(frequencyToHours('monthly')).toBe(24 * 30)
-    expect(frequencyToHours('qualquer-outro')).toBe(24)
+  it('cleanupAlertState delega ao repositório', async () => {
+    vi.mocked(mockAlertStateRepo.cleanupPastDates).mockResolvedValue(7)
+    const n = await svc.cleanupAlertState()
+    expect(n).toBe(7)
+    expect(mockAlertStateRepo.cleanupPastDates).toHaveBeenCalledOnce()
   })
 })

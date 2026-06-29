@@ -122,7 +122,10 @@ function makeNotifMock(): INotificationsService {
 }
 
 function makeEvalMock(): IEvaluationService {
-  return { runCycle: vi.fn().mockResolvedValue(undefined) }
+  return {
+    runCycle: vi.fn().mockResolvedValue(undefined),
+    cleanupAlertState: vi.fn().mockResolvedValue(0),
+  }
 }
 
 function makeScraperClientMock(): IScraperClient & { dispatch: ReturnType<typeof vi.fn> } {

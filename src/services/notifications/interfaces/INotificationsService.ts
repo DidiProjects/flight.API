@@ -3,6 +3,6 @@ import { LatestFaresByDate, PriceHistory } from '../../../modules/flight-fares/i
 
 export interface INotificationsService {
   sendScheduled(): Promise<void>
-  hasRecentAlert(routineId: string, hours: number): Promise<boolean>
-  dispatchAlert(routine: RoutineRow, outboundFare: LatestFaresByDate, returnFare: LatestFaresByDate | null, history: PriceHistory): Promise<void>
+  /** Dispara um alerta 'target' com uma ou mais ofertas (uma por data do grid que melhorou). */
+  dispatchAlert(routine: RoutineRow, outboundFares: LatestFaresByDate[], history: PriceHistory): Promise<void>
 }

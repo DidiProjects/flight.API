@@ -1,6 +1,7 @@
 import { IEvaluationService } from './interfaces/IEvaluationService'
 import { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
-import { IFlightFaresRepository, LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import { IFlightFaresRepository, LatestFaresByDate } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import { ITargetAlertStateRepository } from '../../modules/target-alert-state/interfaces/ITargetAlertStateRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { RoutineRow } from '../../types'
 import { logger } from '../../utils/logger'
@@ -15,22 +16,13 @@ function toDateStr(v: string | Date): string {
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
 }
 
-// Janela do anti-spam do alerta target, derivada da frequência da rotina.
-function frequencyToHours(freq: string): number {
-  switch (freq) {
-    case 'hourly':  return 1
-    case 'monthly': return 24 * 30
-    case 'daily':
-    default:        return 24
-  }
-}
-
-export { toDateStr, frequencyToHours }
+export { toDateStr }
 
 export class EvaluationService implements IEvaluationService {
   constructor(
     private readonly routinesRepo: IRoutinesRepository,
     private readonly flightFaresRepo: IFlightFaresRepository,
+    private readonly alertStateRepo: ITargetAlertStateRepository,
     private readonly notifSvc: INotificationsService,
   ) {}
 
@@ -52,12 +44,16 @@ export class EvaluationService implements IEvaluationService {
     }
   }
 
+  async cleanupAlertState(): Promise<number> {
+    return this.alertStateRepo.cleanupPastDates()
+  }
+
   private async evaluateRoutine(routine: RoutineRow): Promise<void> {
     // Só alerta quem optou pelo modo 'target'.
     if (!routine.notification_modes.includes('target')) return
 
+    // 1. Última foto fresca de tarifas de todas as companhias no grid de datas.
     const allOutbound: LatestFaresByDate[] = []
-
     for (const airline of routine.airlines) {
       const outbound = await this.flightFaresRepo.getLatestByRoute(
         airline,
@@ -69,60 +65,85 @@ export class EvaluationService implements IEvaluationService {
       )
       allOutbound.push(...outbound)
     }
-
     if (allOutbound.length === 0) return
 
-    const bestMatch = this.findBestMatch(allOutbound, routine)
-    if (!bestMatch) return
+    // 2. Melhor tarifa DENTRO do alvo por data do grid (entre todas as companhias).
+    const bestByDate = this.bestInTargetByDate(allOutbound, routine)
+    if (bestByDate.size === 0) return
 
-    const recentAlert = await this.notifSvc.hasRecentAlert(routine.id, frequencyToHours(routine.notification_frequency))
-    if (recentAlert) return
+    // 3. Comparar cada data com seu watermark (melhor preço já alertado para ela).
+    const fareType = routine.priority
+    const watermarks = await this.alertStateRepo.getWatermarks(routine.id, fareType)
 
+    const candidates: { flightDate: string; amount: number; fare: LatestFaresByDate }[] = []
+    for (const [date, fare] of bestByDate) {
+      const amount = this.fareValue(fare, routine)!
+      const prev = watermarks.get(date)
+      // Primeira oferta no alvo para a data, ou preço melhor (menor) que o já alertado.
+      if (prev == null || amount < prev) candidates.push({ flightDate: date, amount, fare })
+    }
+    if (candidates.length === 0) return
+
+    // 4. Upsert monotônico atômico → só as datas que o banco confirmou como avançadas
+    //    (à prova de corrida entre ciclos sobrepostos, sem cooldown por tempo).
+    const advanced = await this.alertStateRepo.recordNotified(
+      routine.id,
+      fareType,
+      candidates.map((c) => ({ flightDate: c.flightDate, amount: c.amount, airline: c.fare.airline })),
+    )
+    if (advanced.size === 0) return
+
+    // 5. Ofertas das datas que avançaram, da mais barata para a mais cara.
+    const offers = candidates
+      .filter((c) => advanced.has(c.flightDate))
+      .sort((a, b) => a.amount - b.amount)
+    if (offers.length === 0) return
+
+    // 6. Histórico (% abaixo da média 30d) para a oferta-headline (a mais barata).
+    const headline = offers[0]
     const history = await this.flightFaresRepo.getPriceHistory(
-      bestMatch.airline,
+      headline.fare.airline,
       routine.origin,
       routine.destination,
-      toDateStr(bestMatch.flight_date),
+      headline.flightDate,
     )
 
-    await this.notifSvc.dispatchAlert(routine, bestMatch, null, history)
+    await this.notifSvc.dispatchAlert(routine, offers.map((o) => o.fare), history)
   }
 
-  private findBestMatch(fares: LatestFaresByDate[], routine: RoutineRow): LatestFaresByDate | null {
+  // Melhor tarifa dentro do alvo por data (colapsa companhias: o usuário quer o
+  // melhor preço da data, a companhia é só detalhe exibido no e-mail).
+  private bestInTargetByDate(fares: LatestFaresByDate[], routine: RoutineRow): Map<string, LatestFaresByDate> {
+    const best = new Map<string, LatestFaresByDate>()
+    for (const f of fares) {
+      if (!this.inTarget(f, routine)) continue
+      const v = this.fareValue(f, routine)
+      if (v == null) continue
+      const date = toDateStr(f.flight_date)
+      const cur = best.get(date)
+      if (cur == null || v < this.fareValue(cur, routine)!) best.set(date, f)
+    }
+    return best
+  }
+
+  private inTarget(f: LatestFaresByDate, routine: RoutineRow): boolean {
     const t = 1 + routine.margin
-
-    const candidates = fares.filter((f) => {
-      if (routine.priority === 'cash' && routine.target_cash != null && f.fare_cash != null)
-        return f.fare_cash <= routine.target_cash * t
-      if (routine.priority === 'pts' && routine.target_pts != null && f.fare_pts != null)
-        return f.fare_pts <= routine.target_pts * t
-      if (
-        routine.priority === 'hyb' &&
-        routine.target_hyb_pts != null && routine.target_hyb_cash != null &&
-        f.fare_hyb_pts != null && f.fare_hyb_cash != null
-      )
-        return f.fare_hyb_pts <= routine.target_hyb_pts * t && f.fare_hyb_cash <= routine.target_hyb_cash * t
-      return false
-    })
-
-    if (candidates.length === 0) return null
-
-    return this.bestFare(candidates, routine)
-  }
-
-  private bestFare(fares: LatestFaresByDate[], routine: RoutineRow): LatestFaresByDate | null {
-    const withValue = fares.filter((f) => this.fareValue(f, routine) !== null)
-    if (withValue.length === 0) return null
-    return withValue.reduce((best, curr) => {
-      const bestVal = this.fareValue(best, routine)!
-      const currVal = this.fareValue(curr, routine)!
-      return currVal < bestVal ? curr : best
-    })
+    if (routine.priority === 'cash' && routine.target_cash != null && f.fare_cash != null)
+      return Number(f.fare_cash) <= routine.target_cash * t
+    if (routine.priority === 'pts' && routine.target_pts != null && f.fare_pts != null)
+      return Number(f.fare_pts) <= routine.target_pts * t
+    if (
+      routine.priority === 'hyb' &&
+      routine.target_hyb_pts != null && routine.target_hyb_cash != null &&
+      f.fare_hyb_pts != null && f.fare_hyb_cash != null
+    )
+      return Number(f.fare_hyb_pts) <= routine.target_hyb_pts * t && Number(f.fare_hyb_cash) <= routine.target_hyb_cash * t
+    return false
   }
 
   private fareValue(fare: LatestFaresByDate, routine: RoutineRow): number | null {
     // NUMERIC volta do pg como string — coagir para Number, senão a comparação
-    // do bestFare vira lexicográfica ("1076.00" < "652.00" === true).
+    // vira lexicográfica ("1076.00" < "652.00" === true).
     const raw =
       routine.priority === 'cash' ? fare.fare_cash :
       routine.priority === 'pts'  ? fare.fare_pts :
