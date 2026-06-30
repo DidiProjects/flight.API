@@ -75,6 +75,12 @@ export class EvaluationService implements IEvaluationService {
     const fareType = routine.priority
     const watermarks = await this.alertStateRepo.getWatermarks(routine.id, fareType)
 
+    // Piso de preço da rotina: o menor valor já alertado em QUALQUER data. Datas
+    // novas que entram no alvo com preço igual/pior que esse piso seguem sendo
+    // gravadas (watermark por data intacto), mas NÃO disparam e-mail — só
+    // notificamos quando a rotina bate um novo recorde de preço.
+    const routineFloor = watermarks.size ? Math.min(...watermarks.values()) : Infinity
+
     const candidates: { flightDate: string; amount: number; fare: LatestFaresByDate }[] = []
     for (const [date, fare] of bestByDate) {
       const amount = this.fareValue(fare, routine)!
@@ -99,8 +105,25 @@ export class EvaluationService implements IEvaluationService {
       .sort((a, b) => a.amount - b.amount)
     if (offers.length === 0) return
 
-    // 6. Histórico (% abaixo da média 30d) para a oferta-headline (a mais barata).
+    // 6. Gate de recorde por rotina. As datas que avançaram já foram gravadas no
+    //    watermark por data (passo 4, histórico intacto), mas só mandamos e-mail
+    //    se a oferta mais barata bater o piso da rotina. Assim datas novas no
+    //    mesmo preço deixam de empilhar um e-mail por ciclo.
     const headline = offers[0]
+    if (headline.amount >= routineFloor) {
+      log.info({
+        routineId:      routine.id,
+        routineName:    routine.name,
+        headlineAmount: headline.amount,
+        routineFloor,
+        advancedDates:  offers.map((o) => o.flightDate),
+        type:           'alert',
+        status:         'suppressed-not-record',
+      }, 'evaluation: datas avançaram o watermark mas não bateram o recorde da rotina — e-mail suprimido')
+      return
+    }
+
+    // 7. Histórico (% abaixo da média 30d) para a oferta-headline (a mais barata).
     const history = await this.flightFaresRepo.getPriceHistory(
       headline.fare.airline,
       routine.origin,

@@ -247,6 +247,41 @@ describe('EvaluationService', () => {
     expect(fares.map((f) => f.flight_date)).toEqual(['2027-02-25'])
   })
 
+  it('data nova no alvo com preço >= piso da rotina — grava watermark mas suprime o e-mail', async () => {
+    // Cenário do bug: a rotina já alertou 3100 (data 22). Uma data NOVA (25)
+    // entra no alvo com o mesmo/pior preço (3350). Sem o gate de recorde isso
+    // mandava um e-mail por ciclo, todos no mesmo preço, só mudando a data.
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const d25 = makeFare({ flight_date: '2027-02-25', fare_cash: 3350 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([d25])
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2027-02-22', 3100]]))
+
+    await svc.runCycle()
+
+    // O watermark por data é gravado (histórico/monotonicidade intactos)...
+    expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledWith(
+      routine.id, 'cash', [{ flightDate: '2027-02-25', amount: 3350, airline: 'azul' }],
+    )
+    // ...mas nenhum e-mail é enviado, pois 3350 não bate o piso 3100.
+    expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+  })
+
+  it('data nova mais barata que o piso da rotina — dispara (novo recorde)', async () => {
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const d25 = makeFare({ flight_date: '2027-02-25', fare_cash: 3000 })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([d25])
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2027-02-22', 3100]]))
+
+    await svc.runCycle()
+
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
+    expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, [d25], expect.anything())
+  })
+
   it('corrida — recordNotified devolve vazio (banco cortou) — não dispara', async () => {
     const routine = makeRoutine({ target_cash: 4000, margin: 0 })
     const fare    = makeFare({ flight_date: '2026-08-15', fare_cash: 3100 })
