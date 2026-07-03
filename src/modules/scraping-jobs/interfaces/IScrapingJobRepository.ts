@@ -34,6 +34,7 @@ export interface IScrapingJobRepository {
   expireOldJobs(): Promise<number>
   updatePriorities(): Promise<void>
   claimNextJob(airline: string): Promise<ScrapingJobRow | null>
+  claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null>
   countInFlight(): Promise<number>
   deferJob(id: string, nextRunAt: Date): Promise<void>
   markRunning(id: string, requestId: string): Promise<void>

@@ -163,6 +163,30 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rows[0] ?? null
   }
 
+  async claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null> {
+    const { rows } = await this.db.query<ScrapingJobRow>(`
+      UPDATE scraping_jobs
+      SET status = 'running', running_since = NOW(), started_at = NULL, updated_at = NOW()
+      WHERE id = (
+        SELECT sj.id FROM scraping_jobs sj
+        JOIN routines r ON r.id = $1
+        JOIN routine_airlines ra ON ra.routine_id = r.id AND ra.airline = sj.airline
+        WHERE sj.origin = r.origin
+          AND sj.destination = r.destination
+          AND sj.flight_date BETWEEN r.outbound_start AND r.outbound_end
+          AND sj.status IN ('pending', 'failed', 'success')
+          AND sj.orphaned_at IS NULL
+          AND sj.next_run_at <= NOW()
+          AND sj.retry_count < sj.max_retries
+        ORDER BY sj.priority DESC, sj.next_run_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `, [routineId])
+    return rows[0] ?? null
+  }
+
   async countInFlight(): Promise<number> {
     const { rows } = await this.db.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM scraping_jobs WHERE status = 'running'`,

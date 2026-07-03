@@ -127,8 +127,21 @@ export class SchedulerService implements ISchedulerService {
   async dispatchOne(routineId: string): Promise<void> {
     log.info({ routineId }, 'dispatchOne: manual dispatch requested')
     await this.scrapingJobRepo.upsertFromRoutine(routineId)
-    // Disparo manual despacha apenas um job por companhia.
-    await this.dispatchForAirlines(1)
+
+    // Disparo manual é direcionado à rota da rotina e cobre todas as datas
+    // elegíveis (até o teto global de in-flight). Por ser uma ação explícita do
+    // admin, ignora o circuit breaker por companhia; a primeira falha real
+    // (busy/error) interrompe o burst, evitando martelar uma companhia quebrada.
+    const cap = this.env.SCRAPE_MAX_IN_FLIGHT
+    let dispatched = 0
+    while (await this.scrapingJobRepo.countInFlight() < cap) {
+      const job = await this.scrapingJobRepo.claimNextJobForRoutine(routineId)
+      if (!job) break
+      const result = await this.dispatchClaimedJob(job)
+      if (result !== 'dispatched') break
+      dispatched++
+    }
+    log.info({ routineId, dispatched }, 'dispatchOne: targeted dispatch done')
   }
 
   // ---------------------------------------------------------------------------
@@ -207,7 +220,10 @@ export class SchedulerService implements ISchedulerService {
   private async dispatchNextJob(airline: string): Promise<'dispatched' | 'empty' | 'busy' | 'error'> {
     const job = await this.scrapingJobRepo.claimNextJob(airline)
     if (!job) return 'empty'
+    return this.dispatchClaimedJob(job)
+  }
 
+  private async dispatchClaimedJob(job: ScrapingJobRow): Promise<'dispatched' | 'busy' | 'error'> {
     const requestId = randomUUID()
     const flightDate = typeof job.flight_date === 'string'
       ? job.flight_date.slice(0, 10)
@@ -243,16 +259,16 @@ export class SchedulerService implements ISchedulerService {
         return 'busy'
       }
       // Falha real de dispatch: registra a tentativa e aplica backoff/dead.
-      this.recordFailure(airline)
+      this.recordFailure(job.airline)
       await this.analysisRunsRepo.insertRunning(runData)
       if (job.retry_count + 1 >= job.max_retries) {
         await this.scrapingJobRepo.markDead(job.id, String(err))
         await this.analysisRunsRepo.markFinished(requestId, { status: 'dead', errorMessage: String(err) })
-        log.error({ jobId: job.id, airline, err }, 'scraping_job_dead: max retries reached on dispatch')
+        log.error({ jobId: job.id, airline: job.airline, err }, 'scraping_job_dead: max retries reached on dispatch')
       } else {
         await this.scrapingJobRepo.markFailed(job.id, String(err), calcBackoffNextRunAt(job.retry_count))
         await this.analysisRunsRepo.markFinished(requestId, { status: 'failed', errorMessage: String(err) })
-        log.error({ jobId: job.id, airline, err }, 'scraping.API request failed')
+        log.error({ jobId: job.id, airline: job.airline, err }, 'scraping.API request failed')
       }
       return 'error'
     }
@@ -260,7 +276,7 @@ export class SchedulerService implements ISchedulerService {
     // 202 aceito: só agora o job "existe" para o scraper — amarra request_id e run.
     await this.scrapingJobRepo.markRunning(job.id, requestId)
     await this.analysisRunsRepo.insertRunning(runData)
-    this.recordSuccess(airline)
+    this.recordSuccess(job.airline)
     log.info({
       jobId: job.id, airline: job.airline, origin: job.origin,
       destination: job.destination, flight_date: job.flight_date, requestId,
