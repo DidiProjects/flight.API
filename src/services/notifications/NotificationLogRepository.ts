@@ -44,14 +44,14 @@ export class NotificationLogRepository implements INotificationLogRepository {
     return rows[0].exists
   }
 
-  async hasAlertSinceHours(routineId: string, hours: number): Promise<boolean> {
+  async hasNotificationSinceHours(routineId: string, type: string, hours: number): Promise<boolean> {
     const { rows } = await this.db.query<{ exists: boolean }>(
       `SELECT EXISTS (
          SELECT 1 FROM notification_log
-         WHERE routine_id = $1 AND type = 'alert'
-           AND sent_at > NOW() - ($2 || ' hours')::interval
+         WHERE routine_id = $1 AND type = $2
+           AND sent_at > NOW() - ($3 || ' hours')::interval
        ) AS exists`,
-      [routineId, hours],
+      [routineId, type, hours],
     )
     return rows[0].exists
   }

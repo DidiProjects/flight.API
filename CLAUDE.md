@@ -2,8 +2,11 @@
 
 ## Arquitetura
 
+REST API Fastify que orquestra o monitoramento de voos. Visão completa (scheduler, webhook, avaliação, env vars) em `docs/architecture.md`.
+
+- **Scheduler:** deriva `scraping_jobs` (1 por `airline × origin × destination × flight_date`) e registra cada despacho em `analysis_runs`. Não é "por rotina". Detalhes dos loops em `docs/architecture.md`.
 - **Deploy:** GitHub Actions → build Docker image local → push via Tailscale SSH → `docker run` no servidor Linux
-- **Banco:** gerenciado pelo projeto `flight.DB` (schema + seed via init-scripts do PostgreSQL)
+- **Banco:** gerenciado pelo projeto `flight.DB` (schema + seed via init-scripts do PostgreSQL); tabelas `flight_fares`, `flight_fares_daily`, `scraping_jobs`, `analysis_runs`
 - **Rede Docker:** `flight-network` conecta `flight-api` e `flight-db`
 
 ## Início de cada sessão

@@ -1,91 +1,27 @@
-import { BestFareRow, RoutineRow } from '../../types'
+import { RoutineRow } from '../../types'
 import { INotificationsService } from './interfaces/INotificationsService'
 import { INotificationLogRepository } from './interfaces/INotificationLogRepository'
 import { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
-import { IBestFaresRepository } from '../../modules/scrape/interfaces/IBestFaresRepository'
+import { IFlightFaresRepository, LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { IUnsubscribeTokensRepository } from '../../modules/unsubscribe/interfaces/IUnsubscribeTokensRepository'
 import { IUsersRepository } from '../../modules/users/interfaces/IUsersRepository'
 import { IEmailService, AirlineOfferPair, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
-import { LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
+import { toDateStr } from '../evaluation/EvaluationService'
 
 const log = logger.child({ service: 'notifications' })
-
-type AlertType = 'alert' | 'best_of_day' | 'scheduled'
-type QualifyingAirline = { outbound: BestFareRow; return: BestFareRow | null }
 
 export class NotificationsService implements INotificationsService {
   constructor(
     private readonly usersRepo: IUsersRepository,
     private readonly routinesRepo: IRoutinesRepository,
-    private readonly bestFaresRepo: IBestFaresRepository,
+    private readonly flightFaresRepo: IFlightFaresRepository,
     private readonly notifLogRepo: INotificationLogRepository,
     private readonly unsubTokensRepo: IUnsubscribeTokensRepository,
     private readonly emailSvc: IEmailService,
     private readonly env: Env,
   ) {}
-
-  async evaluate(routine: RoutineRow): Promise<void> {
-    const ctx = {
-      routineId: routine.id,
-      userId: routine.user_id,
-      routineName: routine.name,
-      airlines: routine.airlines,
-      origin: routine.origin,
-      destination: routine.destination,
-      modes: routine.notification_modes,
-      priority: routine.priority,
-    }
-
-    if (!routine.notification_modes.includes('target')) {
-      log.debug(ctx, 'evaluate skipped — no "target" mode (handled by scheduled job)')
-      return
-    }
-
-    const [bestOut, bestRet] = await Promise.all([
-      this.bestFaresRepo.getBestPerAirline(routine.id, false, routine.priority),
-      routine.return_start
-        ? this.bestFaresRepo.getBestPerAirline(routine.id, true, routine.priority)
-        : Promise.resolve([]),
-    ])
-
-    if (bestOut.length === 0) {
-      await this.checkStale(routine.id, routine.priority, ctx)
-      log.warn(ctx, 'no notification — no best fares found')
-      return
-    }
-
-    const retByAirline = Object.fromEntries(bestRet.map((b) => [b.airline, b]))
-
-    const qualifying: QualifyingAirline[] = []
-    for (const out of bestOut) {
-      const ret = retByAirline[out.airline] ?? null
-      if (!this.fareWithinTarget(out, routine)) continue
-      const lastLog = await this.notifLogRepo.findLast(routine.id, routine.priority, out.airline)
-      if (!this.improved(out, ret, lastLog)) {
-        log.info({ ...ctx, airline: out.airline, bestOutAmount: out.amount, lastOutAmount: lastLog?.outbound_amount ?? null }, 'airline skipped — not improved')
-        continue
-      }
-      qualifying.push({ outbound: out, return: ret })
-    }
-
-    if (qualifying.length === 0) {
-      log.info(ctx, 'no notification — no qualifying airlines')
-      return
-    }
-
-    if (routine.notification_frequency !== 'hourly') {
-      const since = this.frequencyWindowStart(routine.notification_frequency)
-      const alreadySent = await this.notifLogRepo.hasAlertSince(routine.id, routine.priority, since)
-      if (alreadySent) {
-        log.info({ ...ctx, frequency: routine.notification_frequency, since, status: 'skipped' }, 'no notification — frequency limit reached for this period')
-        return
-      }
-    }
-
-    await this.dispatch(routine, qualifying, 'alert')
-  }
 
   async sendScheduled(): Promise<void> {
     const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
@@ -111,28 +47,35 @@ export class NotificationsService implements INotificationsService {
       }
 
       const sections: DailyBestRoutineSection[] = []
-      const logEntries: Array<{ routine: RoutineRow; qualifying: QualifyingAirline[] }> = []
+      const logEntries: Array<{ routine: RoutineRow; bestFare: LatestFaresByDate }> = []
 
       for (const routine of userRoutines) {
-        const [bestOut, bestRet] = await Promise.all([
-          this.bestFaresRepo.getBestPerAirline(routine.id, false, routine.priority),
-          routine.return_start
-            ? this.bestFaresRepo.getBestPerAirline(routine.id, true, routine.priority)
-            : Promise.resolve([]),
-        ])
-
-        if (bestOut.length === 0) {
-          const ctx = { routineId: routine.id, userId }
-          await this.checkStale(routine.id, routine.priority, ctx)
-          log.warn({ routineId: routine.id, userId, status: 'skipped' }, 'scheduled routine skipped — no best fares found')
+        // Catch-up usa match `<=` no horário, então deduplicamos aqui: se já houve
+        // um envio 'scheduled' nas últimas 12h, não reenvia (frequência é diária).
+        if (await this.notifLogRepo.hasNotificationSinceHours(routine.id, 'scheduled', 12)) {
           continue
         }
 
-        const retByAirline = Object.fromEntries(bestRet.map((b) => [b.airline, b]))
-        const qualifying: QualifyingAirline[] = bestOut.map((out) => ({
-          outbound: out,
-          return: retByAirline[out.airline] ?? null,
-        }))
+        const allOutbound: LatestFaresByDate[] = []
+
+        for (const airline of routine.airlines) {
+          const outbound = await this.flightFaresRepo.getLatestByRoute(
+            airline,
+            routine.origin,
+            routine.destination,
+            toDateStr(routine.outbound_start),
+            toDateStr(routine.outbound_end),
+          )
+          allOutbound.push(...outbound)
+        }
+
+        if (allOutbound.length === 0) {
+          log.warn({ routineId: routine.id, userId, status: 'skipped' }, 'scheduled routine skipped — no fares found')
+          continue
+        }
+
+        const bestOutbound = this.bestFare(allOutbound, routine.priority)
+        if (!bestOutbound) continue
 
         const unsubToken = await this.unsubTokensRepo.create(routine.id, owner.email, true)
 
@@ -142,16 +85,16 @@ export class NotificationsService implements INotificationsService {
           destination:  routine.destination,
           passengers:   routine.passengers,
           fareType:     routine.priority,
-          airlineOffers: qualifying.map((q) => ({
-            airline:  q.outbound.offer.airline,
-            currency: q.outbound.currency,
-            outbound: this.toBlock(q.outbound),
-            return:   q.return ? this.toBlock(q.return) : null,
-          })),
+          airlineOffers: [{
+            airline:  bestOutbound.airline,
+            currency: bestOutbound.currency ?? routine.currency ?? 'BRL',
+            outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
+            return:   null,
+          }],
           unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
         })
 
-        logEntries.push({ routine, qualifying })
+        logEntries.push({ routine, bestFare: bestOutbound })
       }
 
       if (sections.length === 0) {
@@ -161,45 +104,38 @@ export class NotificationsService implements INotificationsService {
 
       await this.emailSvc.sendDailyBest({ primaryEmail: owner.email, routines: sections })
 
-      for (const { routine, qualifying } of logEntries) {
-        for (const q of qualifying) {
-          const airline = q.outbound.offer.airline
-          log.info({
-            routineId:      routine.id,
-            userId,
-            routineName:    routine.name,
-            airline,
-            type:           'scheduled',
-            outboundAmount: q.outbound.amount,
-            returnAmount:   q.return?.amount ?? null,
-            status:         'success',
-          }, 'scheduled notification dispatched')
+      for (const { routine, bestFare } of logEntries) {
+        log.info({
+          routineId:      routine.id,
+          userId,
+          routineName:    routine.name,
+          airline:        bestFare.airline,
+          type:           'scheduled',
+          outboundAmount: this.fareAmount(bestFare, routine.priority),
+          status:         'success',
+        }, 'scheduled notification dispatched')
 
-          await this.notifLogRepo.insert({
-            routineId:      routine.id,
-            airline,
-            type:           'scheduled',
-            fareType:       routine.priority,
-            outboundAmount: q.outbound.amount,
-            returnAmount:   q.return?.amount ?? null,
-            emailTo:        owner.email,
-            emailCc:        null,
-          })
-        }
+        await this.notifLogRepo.insert({
+          routineId:      routine.id,
+          airline:        bestFare.airline,
+          type:           'scheduled',
+          fareType:       routine.priority,
+          outboundAmount: this.fareAmount(bestFare, routine.priority),
+          returnAmount:   null,
+          emailTo:        owner.email,
+          emailCc:        null,
+        })
       }
     }
   }
 
-  async hasRecentAlert(routineId: string, hours: number): Promise<boolean> {
-    return this.notifLogRepo.hasAlertSinceHours(routineId, hours)
-  }
-
   async dispatchAlert(
     routine: RoutineRow,
-    outboundFare: LatestFaresByDate,
-    returnFare: LatestFaresByDate | null,
+    outboundFares: LatestFaresByDate[],
     history: PriceHistory,
   ): Promise<void> {
+    if (outboundFares.length === 0) return
+
     const owner = await this.usersRepo.findById(routine.user_id)
     if (!owner) {
       log.warn({ routineId: routine.id, userId: routine.user_id }, 'dispatchAlert skipped — user not found')
@@ -215,9 +151,83 @@ export class NotificationsService implements INotificationsService {
       })),
     )
 
-    const fareToBlock = (fare: LatestFaresByDate, origin: string, destination: string): OfferBlock => ({
+    // Headline = oferta mais barata; empate de preço → tarifa coletada mais
+    // recentemente (scraped_at). O histórico (% abaixo da média) é dela.
+    const headline = outboundFares.reduce((best, f) => {
+      const fv = this.fareAmount(f, routine.priority) ?? Infinity
+      const bv = this.fareAmount(best, routine.priority) ?? Infinity
+      if (fv < bv) return f
+      if (fv === bv && new Date(f.scraped_at).getTime() > new Date(best.scraped_at).getTime()) return f
+      return best
+    })
+    const historyNote = this.buildHistoryNote(headline, history, routine.priority)
+
+    // Apenas UMA tarifa por rotina no email: a headline. As demais datas que
+    // avançaram já foram gravadas no watermark (target_alert_state) pelo
+    // EvaluationService — só não são exibidas aqui.
+    const airlineOffers: AirlineOfferPair[] = [{
+      airline:  headline.airline,
+      currency: headline.currency ?? routine.currency ?? 'BRL',
+      outbound: this.fareToBlock(headline, routine.origin, routine.destination),
+      return:   null,
+    }]
+
+    await this.emailSvc.sendFlightAlert({
+      primaryEmail:     owner.email,
+      primaryUnsubLink: `${this.env.API_BASE_URL}/unsubscribe/${primaryToken}`,
+      ccRecipients:     ccTokens,
+      subject:          `Oferta dentro do target — ${routine.name}`,
+      routineName:      routine.name,
+      origin:           routine.origin,
+      destination:      routine.destination,
+      airlineOffers,
+      passengers:       routine.passengers,
+      fareType:         routine.priority,
+      historyNote,
+    })
+
+    log.info({
+      routineId:       routine.id,
+      userId:          owner.id,
+      routineName:     routine.name,
+      dates:           outboundFares.map((f) => toDateStr(f.flight_date)),
+      headlineAirline: headline.airline,
+      headlineAmount:  this.fareAmount(headline, routine.priority),
+      avgCash30d:      history.avg_cash_30d,
+      type:            'alert',
+      status:          'success',
+    }, 'evaluation alert dispatched')
+
+    await this.notifLogRepo.insert({
+      routineId:      routine.id,
+      airline:        headline.airline,
+      type:           'alert',
+      fareType:       routine.priority,
+      outboundAmount: this.fareAmount(headline, routine.priority),
+      returnAmount:   null,
+      emailTo:        owner.email,
+      emailCc:        activeCc.map((c) => c.email).join(',') || null,
+    })
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  private bestFare(fares: LatestFaresByDate[], priority: string): LatestFaresByDate | null {
+    const withValue = fares.filter((f) => this.fareAmount(f, priority) !== null)
+    if (withValue.length === 0) return null
+    return withValue.reduce((best, curr) => {
+      const bv = this.fareAmount(best, priority)!
+      const cv = this.fareAmount(curr, priority)!
+      return cv < bv ? curr : best
+    })
+  }
+
+  private fareToBlock(fare: LatestFaresByDate, origin: string, destination: string): OfferBlock {
+    return {
       flightNumber:  '',
-      date:          fare.flight_date,
+      date:          toDateStr(fare.flight_date),
       origin,
       departureTime: fare.departure_time ?? '',
       destination,
@@ -228,211 +238,32 @@ export class NotificationsService implements INotificationsService {
       farePts:       fare.fare_pts,
       fareHybPts:    fare.fare_hyb_pts,
       fareHybCash:   fare.fare_hyb_cash,
-    })
-
-    const historySuffix = this.buildHistorySuffix(outboundFare, history, routine.priority)
-
-    const airlineOffers: AirlineOfferPair[] = [{
-      airline:  routine.airlines[0],
-      currency: routine.currency,
-      outbound: fareToBlock(outboundFare, routine.origin, routine.destination),
-      return:   returnFare ? fareToBlock(returnFare, routine.destination, routine.origin) : null,
-    }]
-
-    await this.emailSvc.sendFlightAlert({
-      primaryEmail:     owner.email,
-      primaryUnsubLink: `${this.env.API_BASE_URL}/unsubscribe/${primaryToken}`,
-      ccRecipients:     ccTokens,
-      subject:          `Oferta dentro do target — ${routine.name}${historySuffix}`,
-      routineName:      routine.name,
-      origin:           routine.origin,
-      destination:      routine.destination,
-      airlineOffers,
-      passengers:       routine.passengers,
-      fareType:         routine.priority,
-    })
-
-    log.info({
-      routineId:    routine.id,
-      userId:       owner.id,
-      routineName:  routine.name,
-      airline:      routine.airlines[0],
-      flightDate:   outboundFare.flight_date,
-      fareCash:     outboundFare.fare_cash,
-      farePts:      outboundFare.fare_pts,
-      avgCash30d:   history.avg_cash_30d,
-      type:         'alert',
-      status:       'success',
-    }, 'evaluation alert dispatched')
-
-    await this.notifLogRepo.insert({
-      routineId:      routine.id,
-      airline:        routine.airlines[0],
-      type:           'alert',
-      fareType:       routine.priority,
-      outboundAmount: this.fareAmount(outboundFare, routine.priority),
-      returnAmount:   returnFare ? this.fareAmount(returnFare, routine.priority) : null,
-      emailTo:        owner.email,
-      emailCc:        activeCc.map((c) => c.email).join(',') || null,
-    })
+    }
   }
 
   private fareAmount(fare: LatestFaresByDate, priority: string): number | null {
-    if (priority === 'cash') return fare.fare_cash
-    if (priority === 'pts')  return fare.fare_pts
-    if (priority === 'hyb')  return fare.fare_hyb_pts
-    return null
+    // NUMERIC volta do pg como string — coagir para Number, senão a comparação
+    // do bestFare vira lexicográfica ("1076.00" < "652.00" === true).
+    const raw =
+      priority === 'cash' ? fare.fare_cash :
+      priority === 'pts'  ? fare.fare_pts :
+      priority === 'hyb'  ? fare.fare_hyb_pts :
+      null
+    return raw == null ? null : Number(raw)
   }
 
-  private buildHistorySuffix(fare: LatestFaresByDate, history: PriceHistory, priority: string): string {
+  private buildHistoryNote(fare: LatestFaresByDate, history: PriceHistory, priority: string): string | undefined {
     if (priority === 'cash' && fare.fare_cash != null && history.avg_cash_30d != null) {
-      const pct = Math.round(((history.avg_cash_30d - fare.fare_cash) / history.avg_cash_30d) * 100)
-      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+      const avg = Number(history.avg_cash_30d)
+      const pct = Math.round(((avg - fare.fare_cash) / avg) * 100)
+      if (pct > 0) return `${pct}% abaixo da média dos últimos 30 dias`
     }
     if (priority === 'pts' && fare.fare_pts != null && history.avg_pts_30d != null) {
-      const pct = Math.round(((history.avg_pts_30d - fare.fare_pts) / history.avg_pts_30d) * 100)
-      if (pct > 0) return ` — ${pct}% abaixo da média dos últimos 30 dias`
+      const avg = Number(history.avg_pts_30d)
+      const pct = Math.round(((avg - fare.fare_pts) / avg) * 100)
+      if (pct > 0) return `${pct}% abaixo da média dos últimos 30 dias`
     }
-    return ''
+    return undefined
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
-  private async checkStale(routineId: string, fareType: string, ctx: object): Promise<void> {
-    const stale = await this.bestFaresRepo.hasStaleData(routineId, fareType)
-    if (stale) {
-      log.error({ ...ctx, routineId, fareType, status: 'stale' }, 'routine fare data not updated in 4+ hours')
-    }
-  }
-
-  private fareWithinTarget(bestOut: BestFareRow, routine: RoutineRow): boolean {
-    const t = 1 + routine.margin
-    if (routine.priority === 'cash' && routine.target_cash != null)
-      return bestOut.amount <= routine.target_cash * t
-    if (routine.priority === 'pts' && routine.target_pts != null)
-      return bestOut.amount <= routine.target_pts * t
-    if (routine.priority === 'hyb' && routine.target_hyb_pts != null && routine.target_hyb_cash != null)
-      return bestOut.offer.fare_hyb_pts != null &&
-             bestOut.offer.fare_hyb_cash != null &&
-             bestOut.offer.fare_hyb_pts  <= routine.target_hyb_pts  * t &&
-             bestOut.offer.fare_hyb_cash <= routine.target_hyb_cash * t
-    return false
-  }
-
-  private frequencyWindowStart(frequency: string): Date {
-    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
-    if (frequency === 'daily')   return new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    if (frequency === 'monthly') return new Date(now.getFullYear(), now.getMonth(), 1)
-    return new Date(0)
-  }
-
-  private improved(
-    out: BestFareRow,
-    ret: BestFareRow | null,
-    last: { outbound_amount: number | null; return_amount: number | null } | null,
-  ): boolean {
-    if (!last) return true
-    const outBetter = last.outbound_amount != null ? out.amount < last.outbound_amount : true
-    const retBetter = ret != null
-      ? (last.return_amount != null ? ret.amount < last.return_amount : true)
-      : false
-    return outBetter || retBetter
-  }
-
-  private async dispatch(
-    routine: RoutineRow,
-    qualifying: QualifyingAirline[],
-    type: AlertType,
-  ): Promise<void> {
-    const owner = await this.usersRepo.findById(routine.user_id)
-    if (!owner) {
-      log.warn({ routineId: routine.id, userId: routine.user_id, airlines: routine.airlines, type, status: 'error' }, 'dispatch skipped — user not found')
-      return
-    }
-
-    const labels: Record<AlertType, string> = {
-      alert:     `Oferta dentro do target — ${routine.name}`,
-      best_of_day: `Melhor preço do dia — ${routine.name}`,
-      scheduled: `Resumo do período — ${routine.name}`,
-    }
-
-    const activeCc = routine.cc_emails.filter((c) => c.subscribed)
-    const primaryToken = await this.unsubTokensRepo.create(routine.id, owner.email, true)
-    const ccTokens = await Promise.all(
-      activeCc.map(async (c) => ({
-        email: c.email,
-        unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${await this.unsubTokensRepo.create(routine.id, c.email, false)}`,
-      })),
-    )
-
-    const airlineOffers: AirlineOfferPair[] = qualifying.map((q) => ({
-      airline:  q.outbound.offer.airline,
-      currency: q.outbound.currency,
-      outbound: this.toBlock(q.outbound),
-      return:   q.return ? this.toBlock(q.return) : null,
-    }))
-
-    await this.emailSvc.sendFlightAlert({
-      primaryEmail:     owner.email,
-      primaryUnsubLink: `${this.env.API_BASE_URL}/unsubscribe/${primaryToken}`,
-      ccRecipients:     ccTokens,
-      subject:          labels[type],
-      routineName:      routine.name,
-      origin:           routine.origin,
-      destination:      routine.destination,
-      airlineOffers,
-      passengers:       routine.passengers,
-      fareType:         routine.priority,
-    })
-
-    for (const q of qualifying) {
-      const airline = q.outbound.offer.airline
-      log.info({
-        routineId:      routine.id,
-        userId:         owner.id,
-        routineName:    routine.name,
-        airline,
-        origin:         routine.origin,
-        destination:    routine.destination,
-        type,
-        priority:       routine.priority,
-        outboundAmount: q.outbound.amount,
-        returnAmount:   q.return?.amount ?? null,
-        currency:       q.outbound.currency,
-        emailTo:        owner.email,
-        ccCount:        activeCc.length,
-        status:         'success',
-      }, 'notification dispatched')
-
-      await this.notifLogRepo.insert({
-        routineId:      routine.id,
-        airline,
-        type,
-        fareType:       routine.priority,
-        outboundAmount: q.outbound.amount,
-        returnAmount:   q.return?.amount ?? null,
-        emailTo:        owner.email,
-        emailCc:        activeCc.map((c) => c.email).join(',') || null,
-      })
-    }
-  }
-
-  private toBlock(bf: BestFareRow): OfferBlock {
-    return {
-      flightNumber:  bf.offer.flight_number,
-      date:          bf.offer.date,
-      origin:        bf.offer.origin_iata,
-      departureTime: bf.offer.origin_timestamp,
-      destination:   bf.offer.destination_iata,
-      arrivalTime:   bf.offer.destination_timestamp,
-      durationMin:   bf.offer.duration_min,
-      stops:         bf.offer.stops,
-      fareCash:      bf.offer.fare_cash,
-      farePts:       bf.offer.fare_pts,
-      fareHybPts:    bf.offer.fare_hyb_pts,
-      fareHybCash:   bf.offer.fare_hyb_cash,
-    }
-  }
 }

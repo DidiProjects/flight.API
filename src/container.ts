@@ -7,66 +7,84 @@ import { RefreshTokenRepository }     from './modules/auth/RefreshTokenRepositor
 import { UsersRepository }            from './modules/users/UsersRepository'
 import { AirlinesRepository }         from './modules/airlines/AirlinesRepository'
 import { RoutinesRepository }         from './modules/routines/RoutinesRepository'
-import { FlightOffersRepository }     from './modules/scrape/FlightOffersRepository'
-import { BestFaresRepository }        from './modules/scrape/BestFaresRepository'
 import { UnsubscribeTokensRepository } from './modules/unsubscribe/UnsubscribeTokensRepository'
 import { NotificationLogRepository }  from './services/notifications/NotificationLogRepository'
 import { AirportsRepository }         from './modules/airports/AirportsRepository'
 import { ScrapingJobRepository }      from './modules/scraping-jobs/ScrapingJobRepository'
 import { FlightFaresRepository }      from './modules/flight-fares/FlightFaresRepository'
+import { AnalysisRunsRepository }     from './modules/analysis-runs/AnalysisRunsRepository'
+import { TargetAlertStateRepository } from './modules/target-alert-state/TargetAlertStateRepository'
 
 // Services
+import { HttpScraperClient }    from './services/scraper-client/HttpScraperClient'
+import { FlightFaresService }   from './modules/flight-fares/FlightFaresService'
 import { EmailService }         from './services/email/EmailService'
 import { NotificationsService } from './services/notifications/NotificationsService'
 import { AuthService }          from './modules/auth/AuthService'
 import { UsersService }         from './modules/users/UsersService'
 import { AirlinesService }      from './modules/airlines/AirlinesService'
 import { RoutinesService }      from './modules/routines/RoutinesService'
-import { BestFaresService }     from './modules/scrape/BestFaresService'
 import { ScrapeService }        from './modules/scrape/ScrapeService'
 import { UnsubscribeService }   from './modules/unsubscribe/UnsubscribeService'
 import { SchedulerService }     from './services/scheduler/SchedulerService'
 import { AirportsService }      from './modules/airports/AirportsService'
 import { EvaluationService }    from './services/evaluation/EvaluationService'
+import { AnalysisRunsService }  from './modules/analysis-runs/AnalysisRunsService'
+import { AdminService }         from './modules/admin/AdminService'
+
+// Realtime (hub ← workers WS, SSE → admin)
+import { HubBus }               from './realtime/hubBus'
+import { WorkerGateway }        from './realtime/workerGateway'
+import { SseHub }               from './realtime/sseHub'
+import { RealtimePersistence }  from './realtime/realtimePersistence'
 
 // ── Repositories ──────────────────────────────────────────────────────────────
-const authRepo          = new AuthRepository(pool)
-const refreshTokenRepo  = new RefreshTokenRepository(pool)
-const usersRepo         = new UsersRepository(pool)
-const airlinesRepo      = new AirlinesRepository(pool)
-const routinesRepo      = new RoutinesRepository(pool)
-const offersRepo        = new FlightOffersRepository(pool)
-const bestFaresRepo     = new BestFaresRepository(pool)
-const unsubTokensRepo   = new UnsubscribeTokensRepository(pool)
-const notifLogRepo      = new NotificationLogRepository(pool)
-const airportsRepo      = new AirportsRepository(pool)
-const scrapingJobRepo   = new ScrapingJobRepository(pool)
-const flightFaresRepo   = new FlightFaresRepository(pool)
+const authRepo         = new AuthRepository(pool)
+const refreshTokenRepo = new RefreshTokenRepository(pool)
+const usersRepo        = new UsersRepository(pool)
+const airlinesRepo     = new AirlinesRepository(pool)
+const routinesRepo     = new RoutinesRepository(pool)
+const unsubTokensRepo  = new UnsubscribeTokensRepository(pool)
+const notifLogRepo     = new NotificationLogRepository(pool)
+const airportsRepo     = new AirportsRepository(pool)
+const scrapingJobRepo  = new ScrapingJobRepository(pool)
+const flightFaresRepo  = new FlightFaresRepository(pool)
+const analysisRunsRepo = new AnalysisRunsRepository(pool)
+const alertStateRepo   = new TargetAlertStateRepository(pool)
+
+// ── Realtime ────────────────────────────────────────────────────────────────
+const hubBus              = new HubBus()
+const workerGateway       = new WorkerGateway(hubBus)
+const sseHub              = new SseHub(hubBus, scrapingJobRepo)
+const realtimePersistence = new RealtimePersistence(hubBus, analysisRunsRepo, scrapingJobRepo)
 
 // ── Services ──────────────────────────────────────────────────────────────────
+const scraperClient = new HttpScraperClient(env)
+const flightFaresSvc = new FlightFaresService(flightFaresRepo)
 const emailSvc = new EmailService(env)
 
 const notifSvc = new NotificationsService(
   usersRepo,
   routinesRepo,
-  bestFaresRepo,
+  flightFaresRepo,
   notifLogRepo,
   unsubTokensRepo,
   emailSvc,
   env,
 )
 
-const evaluationSvc = new EvaluationService(routinesRepo, flightFaresRepo, notifSvc)
+const evaluationSvc = new EvaluationService(routinesRepo, flightFaresRepo, alertStateRepo, notifSvc)
 
-const authSvc       = new AuthService(usersRepo, authRepo, refreshTokenRepo, emailSvc)
-const usersSvc      = new UsersService(usersRepo, emailSvc)
-const airlinesSvc   = new AirlinesService(airlinesRepo, routinesRepo)
-const routinesSvc   = new RoutinesService(routinesRepo, airlinesRepo)
-const bestFaresSvc  = new BestFaresService(bestFaresRepo, routinesRepo)
-const scrapeSvc     = new ScrapeService(scrapingJobRepo, flightFaresRepo)
-const unsubSvc      = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
-const schedulerSvc  = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env)
-const airportsSvc   = new AirportsService(airportsRepo, airlinesRepo)
+const authSvc      = new AuthService(usersRepo, authRepo, refreshTokenRepo, emailSvc)
+const usersSvc     = new UsersService(usersRepo, emailSvc)
+const airlinesSvc  = new AirlinesService(airlinesRepo, routinesRepo)
+const routinesSvc  = new RoutinesService(routinesRepo, airlinesRepo, airportsRepo, flightFaresRepo)
+const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo)
+const unsubSvc     = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
+const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo, scraperClient, workerGateway, airportsRepo)
+const airportsSvc  = new AirportsService(airportsRepo, airlinesRepo)
+const analysisRunsSvc = new AnalysisRunsService(routinesRepo, analysisRunsRepo)
+const adminSvc        = new AdminService(scrapingJobRepo, analysisRunsRepo, workerGateway)
 
 export const container = {
   airlinesSvc,
@@ -74,9 +92,16 @@ export const container = {
   authSvc,
   usersSvc,
   routinesSvc,
-  bestFaresSvc,
   scrapeSvc,
   unsubSvc,
   schedulerSvc,
-  flightFaresRepo,
+  flightFaresSvc,
+  analysisRunsSvc,
+  adminSvc,
+  scrapingJobRepo,
+  analysisRunsRepo,
+  hubBus,
+  workerGateway,
+  sseHub,
+  realtimePersistence,
 } as const

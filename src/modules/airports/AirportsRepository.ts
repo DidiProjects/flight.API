@@ -65,6 +65,32 @@ export class AirportsRepository implements IAirportsRepository {
     return { inserted, updated, unchanged }
   }
 
+  async hasAirport(airlineCode: string, airportCode: string): Promise<boolean> {
+    const { rows } = await this.db.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM airports WHERE airline_code = $1 AND airport_code = $2
+       ) AS exists`,
+      [airlineCode, airportCode.toUpperCase()],
+    )
+    return rows[0].exists
+  }
+
+  async getCurrency(airlineCode: string, airportCode: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ currency: string | null }>(
+      `SELECT currency FROM airports WHERE airline_code = $1 AND airport_code = $2`,
+      [airlineCode, airportCode.toUpperCase()],
+    )
+    return rows[0]?.currency ?? null
+  }
+
+  async getCountryCode(airportCode: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ country_code: string | null }>(
+      `SELECT country_code FROM airports WHERE airport_code = $1 AND country_code IS NOT NULL LIMIT 1`,
+      [airportCode.toUpperCase()],
+    )
+    return rows[0]?.country_code ?? null
+  }
+
   async listByAirline(airlineCode: string): Promise<AirportRow[]> {
     const { rows } = await this.db.query<AirportRow>(
       `SELECT id, airline_code, airport_code, name, timezone, country_code, country_name, city, region, currency, updated_at

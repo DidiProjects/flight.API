@@ -4,7 +4,7 @@ import { IRoutinesRepository, CreateRoutineData } from './interfaces/IRoutinesRe
 
 const ROUTINE_COLS = `
   r.id, r.user_id, r.name, r.origin, r.destination,
-  r.outbound_start, r.outbound_end, r.return_start, r.return_end, r.passengers,
+  r.outbound_start, r.outbound_end, r.passengers,
   r.currency, r.target_cash, r.target_pts, r.target_hyb_pts, r.target_hyb_cash,
   r.margin, r.priority, r.notification_modes, r.notification_frequency, r.scheduled_time,
   r.cc_emails, r.is_active, r.created_at, r.updated_at`
@@ -82,9 +82,12 @@ export class RoutinesRepository implements IRoutinesRepository {
 
   async findActiveForScheduled(currentTime: string): Promise<RoutineRow[]> {
     const { rows } = await this.db.query<RoutineRow>(
+      // <= (e não =) para dar catch-up: se o tick do minuto exato foi perdido,
+      // a rotina ainda é pega num tick posterior do mesmo dia. A deduplicação
+      // (já enviado hoje) fica a cargo do NotificationsService.
       `${selectWithAirlines(`WHERE r.is_active = true
          AND 'scheduled' = ANY(r.notification_modes)
-         AND to_char(r.scheduled_time, 'HH24:MI') = $1`)}`,
+         AND to_char(r.scheduled_time, 'HH24:MI') <= $1`)}`,
       [currentTime],
     )
     return rows
@@ -98,16 +101,16 @@ export class RoutinesRepository implements IRoutinesRepository {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO routines (
            user_id, name, origin, destination,
-           outbound_start, outbound_end, return_start, return_end, passengers,
+           outbound_start, outbound_end, passengers,
            currency, target_cash, target_pts, target_hyb_pts, target_hyb_cash,
            margin, priority, notification_modes, notification_frequency, scheduled_time, cc_emails, is_active
          ) VALUES (
-           $1,$2,$3,$4, $5,$6,$7,$8,$9,
-           $10,$11,$12,$13,$14, $15,$16,$17,$18,$19,$20,$21
+           $1,$2,$3,$4, $5,$6,$7,
+           $8,$9,$10,$11,$12, $13,$14,$15,$16,$17,$18,$19
          ) RETURNING id`,
         [
           data.userId, data.name, data.origin, data.destination,
-          data.outboundStart, data.outboundEnd, data.returnStart ?? null, data.returnEnd ?? null, data.passengers,
+          data.outboundStart, data.outboundEnd, data.passengers,
           data.currency, data.targetCash ?? null, data.targetPts ?? null, data.targetHybPts ?? null, data.targetHybCash ?? null,
           data.margin, data.priority, data.notificationModes, data.notificationFrequency,
           data.scheduledTime ?? null, ccJson, data.isActive ?? true,
@@ -136,7 +139,7 @@ export class RoutinesRepository implements IRoutinesRepository {
     const colMap: Record<string, string> = {
       name: 'name', origin: 'origin', destination: 'destination',
       outboundStart: 'outbound_start', outboundEnd: 'outbound_end',
-      returnStart: 'return_start', returnEnd: 'return_end', passengers: 'passengers',
+      passengers: 'passengers',
       currency: 'currency',
       targetCash: 'target_cash', targetPts: 'target_pts',
       targetHybPts: 'target_hyb_pts', targetHybCash: 'target_hyb_cash',
@@ -213,7 +216,7 @@ export class RoutinesRepository implements IRoutinesRepository {
     const colMap: Record<string, string> = {
       name: 'name', origin: 'origin', destination: 'destination',
       outboundStart: 'outbound_start', outboundEnd: 'outbound_end',
-      returnStart: 'return_start', returnEnd: 'return_end', passengers: 'passengers',
+      passengers: 'passengers',
       currency: 'currency',
       targetCash: 'target_cash', targetPts: 'target_pts',
       targetHybPts: 'target_hyb_pts', targetHybCash: 'target_hyb_cash',
@@ -339,8 +342,7 @@ export class RoutinesRepository implements IRoutinesRepository {
     const { rowCount } = await this.db.query(
       `UPDATE routines SET is_active = false, updated_at = now()
        WHERE is_active = true
-         AND outbound_end < CURRENT_DATE
-         AND (return_end IS NULL OR return_end < CURRENT_DATE)`,
+         AND outbound_end < CURRENT_DATE`,
     )
     return rowCount ?? 0
   }

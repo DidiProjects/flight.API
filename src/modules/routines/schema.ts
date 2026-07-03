@@ -3,11 +3,6 @@ import { z } from 'zod'
 const iata = z.string().length(3).toUpperCase()
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado: YYYY-MM-DD')
 
-const nullableStr = (schema: z.ZodString) =>
-  z.union([schema, z.literal(''), z.null()])
-    .transform((v): string | null => (v === '' ? null : v))
-    .optional()
-
 const routineBaseSchema = z.object({
   name: z.string().min(1).max(100),
   airlines: z.array(z.string().min(1).max(20)).min(1),
@@ -15,8 +10,6 @@ const routineBaseSchema = z.object({
   destination: iata,
   outboundStart: dateStr,
   outboundEnd: dateStr,
-  returnStart: nullableStr(dateStr),
-  returnEnd: nullableStr(dateStr),
   passengers: z.number().int().min(1).max(9).default(1),
 
   targetCash: z.number().positive().nullable().optional(),
@@ -82,16 +75,6 @@ export const createRoutineSchema = routineBaseSchema
       path: ['outboundEnd'],
     },
   )
-  .refine(
-    (d) => {
-      if (d.returnStart == null || d.returnEnd == null) return true
-      return daysBetween(d.returnStart, d.returnEnd) <= MAX_DATE_RANGE_DAYS
-    },
-    {
-      message: 'O range de datas de volta não pode exceder 30 dias',
-      path: ['returnEnd'],
-    },
-  )
 
 export const updateRoutineSchema = routineBaseSchema
   .partial()
@@ -114,15 +97,5 @@ export const updateRoutineSchema = routineBaseSchema
     {
       message: 'O range de datas de ida não pode exceder 30 dias',
       path: ['outboundEnd'],
-    },
-  )
-  .refine(
-    (d) => {
-      if (d.returnStart == null || d.returnEnd == null) return true
-      return daysBetween(d.returnStart, d.returnEnd) <= MAX_DATE_RANGE_DAYS
-    },
-    {
-      message: 'O range de datas de volta não pode exceder 30 dias',
-      path: ['returnEnd'],
     },
   )

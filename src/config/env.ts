@@ -18,8 +18,16 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
-  SCRAPE_INTERVAL_MS: z.coerce.number().default(3_600_000),
-  SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(300_000),
+  SCRAPE_INTERVAL_MS: z.coerce.number().default(300_000),
+  SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(60_000),
+  // Quantos jobs por companhia despachar a cada tick. ATENÇÃO: na prática isto é
+  // o nº de sessões Playwright SIMULTÂNEAS contra o mesmo site, do mesmo IP —
+  // valores altos = forte sinal de bot. Default conservador (1) para stealth;
+  // só aumente com concorrência por companhia/rotação de IP no scraper.
+  SCRAPE_DISPATCH_BATCH: z.coerce.number().int().positive().default(1),
+  // Teto de jobs em voo (≈ capacidade do scraper). A API não reivindica além disto
+  // — backpressure para não inflar a fila do scraper.
+  SCRAPE_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(6),
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
   SCRAPING_API_URL: z.string().url(),
   SCRAPING_API_KEY: z.string(),
@@ -35,7 +43,7 @@ const envSchema = z.object({
   ADMIN_PASSWORD_INITIAL: z.string().min(8),
 
   API_BASE_URL: z.string().url().default('http://localhost:3011/flight'),
-  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+  FRONTEND_URL: z.string().url().default('http://localhost:3001'),
 
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
@@ -44,6 +52,9 @@ const envSchema = z.object({
   GRAFANA_LOKI_URL:   z.string().url().optional(),
   GRAFANA_LOKI_USER:  z.string().optional(),
   GRAFANA_LOKI_TOKEN: z.string().optional(),
+
+  // Tempo real (WS hub ← workers, SSE → admin)
+  REALTIME_ENABLED: z.string().default('true'),
 })
 
 const parsed = envSchema.safeParse(process.env)

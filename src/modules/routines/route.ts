@@ -1,10 +1,14 @@
 import { FastifyInstance } from 'fastify'
 import { IRoutinesService } from './interfaces/IRoutinesService'
 import { ISchedulerService } from '../../services/scheduler/interfaces/ISchedulerService'
-import { IBestFaresService } from '../scrape/interfaces/IBestFaresService'
+import { IAnalysisRunsService } from '../analysis-runs/AnalysisRunsService'
 import { createRoutineSchema, updateRoutineSchema } from './schema'
 
-export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISchedulerService, bestFaresSvc: IBestFaresService) {
+export function routinesRoute(
+  routinesSvc: IRoutinesService,
+  schedulerSvc: ISchedulerService,
+  analysisRunsSvc: IAnalysisRunsService,
+) {
   return async function handler(app: FastifyInstance): Promise<void> {
     app.addHook('preHandler', app.authenticate)
     app.addHook('preHandler', app.requirePasswordChanged)
@@ -22,8 +26,6 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         destination:           body.destination,
         outboundStart:         body.outboundStart,
         outboundEnd:           body.outboundEnd,
-        returnStart:           body.returnStart   ?? null,
-        returnEnd:             body.returnEnd     ?? null,
         passengers:            body.passengers,
         targetCash:            body.targetCash    ?? null,
         targetPts:             body.targetPts     ?? null,
@@ -55,8 +57,6 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         destination:           body.destination,
         outboundStart:         body.outboundStart,
         outboundEnd:           body.outboundEnd,
-        returnStart:           body.returnStart   ?? null,
-        returnEnd:             body.returnEnd     ?? null,
         passengers:            body.passengers,
         targetCash:            body.targetCash    ?? null,
         targetPts:             body.targetPts     ?? null,
@@ -79,6 +79,7 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       } else {
         await routinesSvc.remove(id, req.user.sub)
       }
+      void schedulerSvc.pruneOrphans()
       reply.status(204).send()
     })
 
@@ -93,11 +94,11 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
 
     app.patch('/:id/deactivate', async (req, reply) => {
       const { id } = req.params as { id: string }
-      if (req.user.role === 'admin') {
-        reply.send(await routinesSvc.adminDeactivate(id))
-      } else {
-        reply.send(await routinesSvc.deactivate(id, req.user.sub))
-      }
+      const routine = req.user.role === 'admin'
+        ? await routinesSvc.adminDeactivate(id)
+        : await routinesSvc.deactivate(id, req.user.sub)
+      void schedulerSvc.pruneOrphans()
+      reply.send(routine)
     })
 
     app.patch('/admin/:id', { preHandler: [app.requireAdmin] }, async (req, reply) => {
@@ -110,8 +111,6 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
         destination:           body.destination,
         outboundStart:         body.outboundStart,
         outboundEnd:           body.outboundEnd,
-        returnStart:           body.returnStart   ?? null,
-        returnEnd:             body.returnEnd     ?? null,
         passengers:            body.passengers,
         targetCash:            body.targetCash    ?? null,
         targetPts:             body.targetPts     ?? null,
@@ -132,9 +131,9 @@ export function routinesRoute(routinesSvc: IRoutinesService, schedulerSvc: ISche
       reply.send(await routinesSvc.listByUser(userId))
     })
 
-    app.get('/admin/users/:userId/best-fares', { preHandler: [app.requireAdmin] }, async (req, reply) => {
-      const { userId } = req.params as { userId: string }
-      reply.send(await bestFaresSvc.adminGetUserBestFares(userId))
+    app.get('/admin/:id/analysis-runs', { preHandler: [app.requireAdmin] }, async (req, reply) => {
+      const { id } = req.params as { id: string }
+      reply.send(await analysisRunsSvc.listByRoutine(id))
     })
 
     app.post('/:id/dispatch', { preHandler: [app.requireAdmin] }, async (req, reply) => {

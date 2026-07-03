@@ -16,44 +16,28 @@ describe('calcNextRunAt', () => {
     vi.useRealTimers()
   })
 
-  it('≤7 dias → intervalo de 2 horas', () => {
+  // Intervalo base ± jitter de 20% (desincroniza grids; ver calcNextRunAt).
+  const expectWithinJitter = (diffMs: number, baseMs: number) => {
+    expect(diffMs).toBeGreaterThanOrEqual(baseMs * 0.8)
+    expect(diffMs).toBeLessThanOrEqual(baseMs * 1.2)
+  }
+
+  it('≤45 dias → ~1 hora (±20%)', () => {
     vi.useFakeTimers()
-    const flightDate = addDaysToNow(5)
-    const result = calcNextRunAt(flightDate)
-    const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(2 * 60 * 60 * 1000, -4)
+    const result = calcNextRunAt(addDaysToNow(30))
+    expectWithinJitter(result.getTime() - Date.now(), 1 * 60 * 60 * 1000)
   })
 
-  it('≤14 dias → intervalo de 3 horas', () => {
+  it('46–90 dias → ~3 horas (±20%)', () => {
     vi.useFakeTimers()
-    const flightDate = addDaysToNow(10)
-    const result = calcNextRunAt(flightDate)
-    const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(3 * 60 * 60 * 1000, -4)
+    const result = calcNextRunAt(addDaysToNow(60))
+    expectWithinJitter(result.getTime() - Date.now(), 3 * 60 * 60 * 1000)
   })
 
-  it('≤30 dias → intervalo de 6 horas', () => {
+  it('>90 dias → ~6 horas (±20%)', () => {
     vi.useFakeTimers()
-    const flightDate = addDaysToNow(20)
-    const result = calcNextRunAt(flightDate)
-    const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(6 * 60 * 60 * 1000, -4)
-  })
-
-  it('≤60 dias → intervalo de 12 horas', () => {
-    vi.useFakeTimers()
-    const flightDate = addDaysToNow(45)
-    const result = calcNextRunAt(flightDate)
-    const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(12 * 60 * 60 * 1000, -4)
-  })
-
-  it('>60 dias → intervalo de 24 horas', () => {
-    vi.useFakeTimers()
-    const flightDate = addDaysToNow(90)
-    const result = calcNextRunAt(flightDate)
-    const diffMs = result.getTime() - Date.now()
-    expect(diffMs).toBeCloseTo(24 * 60 * 60 * 1000, -4)
+    const result = calcNextRunAt(addDaysToNow(120))
+    expectWithinJitter(result.getTime() - Date.now(), 6 * 60 * 60 * 1000)
   })
 })
 

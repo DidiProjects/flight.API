@@ -14,6 +14,7 @@ export interface UserRow {
 export interface AirlineRow {
   code: string
   name: string
+  /** Moeda fixa da companhia (opcional). Quando definida, prevalece na resolução da moeda da rotina. */
   currency: string | null
   active: boolean
   has_cash: boolean
@@ -35,10 +36,8 @@ export interface RoutineRow {
   destination: string
   outbound_start: string
   outbound_end: string
-  return_start: string | null
-  return_end: string | null
   passengers: number
-  currency: string
+  currency: string | null
   target_cash: number | null
   target_pts: number | null
   target_hyb_pts: number | null
@@ -54,42 +53,6 @@ export interface RoutineRow {
   updated_at: Date
 }
 
-export interface FlightOfferRow {
-  id: string
-  routine_id: string
-  airline: string
-  flight_number: string
-  date: string
-  is_return: boolean
-  origin_iata: string
-  origin_timestamp: string
-  destination_iata: string
-  destination_timestamp: string
-  duration_min: number
-  stops: number
-  fare_cash: number | null
-  fare_pts: number | null
-  fare_hyb_pts: number | null
-  fare_hyb_cash: number | null
-  within_target: boolean
-  scraped_at: string
-  created_at: Date
-}
-
-export interface BestFareRow {
-  id: string
-  routine_id: string
-  airline: string
-  date: string
-  is_return: boolean
-  fare_type: string
-  amount: number
-  flight_offer_id: string
-  currency: string
-  analysis_id: string | null
-  updated_at: Date
-  offer: FlightOfferRow
-}
 
 export interface NotificationLogRow {
   id: string

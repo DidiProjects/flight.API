@@ -94,6 +94,7 @@ export class EmailService implements IEmailService {
       case 'azul':           return this.buildAzulLink(offer, passengers, fareType)
       case 'latam':          return this.buildLatamLink(offer, passengers, fareType)
       case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers)
+      case 'ryanair':        return this.buildRyanairLink(offer, passengers)
       default:               return null
     }
   }
@@ -126,8 +127,25 @@ export class EmailService implements IEmailService {
     return `https://www.britishairways.com/nx/b/airselect/en/gbr/book/search/?${p.toString()}`
   }
 
+  private buildRyanairLink(offer: OfferBlock, passengers: number): string {
+    const p = new URLSearchParams({
+      adults:            String(passengers),
+      teens:             '0',
+      children:          '0',
+      infants:           '0',
+      dateOut:           offer.date,
+      dateIn:            '',
+      isConnectedFlight: 'false',
+      isReturn:          'false',
+      discount:          '0',
+      originIata:        offer.origin,
+      destinationIata:   offer.destination,
+    })
+    return `https://www.ryanair.com/gb/en/trip/flights/select?${p.toString()}`
+  }
+
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
-    const { routineName, origin, destination, airlineOffers, passengers, fareType } = params
+    const { routineName, origin, destination, airlineOffers, passengers, fareType, historyNote } = params
 
     const offers = airlineOffers.map((ao: AirlineOfferPair) => {
       const airlineName = ao.airline.charAt(0).toUpperCase() + ao.airline.slice(1).toLowerCase()
@@ -159,6 +177,7 @@ export class EmailService implements IEmailService {
           </tr>
           <tr>
             <td style="background:#ffffff;padding:20px 24px;border-radius:0 0 8px 8px;font-family:Arial,sans-serif;">
+              ${historyNote ? `<p style="margin:0 0 16px 0;font-size:13px;font-weight:600;color:#2D9B6B;">✓ ${historyNote}</p>` : ''}
               ${offers || '<p style="color:#555;margin:0;">Nenhuma oferta disponível neste período.</p>'}
             </td>
           </tr>
@@ -177,8 +196,8 @@ export class EmailService implements IEmailService {
   }
 
   private renderOffer(offer: OfferBlock, label: string, link: string | null, airline: string, currency: string): string {
-    const dep   = new Date(offer.departureTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
-    const arr   = new Date(offer.arrivalTime).toLocaleTimeString('pt-BR',   { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+    const dep   = offer.departureTime ? offer.departureTime.slice(0, 5) : '—'
+    const arr   = offer.arrivalTime   ? offer.arrivalTime.slice(0, 5)   : '—'
     const dur   = `${Math.floor(offer.durationMin / 60)}h${String(offer.durationMin % 60).padStart(2, '0')}m`
     const stops = offer.stops === 0 ? 'Direto' : `${offer.stops} escala${offer.stops > 1 ? 's' : ''}`
     const date  = offer.date.split('-').reverse().join('/')

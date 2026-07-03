@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ScrapeService } from './ScrapeService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
+import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ function makeJob(overrides: Partial<ScrapingJobRow> = {}): ScrapingJobRow {
     running_since:       new Date(),
     running_timeout_min: 30,
     request_id:          'req-00000-0000-0000-0000-000000000001',
+    cancel_requested_at: null,
     created_at:          new Date(),
     updated_at:          new Date(),
     ...overrides,
@@ -56,6 +58,7 @@ function makeFlightOffer() {
     arrivalTime:   '18:00',
     durationMin:   720,
     stops:         0,
+    currency:      'BRL',
     fareCash:      1800,
     farePts:       null,
     fareHybPts:    null,
@@ -67,17 +70,24 @@ function makeFlightOffer() {
 
 function makeMocks() {
   const mockScrapingJobRepo = {
-    findByRequestId: vi.fn(),
-    markFailed:      vi.fn(),
-    markDead:        vi.fn(),
-    markSuccess:     vi.fn(),
+    findByRequestId:     vi.fn(),
+    findById:            vi.fn(),
+    markFailed:          vi.fn(),
+    markDead:            vi.fn(),
+    markSuccess:         vi.fn(),
+    pauseAirlineForBlock: vi.fn(),
   } satisfies Partial<IScrapingJobRepository> as unknown as IScrapingJobRepository
 
   const mockFlightFaresRepo = {
     insertMany: vi.fn(),
   } satisfies Partial<IFlightFaresRepository> as unknown as IFlightFaresRepository
 
-  return { mockScrapingJobRepo, mockFlightFaresRepo }
+  const mockAnalysisRunsRepo = {
+    insertRunning: vi.fn(),
+    markFinished:  vi.fn(),
+  } satisfies Partial<IAnalysisRunsRepository> as unknown as IAnalysisRunsRepository
+
+  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -85,13 +95,15 @@ function makeMocks() {
 describe('ScrapeService.processCallback', () => {
   let mockScrapingJobRepo: IScrapingJobRepository
   let mockFlightFaresRepo: IFlightFaresRepository
+  let mockAnalysisRunsRepo: IAnalysisRunsRepository
   let svc: ScrapeService
 
   beforeEach(() => {
     const mocks = makeMocks()
     mockScrapingJobRepo = mocks.mockScrapingJobRepo
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
-    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo)
+    mockAnalysisRunsRepo = mocks.mockAnalysisRunsRepo
+    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo)
   })
 
   it('requestId desconhecido — retorna sem chamar insertMany', async () => {
@@ -116,6 +128,22 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
   })
 
+  it('webhook de bloqueio — pausa a airline inteira e não escala para dead', async () => {
+    const job = makeJob({ retry_count: 2, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockScrapingJobRepo.pauseAirlineForBlock).mockResolvedValue(7)
+
+    await svc.processCallback(makeCallback({
+      error: 'Azul: zero fares and no empty-state marker for VCP→LIS on 2026-08-15 — likely bot/IP block.',
+      flights: [],
+    }))
+
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledWith('azul', expect.any(Date), expect.stringContaining('bot/IP block'))
+    expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+  })
+
   it('webhook de erro — retry_count >= max_retries — chama markDead', async () => {
     const job = makeJob({ retry_count: 2, max_retries: 3 })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
@@ -126,6 +154,39 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markDead).toHaveBeenCalledOnce()
     expect(mockScrapingJobRepo.markDead).toHaveBeenCalledWith(job.id, 'scraper crashed')
     expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+  })
+
+  it('callback órfão de sucesso — reidrata job por id, salva fares e marca sucesso', async () => {
+    const job = makeJob({ status: 'pending', request_id: null, flight_date: '2026-07-01' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.findById).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+
+    await svc.processCallback(makeCallback({
+      routineId: job.id,
+      requestId: 'req-00000-0000-0000-0000-0000000000ff',
+      flights:   [makeFlightOffer()],
+    }))
+
+    expect(mockScrapingJobRepo.findById).toHaveBeenCalledWith(job.id)
+    expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledWith(job.id, expect.any(Date))
+  })
+
+  it('callback órfão de sucesso com job já re-despachado — salva fares mas NÃO sobrescreve o job', async () => {
+    const job = makeJob({ status: 'running', request_id: 'req-novo-despacho' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.findById).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+
+    await svc.processCallback(makeCallback({
+      routineId: job.id,
+      requestId: 'req-antigo-atrasado',
+      flights:   [makeFlightOffer()],
+    }))
+
+    expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markSuccess).not.toHaveBeenCalled()
   })
 
   it('webhook de sucesso — insertMany com fares mapeadas e markSuccess chamado', async () => {
@@ -140,8 +201,11 @@ describe('ScrapeService.processCallback', () => {
     await svc.processCallback(makeCallback({ flights: [offer1, offer2] }))
 
     expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
-    const [calledJobId, calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    const [calledJobId, calledRequestId, calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
     expect(calledJobId).toBe(job.id)
+    // request_id da execução é repassado para virar o discriminador de snapshot
+    // no flight_fares (sem ele, re-coletas da mesma rota congelariam o preço).
+    expect(calledRequestId).toBe('req-00000-0000-0000-0000-000000000001')
     expect(calledFares).toHaveLength(2)
     expect(calledFares[0]).toMatchObject({
       flight_number:  'AD1234',
@@ -150,6 +214,7 @@ describe('ScrapeService.processCallback', () => {
       origin:         'VCP',
       destination:    'LIS',
       airline:        'azul',
+      currency:       'BRL',
       fare_cash:      1800,
     })
     expect(calledFares[1]).toMatchObject({

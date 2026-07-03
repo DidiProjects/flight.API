@@ -31,6 +31,7 @@ export interface FlightAlertEmailParams {
   airlineOffers: AirlineOfferPair[]
   passengers: number
   fareType: string
+  historyNote?: string
 }
 
 export interface DailyBestRoutineSection {
