@@ -1032,7 +1032,8 @@
                   "value": ""
                 }
               ]
-            }
+            },
+            "description": "Disparo manual de uma rotina (admin). Responde 202 { message } de imediato: o dispatch é assíncrono e roda em background, direcionado à rota da rotina. Cobre todas as datas elegíveis do grid (outbound_start..outbound_end), limitado pelo teto global SCRAPE_MAX_IN_FLIGHT e parando na primeira falha do scraper (503/erro). Requer JWT de admin."
           }
         },
         {
