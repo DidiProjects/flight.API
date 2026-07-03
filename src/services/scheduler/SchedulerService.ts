@@ -128,14 +128,18 @@ export class SchedulerService implements ISchedulerService {
     log.info({ routineId }, 'dispatchOne: manual dispatch requested')
     await this.scrapingJobRepo.upsertFromRoutine(routineId)
 
+    // Disparo manual é direcionado à rota da rotina e cobre todas as datas
+    // elegíveis (até o teto global de in-flight). Por ser uma ação explícita do
+    // admin, ignora o circuit breaker por companhia; a primeira falha real
+    // (busy/error) interrompe o burst, evitando martelar uma companhia quebrada.
     const cap = this.env.SCRAPE_MAX_IN_FLIGHT
     let dispatched = 0
     while (await this.scrapingJobRepo.countInFlight() < cap) {
       const job = await this.scrapingJobRepo.claimNextJobForRoutine(routineId)
       if (!job) break
       const result = await this.dispatchClaimedJob(job)
-      if (result === 'dispatched') dispatched++
-      if (result === 'busy') break
+      if (result !== 'dispatched') break
+      dispatched++
     }
     log.info({ routineId, dispatched }, 'dispatchOne: targeted dispatch done')
   }
