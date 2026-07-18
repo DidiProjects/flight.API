@@ -1,0 +1,7 @@
+# Override local (Linux): host.docker.internal não resolve por padrão em Linux.
+# Mapeia para o gateway do host para que o flight.API alcance o scraping.API
+# (SCRAPING_API_URL=http://host.docker.internal:3000) rodando no host.
+services:
+  flight-api:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
