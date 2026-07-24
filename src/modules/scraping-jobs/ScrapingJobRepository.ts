@@ -75,6 +75,22 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
         JOIN routine_airlines ra ON ra.routine_id = r.id
         WHERE r.is_active = true
           AND r.outbound_end >= CURRENT_DATE
+
+        UNION
+
+        -- Perna de volta: mesma rota invertida. A unidade de coleta continua
+        -- sendo a perna-data, então a volta reaproveita (ou cria) o mesmo job
+        -- que uma rotina one-way naquele sentido usaria.
+        SELECT DISTINCT
+          ra.airline,
+          r.destination AS origin,
+          r.origin      AS destination,
+          generate_series(r.inbound_start, r.inbound_end, '1 day'::interval)::date AS flight_date
+        FROM routines r
+        JOIN routine_airlines ra ON ra.routine_id = r.id
+        WHERE r.is_active = true
+          AND r.trip_type = 'round_trip'
+          AND r.inbound_end >= CURRENT_DATE
       ) g
       ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
         -- Revive job aposentado cuja rota voltou a ter rotina ativa, também espalhado.
@@ -98,6 +114,20 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       JOIN routine_airlines ra ON ra.routine_id = r.id
       WHERE r.id = $1
         AND r.outbound_end >= CURRENT_DATE
+
+      UNION
+
+      -- Perna de volta (rota invertida) para rotinas round_trip.
+      SELECT DISTINCT
+        ra.airline,
+        r.destination AS origin,
+        r.origin      AS destination,
+        generate_series(r.inbound_start, r.inbound_end, '1 day'::interval)::date AS flight_date
+      FROM routines r
+      JOIN routine_airlines ra ON ra.routine_id = r.id
+      WHERE r.id = $1
+        AND r.trip_type = 'round_trip'
+        AND r.inbound_end >= CURRENT_DATE
       ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
         SET next_run_at = NOW(),
             priority    = 100,

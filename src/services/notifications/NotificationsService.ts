@@ -133,6 +133,9 @@ export class NotificationsService implements INotificationsService {
     routine: RoutineRow,
     outboundFares: LatestFaresByDate[],
     history: PriceHistory,
+    // Round-trip: perna de volta que fecha o par de cada data de ida. O e-mail
+    // exibe o par da headline; one-way não passa nada e o card segue igual.
+    inboundByOutboundDate?: Map<string, LatestFaresByDate>,
   ): Promise<void> {
     if (outboundFares.length === 0) return
 
@@ -165,11 +168,16 @@ export class NotificationsService implements INotificationsService {
     // Apenas UMA tarifa por rotina no email: a headline. As demais datas que
     // avançaram já foram gravadas no watermark (target_alert_state) pelo
     // EvaluationService — só não são exibidas aqui.
+    const inboundOfHeadline = inboundByOutboundDate?.get(toDateStr(headline.flight_date)) ?? null
+
     const airlineOffers: AirlineOfferPair[] = [{
       airline:  headline.airline,
       currency: headline.currency ?? routine.currency ?? 'BRL',
       outbound: this.fareToBlock(headline, routine.origin, routine.destination),
-      return:   null,
+      // A volta é a rota invertida.
+      return:   inboundOfHeadline
+        ? this.fareToBlock(inboundOfHeadline, routine.destination, routine.origin)
+        : null,
     }]
 
     await this.emailSvc.sendFlightAlert({

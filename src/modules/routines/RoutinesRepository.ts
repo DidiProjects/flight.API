@@ -4,7 +4,8 @@ import { IRoutinesRepository, CreateRoutineData } from './interfaces/IRoutinesRe
 
 const ROUTINE_COLS = `
   r.id, r.user_id, r.name, r.origin, r.destination,
-  r.outbound_start, r.outbound_end, r.passengers,
+  r.outbound_start, r.outbound_end,
+  r.trip_type, r.inbound_start, r.inbound_end, r.passengers,
   r.currency, r.target_cash, r.target_pts, r.target_hyb_pts, r.target_hyb_cash,
   r.margin, r.priority, r.notification_modes, r.notification_frequency, r.scheduled_time,
   r.cc_emails, r.is_active, r.created_at, r.updated_at`
@@ -101,16 +102,17 @@ export class RoutinesRepository implements IRoutinesRepository {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO routines (
            user_id, name, origin, destination,
-           outbound_start, outbound_end, passengers,
+           outbound_start, outbound_end, trip_type, inbound_start, inbound_end, passengers,
            currency, target_cash, target_pts, target_hyb_pts, target_hyb_cash,
            margin, priority, notification_modes, notification_frequency, scheduled_time, cc_emails, is_active
          ) VALUES (
-           $1,$2,$3,$4, $5,$6,$7,
-           $8,$9,$10,$11,$12, $13,$14,$15,$16,$17,$18,$19
+           $1,$2,$3,$4, $5,$6,$7,$8,$9,$10,
+           $11,$12,$13,$14,$15, $16,$17,$18,$19,$20,$21,$22
          ) RETURNING id`,
         [
           data.userId, data.name, data.origin, data.destination,
-          data.outboundStart, data.outboundEnd, data.passengers,
+          data.outboundStart, data.outboundEnd,
+          data.tripType ?? 'one_way', data.inboundStart ?? null, data.inboundEnd ?? null, data.passengers,
           data.currency, data.targetCash ?? null, data.targetPts ?? null, data.targetHybPts ?? null, data.targetHybCash ?? null,
           data.margin, data.priority, data.notificationModes, data.notificationFrequency,
           data.scheduledTime ?? null, ccJson, data.isActive ?? true,
@@ -139,6 +141,7 @@ export class RoutinesRepository implements IRoutinesRepository {
     const colMap: Record<string, string> = {
       name: 'name', origin: 'origin', destination: 'destination',
       outboundStart: 'outbound_start', outboundEnd: 'outbound_end',
+      tripType: 'trip_type', inboundStart: 'inbound_start', inboundEnd: 'inbound_end',
       passengers: 'passengers',
       currency: 'currency',
       targetCash: 'target_cash', targetPts: 'target_pts',
@@ -151,7 +154,11 @@ export class RoutinesRepository implements IRoutinesRepository {
     const values: unknown[] = []
     let i = 1
     for (const [key, col] of Object.entries(colMap)) {
-      if (key in fields) { updates.push(`${col} = $${i++}`); values.push((fields as Record<string, unknown>)[key] ?? null) }
+      // `undefined` = campo ausente do PATCH → não tocar. `null` explícito =
+      // limpar. Sem essa distinção um PATCH parcial gravava NULL em tudo que
+      // não foi enviado e estourava as colunas NOT NULL.
+      const value = (fields as Record<string, unknown>)[key]
+      if (key in fields && value !== undefined) { updates.push(`${col} = $${i++}`); values.push(value) }
     }
     if ('ccEmails' in fields && fields.ccEmails) {
       updates.push(`cc_emails = $${i++}`)
@@ -216,6 +223,7 @@ export class RoutinesRepository implements IRoutinesRepository {
     const colMap: Record<string, string> = {
       name: 'name', origin: 'origin', destination: 'destination',
       outboundStart: 'outbound_start', outboundEnd: 'outbound_end',
+      tripType: 'trip_type', inboundStart: 'inbound_start', inboundEnd: 'inbound_end',
       passengers: 'passengers',
       currency: 'currency',
       targetCash: 'target_cash', targetPts: 'target_pts',
@@ -228,7 +236,11 @@ export class RoutinesRepository implements IRoutinesRepository {
     const values: unknown[] = []
     let i = 1
     for (const [key, col] of Object.entries(colMap)) {
-      if (key in fields) { updates.push(`${col} = $${i++}`); values.push((fields as Record<string, unknown>)[key] ?? null) }
+      // `undefined` = campo ausente do PATCH → não tocar. `null` explícito =
+      // limpar. Sem essa distinção um PATCH parcial gravava NULL em tudo que
+      // não foi enviado e estourava as colunas NOT NULL.
+      const value = (fields as Record<string, unknown>)[key]
+      if (key in fields && value !== undefined) { updates.push(`${col} = $${i++}`); values.push(value) }
     }
     if ('ccEmails' in fields && fields.ccEmails) {
       updates.push(`cc_emails = $${i++}`)
@@ -340,9 +352,11 @@ export class RoutinesRepository implements IRoutinesRepository {
 
   async deactivateExpired(): Promise<number> {
     const { rowCount } = await this.db.query(
+      // Numa rotina round_trip a viagem só termina na volta: expirar pela ida
+      // desativaria a rotina com a perna de volta ainda por acontecer.
       `UPDATE routines SET is_active = false, updated_at = now()
        WHERE is_active = true
-         AND outbound_end < CURRENT_DATE`,
+         AND COALESCE(inbound_end, outbound_end) < CURRENT_DATE`,
     )
     return rowCount ?? 0
   }

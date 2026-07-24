@@ -5,6 +5,8 @@ import { ITargetAlertStateRepository } from '../../modules/target-alert-state/in
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { RoutineRow } from '../../types'
 import { logger } from '../../utils/logger'
+import { isValidRoundTripPair } from '../../utils/roundtrip'
+import { IncompleteRoundTripError } from '../../utils/errors'
 
 const log = logger.child({ service: 'evaluation' })
 
@@ -52,23 +54,37 @@ export class EvaluationService implements IEvaluationService {
     // Só alerta quem optou pelo modo 'target'.
     if (!routine.notification_modes.includes('target')) return
 
-    // 1. Última foto fresca de tarifas de todas as companhias no grid de datas.
-    const allOutbound: LatestFaresByDate[] = []
-    for (const airline of routine.airlines) {
-      const outbound = await this.flightFaresRepo.getLatestByRoute(
-        airline,
-        routine.origin,
-        routine.destination,
-        toDateStr(routine.outbound_start),
-        toDateStr(routine.outbound_end),
-        MAX_FARE_AGE_HOURS,
-      )
-      allOutbound.push(...outbound)
-    }
-    if (allOutbound.length === 0) return
+    // 1-2. Melhor oferta dentro do alvo por data de ida. Em round_trip a oferta
+    //      da data é o PAR (ida + volta) e o alvo é comparado contra o total.
+    let inboundByDate: Map<string, LatestFaresByDate> | undefined
+    let bestByDate: Map<string, LatestFaresByDate>
+    // Valor que a data vale para o alerta: a perna (one-way) ou o total do par (RT).
+    let amountByDate: Map<string, number>
 
-    // 2. Melhor tarifa DENTRO do alvo por data do grid (entre todas as companhias).
-    const bestByDate = this.bestInTargetByDate(allOutbound, routine)
+    if (routine.trip_type === 'round_trip') {
+      const pairs = await this.bestPairsByOutboundDate(routine)
+      if (pairs.size === 0) return
+      bestByDate    = new Map([...pairs].map(([date, p]) => [date, p.outbound]))
+      inboundByDate = new Map([...pairs].map(([date, p]) => [date, p.inbound]))
+      amountByDate  = new Map([...pairs].map(([date, p]) => [date, p.total]))
+    } else {
+      const allOutbound: LatestFaresByDate[] = []
+      for (const airline of routine.airlines) {
+        const outbound = await this.flightFaresRepo.getLatestByRoute(
+          airline,
+          routine.origin,
+          routine.destination,
+          toDateStr(routine.outbound_start),
+          toDateStr(routine.outbound_end),
+          MAX_FARE_AGE_HOURS,
+        )
+        allOutbound.push(...outbound)
+      }
+      if (allOutbound.length === 0) return
+
+      bestByDate   = this.bestInTargetByDate(allOutbound, routine)
+      amountByDate = new Map([...bestByDate].map(([date, f]) => [date, this.fareValue(f, routine)!]))
+    }
     if (bestByDate.size === 0) return
 
     // 3. Comparar cada data com seu watermark (melhor preço já alertado para ela).
@@ -83,7 +99,7 @@ export class EvaluationService implements IEvaluationService {
 
     const candidates: { flightDate: string; amount: number; fare: LatestFaresByDate }[] = []
     for (const [date, fare] of bestByDate) {
-      const amount = this.fareValue(fare, routine)!
+      const amount = amountByDate.get(date)!
       const prev = watermarks.get(date)
       // Primeira oferta no alvo para a data, ou preço melhor (menor) que o já alertado.
       if (prev == null || amount < prev) candidates.push({ flightDate: date, amount, fare })
@@ -131,7 +147,101 @@ export class EvaluationService implements IEvaluationService {
       headline.flightDate,
     )
 
-    await this.notifSvc.dispatchAlert(routine, offers.map((o) => o.fare), history)
+    // One-way chama com a assinatura original (sem o 4º argumento) para não
+    // mudar nada no caminho que já existia.
+    const fares = offers.map((o) => o.fare)
+    if (inboundByDate) await this.notifSvc.dispatchAlert(routine, fares, history, inboundByDate)
+    else await this.notifSvc.dispatchAlert(routine, fares, history)
+  }
+
+  /**
+   * Melhor par (ida, volta) por data de ida, para rotinas round_trip.
+   *
+   * Decisões de produto (2026-07-24):
+   *  · as duas pernas na MESMA companhia — só assim o desconto RT é identificável;
+   *  · par só vale com a MESMA moeda nas duas pernas — sem conversão de câmbio;
+   *  · volta no máximo 3 meses depois da ida (`isValidRoundTripPair`);
+   *  · companhia que voltou com só uma das pernas é descartada e reportada.
+   *
+   * A célula do watermark continua sendo a data de IDA: cada data de ida carrega
+   * o melhor total válido que ela consegue fechar. Assim o alerta segue com uma
+   * linha por data e o `routineFloor` continua valendo sem mudança de schema.
+   */
+  private async bestPairsByOutboundDate(
+    routine: RoutineRow,
+  ): Promise<Map<string, { outbound: LatestFaresByDate; inbound: LatestFaresByDate; total: number }>> {
+    const best = new Map<string, { outbound: LatestFaresByDate; inbound: LatestFaresByDate; total: number }>()
+
+    for (const airline of routine.airlines) {
+      const [outbound, inbound] = await Promise.all([
+        this.flightFaresRepo.getLatestByRoute(
+          airline, routine.origin, routine.destination,
+          toDateStr(routine.outbound_start), toDateStr(routine.outbound_end), MAX_FARE_AGE_HOURS,
+        ),
+        this.flightFaresRepo.getLatestByRoute(
+          airline, routine.destination, routine.origin,
+          toDateStr(routine.inbound_start!), toDateStr(routine.inbound_end!), MAX_FARE_AGE_HOURS,
+        ),
+      ])
+
+      // Sem tarifa nenhuma: a companhia ainda não foi raspada, não é par incompleto.
+      if (outbound.length === 0 && inbound.length === 0) continue
+
+      // Uma perna só é dado corrompido, não oferta barata: descarta a companhia
+      // e reporta. O `err.type` vira label no Grafana.
+      if (outbound.length === 0 || inbound.length === 0) {
+        const missingLeg = outbound.length === 0 ? 'outbound' : 'inbound'
+        log.error(
+          { err: new IncompleteRoundTripError(routine.id, airline, missingLeg), routineId: routine.id, airline, missingLeg },
+          'evaluation: par round-trip incompleto — companhia descartada do ciclo',
+        )
+        continue
+      }
+
+      for (const out of outbound) {
+        const outValue = this.fareValue(out, routine)
+        if (outValue == null) continue
+        const outDate = toDateStr(out.flight_date)
+
+        for (const inb of inbound) {
+          const inValue = this.fareValue(inb, routine)
+          if (inValue == null) continue
+          if (!isValidRoundTripPair(outDate, toDateStr(inb.flight_date))) continue
+          if ((out.currency ?? null) !== (inb.currency ?? null)) continue
+
+          const total = outValue + inValue
+          if (!this.totalInTarget(total, routine, out, inb)) continue
+
+          const cur = best.get(outDate)
+          if (cur == null || total < cur.total) best.set(outDate, { outbound: out, inbound: inb, total })
+        }
+      }
+    }
+
+    return best
+  }
+
+  /**
+   * Alvo do par: em round_trip o usuário mira o preço da VIAGEM, então o total
+   * das duas pernas é comparado com o target (com a mesma margem do one-way).
+   * No modo híbrido as duas dimensões precisam caber somadas.
+   */
+  private totalInTarget(
+    total: number,
+    routine: RoutineRow,
+    out: LatestFaresByDate,
+    inb: LatestFaresByDate,
+  ): boolean {
+    const t = 1 + routine.margin
+    if (routine.priority === 'cash') return routine.target_cash != null && total <= routine.target_cash * t
+    if (routine.priority === 'pts')  return routine.target_pts != null && total <= routine.target_pts * t
+    if (routine.priority === 'hyb') {
+      if (routine.target_hyb_pts == null || routine.target_hyb_cash == null) return false
+      if (out.fare_hyb_cash == null || inb.fare_hyb_cash == null) return false
+      const cashTotal = Number(out.fare_hyb_cash) + Number(inb.fare_hyb_cash)
+      return total <= routine.target_hyb_pts * t && cashTotal <= routine.target_hyb_cash * t
+    }
+    return false
   }
 
   // Melhor tarifa dentro do alvo por data (colapsa companhias: o usuário quer o

@@ -99,6 +99,14 @@ export class RoutinesService implements IRoutinesService {
     if (data.outboundStart > data.outboundEnd) {
       throw new BadRequestError('outboundStart deve ser anterior a outboundEnd')
     }
+    if (data.tripType === 'round_trip') {
+      if (data.inboundEnd! < today) {
+        throw new BadRequestError('A data de volta já passou')
+      }
+      if (data.inboundStart! > data.inboundEnd!) {
+        throw new BadRequestError('inboundStart deve ser anterior a inboundEnd')
+      }
+    }
 
     return this.routinesRepo.create({ userId, ...data, currency })
   }
