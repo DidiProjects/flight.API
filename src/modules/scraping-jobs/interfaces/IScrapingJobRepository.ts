@@ -4,6 +4,8 @@ export interface ScrapingJobRow {
   origin: string
   destination: string
   flight_date: string
+  /** Preenchido = job de ida-e-volta (busca RT com as duas datas). NULL = one-way. */
+  return_date: string | null
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead' | 'cancelled'
   priority: number
   retry_count: number

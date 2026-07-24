@@ -86,6 +86,11 @@ export class RoutinesService implements IRoutinesService {
     for (const code of data.airlines) {
       const airline = await this.airlinesRepo.findByCode(code)
       if (!airline || !airline.active) throw new BadRequestError(`Companhia '${code}' não disponível`)
+      // Sem busca RT a companhia devolveria as duas pernas avulsas e sem
+      // bundle — o desconto de ida-e-volta ficaria invisível e a rotina mentiria.
+      if (data.tripType === 'round_trip' && !airline.has_roundtrip) {
+        throw new BadRequestError(`Companhia '${code}' não suporta busca de ida e volta`)
+      }
     }
 
     await this.assertCoverage(data.airlines, data.origin, data.destination)

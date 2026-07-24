@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import { CurrentBest, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
+import { CurrentBest, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
 export class FlightFaresRepository implements IFlightFaresRepository {
   constructor(private readonly db: Pool) {}
@@ -20,7 +20,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     for (const f of fares) {
       placeholders.push(
-        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
+        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
       )
       values.push(
         jobId,
@@ -40,6 +40,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         f.fare_pts,
         f.fare_hyb_pts,
         f.fare_hyb_cash,
+        f.return_date,
         scrapedAt,
       )
     }
@@ -51,7 +52,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       `INSERT INTO flight_fares
          (scraping_job_id, request_id, flight_number, flight_date, is_return, origin, destination, airline,
           departure_time, arrival_time, duration_min, stops, currency,
-          fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, scraped_at)
+          fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, return_date, scraped_at)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (request_id, flight_date, is_return, flight_number)
          WHERE flight_number IS NOT NULL AND request_id IS NOT NULL
@@ -61,15 +62,86 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     return rowCount ?? 0
   }
 
+  /**
+   * Tarifas de PAR (busca ida-e-volta) para as janelas da rotina.
+   *
+   * Devolve as duas pernas de cada par colhido, já trazendo o total do bundle.
+   * Só considera linhas com `return_date` preenchido — tarifa avulsa não entra,
+   * porque não foi precificada no contexto do par.
+   *
+   * A perna de ida vem como (origin -> destination) e a de volta como a rota
+   * invertida, ambas compartilhando (flight_date, return_date).
+   */
+  async getLatestPairs(
+    airline: string,
+    origin: string,
+    destination: string,
+    outFrom: string,
+    outTo: string,
+    inFrom: string,
+    inTo: string,
+    maxAgeHours?: number,
+  ): Promise<PairFareRow[]> {
+    const params: unknown[] = [airline, origin, destination, outFrom, outTo, inFrom, inTo]
+    const freshFilter =
+      maxAgeHours != null
+        ? `AND f.scraped_at >= NOW() - ($${params.push(maxAgeHours)} || ' hours')::interval`
+        : ''
+
+    const { rows } = await this.db.query<PairFareRow>(`
+      SELECT
+        f.airline, f.flight_date, f.return_date, f.is_return,
+        f.origin, f.destination,
+        f.departure_time, f.arrival_time, f.duration_min, f.stops, f.currency,
+        f.fare_cash, f.fare_pts, f.fare_hyb_pts, f.fare_hyb_cash,
+        f.bundle_cash, f.bundle_pts, f.bundle_hyb_pts, f.bundle_hyb_cash,
+        f.scraped_at
+      FROM flight_fares f
+      INNER JOIN (
+        -- Snapshot mais recente de cada par.
+        SELECT DISTINCT ON (flight_date, return_date)
+          flight_date, return_date, request_id
+        FROM flight_fares
+        WHERE airline = $1
+          AND return_date IS NOT NULL
+          AND flight_date BETWEEN $4 AND $5
+          AND return_date BETWEEN $6 AND $7
+          AND ((origin = $2 AND destination = $3) OR (origin = $3 AND destination = $2))
+        ORDER BY flight_date, return_date, scraped_at DESC
+      ) latest
+        ON f.flight_date = latest.flight_date
+       AND f.return_date = latest.return_date
+       AND f.request_id  = latest.request_id
+      WHERE f.airline = $1
+        ${freshFilter}
+      ORDER BY f.flight_date, f.return_date, f.is_return, f.fare_cash ASC NULLS LAST
+    `, params)
+    return rows
+  }
+
   async getLatestByRoute(
     airline: string,
     origin: string,
     destination: string,
     dateFrom: string,
     dateTo: string,
+    // Obrigatório de propósito: tarifa colhida numa busca ida-e-volta é
+    // precificada no contexto do par e NÃO vale como tarifa avulsa — nem o
+    // contrário. Deixar isto opcional deixaria os dois lados vazarem um no outro.
+    //   null   -> só tarifas one-way (return_date IS NULL)
+    //   'date' -> só tarifas daquele par
+    returnDate: string | null,
     maxAgeHours?: number,
   ): Promise<LatestFaresByDate[]> {
     const params: unknown[] = [airline, origin, destination, dateFrom, dateTo]
+    const pairFilter =
+      returnDate == null
+        ? 'AND return_date IS NULL'
+        : `AND return_date = $${params.push(returnDate)}::date`
+    const outerPairFilter =
+      returnDate == null
+        ? 'AND f.return_date IS NULL'
+        : `AND f.return_date = $${params.length}::date`
     const freshFilter =
       maxAgeHours != null
         ? `AND scraped_at >= NOW() - ($${params.push(maxAgeHours)} || ' hours')::interval`
@@ -87,6 +159,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         FROM flight_fares
         WHERE airline = $1 AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
+          ${pairFilter}
           ${freshFilter}
         ORDER BY flight_date, is_return, scraped_at DESC
       ) latest_job
@@ -95,6 +168,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
        AND COALESCE(f.request_id::text, f.scraping_job_id::text)
          = COALESCE(latest_job.request_id::text, latest_job.scraping_job_id::text)
       WHERE f.airline = $1 AND f.origin = $2 AND f.destination = $3
+        ${outerPairFilter}
       ORDER BY f.flight_date, f.is_return, f.fare_cash ASC NULLS LAST
     `, params)
     return rows
@@ -175,13 +249,83 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     }
   }
 
+  /** Menor total de par para as janelas da rotina (bundle da cia, ou soma da mesma busca RT). */
+  private async getCurrentBestPair(
+    airlines: string[],
+    origin: string,
+    destination: string,
+    outFrom: string,
+    outTo: string,
+    inbound: { from: string; to: string },
+  ): Promise<CurrentBest> {
+    const { rows } = await this.db.query<CurrentBest>(`
+      WITH latest_pair AS (
+        SELECT DISTINCT ON (flight_date, return_date)
+          flight_date, return_date, request_id, scraped_at
+        FROM flight_fares
+        WHERE airline = ANY($1::text[])
+          AND return_date IS NOT NULL
+          AND flight_date BETWEEN $4 AND $5
+          AND return_date BETWEEN $6 AND $7
+          AND ((origin = $2 AND destination = $3) OR (origin = $3 AND destination = $2))
+          AND scraped_at >= NOW() - INTERVAL '30 days'
+        ORDER BY flight_date, return_date, scraped_at DESC
+      ),
+      per_pair AS (
+        SELECT
+          lp.scraped_at,
+          MAX(f.currency) FILTER (WHERE f.currency IS NOT NULL) AS currency,
+          -- Bundle da companhia manda; sem ele, soma das pernas DA MESMA busca.
+          COALESCE(MAX(f.bundle_cash),
+            MIN(f.fare_cash) FILTER (WHERE NOT f.is_return) + MIN(f.fare_cash) FILTER (WHERE f.is_return)) AS total_cash,
+          COALESCE(MAX(f.bundle_pts),
+            MIN(f.fare_pts) FILTER (WHERE NOT f.is_return) + MIN(f.fare_pts) FILTER (WHERE f.is_return)) AS total_pts,
+          COALESCE(MAX(f.bundle_hyb_pts),
+            MIN(f.fare_hyb_pts) FILTER (WHERE NOT f.is_return) + MIN(f.fare_hyb_pts) FILTER (WHERE f.is_return)) AS total_hyb_pts,
+          COALESCE(MAX(f.bundle_hyb_cash),
+            MIN(f.fare_hyb_cash) FILTER (WHERE NOT f.is_return) + MIN(f.fare_hyb_cash) FILTER (WHERE f.is_return)) AS total_hyb_cash
+        FROM flight_fares f
+        INNER JOIN latest_pair lp
+          ON f.flight_date = lp.flight_date
+         AND f.return_date = lp.return_date
+         AND f.request_id  = lp.request_id
+        WHERE f.airline = ANY($1::text[])
+        GROUP BY lp.flight_date, lp.return_date, lp.scraped_at
+      )
+      SELECT
+        MAX(currency)       AS currency,
+        MIN(total_cash)     AS best_cash,
+        MIN(total_pts)      AS best_pts,
+        MIN(total_hyb_pts)  AS best_hyb_pts,
+        MIN(total_hyb_cash) AS best_hyb_cash,
+        MAX(scraped_at)     AS scraped_at
+      FROM per_pair
+    `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to])
+
+    return rows[0] ?? {
+      currency: null, best_cash: null, best_pts: null,
+      best_hyb_pts: null, best_hyb_cash: null, scraped_at: null,
+    }
+  }
+
+  /**
+   * Preço atual da rotina.
+   *
+   * Com `inbound` (round_trip), devolve o menor TOTAL DE PAR. Sem, só tarifa
+   * avulsa (`return_date IS NULL`). Os dois ramos são exclusivos de propósito:
+   * mostrar o preço de uma perna como se fosse o da viagem — ou o preço de par
+   * como se fosse avulso — é exatamente o que se quer evitar.
+   */
   async getCurrentBest(
     airlines: string[],
     origin: string,
     destination: string,
     dateFrom: string,
     dateTo: string,
+    inbound?: { from: string; to: string },
   ): Promise<CurrentBest> {
+    if (inbound) return this.getCurrentBestPair(airlines, origin, destination, dateFrom, dateTo, inbound)
+
     const { rows } = await this.db.query<CurrentBest>(`
       WITH latest_per_date AS (
         SELECT DISTINCT ON (flight_date)
@@ -191,6 +335,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
           AND is_return = false
+          AND return_date IS NULL
           AND scraped_at >= NOW() - INTERVAL '30 days'
         ORDER BY flight_date, scraped_at DESC
       )
@@ -207,6 +352,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
        AND COALESCE(f.request_id::text, f.scraping_job_id::text)
          = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
+        AND f.return_date IS NULL
     `, [airlines, origin, destination, dateFrom, dateTo])
 
     return rows[0] ?? {
@@ -235,6 +381,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
           AND is_return = false
+          AND return_date IS NULL
           AND scraped_at >= NOW() - INTERVAL '30 days'
         ORDER BY flight_date, scraped_at DESC
       )
@@ -250,6 +397,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
        AND COALESCE(f.request_id::text, f.scraping_job_id::text)
          = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
+        AND f.return_date IS NULL
       GROUP BY f.flight_date
       ORDER BY f.flight_date
     `, [airlines, origin, destination, dateFrom, dateTo])

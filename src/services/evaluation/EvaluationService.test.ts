@@ -79,6 +79,7 @@ function makeMocks() {
 
   const mockFlightFaresRepo = {
     getLatestByRoute: vi.fn(),
+    getLatestPairs:   vi.fn().mockResolvedValue([]),
     getPriceHistory:  vi.fn().mockResolvedValue(makeHistory()),
   } satisfies Partial<IFlightFaresRepository> as unknown as IFlightFaresRepository
 
@@ -354,7 +355,7 @@ describe('EvaluationService', () => {
     expect(n).toBe(7)
     expect(mockAlertStateRepo.cleanupPastDates).toHaveBeenCalledOnce()
   })
-  // ── round-trip (Fase 1) ──────────────────────────────────────────────────────
+  // -- round-trip: coleta por PAR ---------------------------------------------
 
   describe('round_trip', () => {
     const rtRoutine = () => makeRoutine({
@@ -364,39 +365,49 @@ describe('EvaluationService', () => {
       target_cash:   3000,
     })
 
-    // getLatestByRoute é chamado 2x: ida (origin→destination) e volta (invertida).
-    function legs(outbound: LatestFaresByDate[], inbound: LatestFaresByDate[]) {
-      return vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockImplementation(
-        async (_airline: string, origin: string) => (origin === 'VCP' ? outbound : inbound),
-      )
-    }
+    // Uma busca RT devolve as DUAS pernas do mesmo par: mesma (flight_date,
+    // return_date), a volta com a rota invertida e is_return=true.
+    const pair = (o: {
+      out: string; ret: string; outCash: number; inCash: number;
+      bundle?: number | null; outCur?: string; inCur?: string;
+    }) => [
+      { ...makeFare({ flight_date: o.out, is_return: false, fare_cash: o.outCash, currency: o.outCur ?? 'BRL' }),
+        return_date: o.ret, origin: 'VCP', destination: 'LIS', bundle_cash: o.bundle ?? null },
+      { ...makeFare({ flight_date: o.out, is_return: true, fare_cash: o.inCash, currency: o.inCur ?? 'BRL' }),
+        return_date: o.ret, origin: 'LIS', destination: 'VCP', bundle_cash: o.bundle ?? null },
+    ]
 
-    it('par válido — alerta com o TOTAL das duas pernas e leva a volta para o e-mail', async () => {
+    const givenPairs = (...rows: unknown[][]) =>
+      vi.mocked(mockFlightFaresRepo.getLatestPairs).mockResolvedValue(rows.flat() as never)
+
+    it('par valido - alerta com o total das pernas e leva a volta para o e-mail', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      legs(
-        [makeFare({ flight_date: '2026-08-15', fare_cash: 1200 })],
-        [makeFare({ flight_date: '2026-09-10', fare_cash: 1300 })],
-      )
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300 }))
 
       await svc.runCycle()
 
       expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
-      // O watermark grava o total do par (1200 + 1300), não a perna.
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
       expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2500, airline: 'azul' }])
-      // 4o argumento = volta indexada pela data de ida.
       const inboundArg = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0][3]
-      expect(inboundArg?.get('2026-08-15')?.flight_date).toBe('2026-09-10')
+      expect(inboundArg?.get('2026-08-15')?.is_return).toBe(true)
     })
 
-    it('escolhe o menor total válido para cada data de ida', async () => {
+    it('bundle da companhia vence a soma das pernas', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      legs(
-        [makeFare({ flight_date: '2026-08-15', fare_cash: 1200 })],
-        [
-          makeFare({ flight_date: '2026-09-10', fare_cash: 1300 }),
-          makeFare({ flight_date: '2026-09-20', fare_cash: 900 }),
-        ],
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300, bundle: 2100 }))
+
+      await svc.runCycle()
+
+      const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
+      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2100, airline: 'azul' }])
+    })
+
+    it('escolhe o menor total entre pares da mesma data de ida', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      givenPairs(
+        pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300 }),
+        pair({ out: '2026-08-15', ret: '2026-09-20', outCash: 1200, inCash: 900 }),
       )
 
       await svc.runCycle()
@@ -405,76 +416,70 @@ describe('EvaluationService', () => {
       expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2100, airline: 'azul' }])
     })
 
-    it('volta além do teto de 3 meses — par inválido, não alerta', async () => {
+    it('moedas diferentes entre as pernas - par descartado', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300, outCur: 'BRL', inCur: 'EUR' }))
+
+      await svc.runCycle()
+
+      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+    })
+
+    it('total acima do alvo - nao alerta mesmo com pernas baratas', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([
         makeRoutine({
-          trip_type:     'round_trip',
-          inbound_start: '2026-12-01',
-          inbound_end:   '2026-12-31',
-          target_cash:   3000,
+          trip_type: 'round_trip', inbound_start: '2026-09-01', inbound_end: '2026-09-30',
+          target_cash: 2000, margin: 0,
         }),
       ])
-      legs(
-        [makeFare({ flight_date: '2026-08-01', fare_cash: 1200 })],
-        [makeFare({ flight_date: '2026-12-15', fare_cash: 1300 })],
-      )
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1500, inCash: 1500 }))
 
       await svc.runCycle()
 
       expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
     })
 
-    it('moedas diferentes entre as pernas — par descartado, não alerta', async () => {
+    it('par com uma perna so - descartado, nada e alertado', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      legs(
-        [makeFare({ flight_date: '2026-08-15', fare_cash: 1200, currency: 'BRL' })],
-        [makeFare({ flight_date: '2026-09-10', fare_cash: 1300, currency: 'EUR' })],
-      )
+      const [outboundLeg] = pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300 })
+      givenPairs([outboundLeg])
 
       await svc.runCycle()
 
       expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
     })
 
-    it('total acima do alvo — não alerta mesmo com cada perna barata isolada', async () => {
-      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([
-        makeRoutine({
-          trip_type:     'round_trip',
-          inbound_start: '2026-09-01',
-          inbound_end:   '2026-09-30',
-          target_cash:   2000,
-          margin:        0,
-        }),
+    it('nenhum par colhido - segue silencioso', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      givenPairs()
+
+      await svc.runCycle()
+
+      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+    })
+
+    it('rotina RT NAO le tarifa avulsa - nunca chama getLatestByRoute', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300 }))
+
+      await svc.runCycle()
+
+      expect(mockFlightFaresRepo.getLatestByRoute).not.toHaveBeenCalled()
+    })
+
+    it('rotina one-way NAO le tarifa de par - pede explicitamente return_date null', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([makeRoutine()])
+      vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([
+        makeFare({ flight_date: '2026-08-15', fare_cash: 1800 }),
       ])
-      legs(
-        [makeFare({ flight_date: '2026-08-15', fare_cash: 1500 })],
-        [makeFare({ flight_date: '2026-09-10', fare_cash: 1500 })],
-      )
 
       await svc.runCycle()
 
-      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+      expect(mockFlightFaresRepo.getLatestPairs).not.toHaveBeenCalled()
+      expect(vi.mocked(mockFlightFaresRepo.getLatestByRoute).mock.calls[0][5]).toBeNull()
     })
 
-    it('só a perna de ida voltou — companhia descartada e nada é alertado', async () => {
-      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      legs([makeFare({ flight_date: '2026-08-15', fare_cash: 1200 })], [])
-
-      await svc.runCycle()
-
-      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
-    })
-
-    it('nenhuma das pernas voltou — não é par incompleto, segue silencioso', async () => {
-      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      legs([], [])
-
-      await svc.runCycle()
-
-      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
-    })
-
-    it('one_way não regride — segue chamando dispatchAlert sem o argumento de volta', async () => {
+    it('one_way nao regride - dispatchAlert segue com a assinatura original', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([makeRoutine()])
       vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([
         makeFare({ flight_date: '2026-08-15', fare_cash: 1800 }),

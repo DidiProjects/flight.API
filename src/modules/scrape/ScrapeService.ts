@@ -16,6 +16,12 @@ function isBlockError(error: string): boolean {
   return /bot|block|ip[\s/_-]?block|captcha|detection|acesso foi limitado|comportamento incomum/i.test(error)
 }
 
+/** DATE do pg volta como string ou Date; normaliza para YYYY-MM-DD ou null. */
+function toDateOrNull(v: string | Date | null): string | null {
+  if (v == null) return null
+  return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
+}
+
 export class ScrapeService implements IScrapeService {
   constructor(
     private readonly scrapingJobRepo: IScrapingJobRepository,
@@ -65,7 +71,7 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
-    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data))
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data, toDateOrNull(job.return_date)))
 
     const nextRunAt = calcNextRunAt(job.flight_date)
     await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
@@ -101,7 +107,7 @@ export class ScrapeService implements IScrapeService {
     }
 
     // Persiste a coleta (ON CONFLICT protege contra duplicata na mesma execução).
-    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data))
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data, toDateOrNull(job.return_date)))
 
     // Só reagenda o job se ele NÃO estiver no meio de uma nova coleta (re-despacho
     // já em voo com outro request_id) — nesse caso evitamos sobrescrever o estado.
@@ -114,7 +120,12 @@ export class ScrapeService implements IScrapeService {
     log.info({ jobId: job.id, faresCount: count, jobMovedOn }, 'orphan callback: coleta salva')
   }
 
-  private toFareRows(data: ScrapeCallback) {
+  /**
+   * O `return_date` vem do JOB, não do callback: o job é quem define o par que
+   * foi buscado. Sem este carimbo a tarifa colhida numa busca ida-e-volta ficaria
+   * indistinguível de uma avulsa e voltaria a ser reaproveitada como se fosse.
+   */
+  private toFareRows(data: ScrapeCallback, returnDate: string | null) {
     return data.flights.map((f) => ({
       flight_number:  f.flightNumber ?? null,
       flight_date:    f.date,
@@ -131,6 +142,7 @@ export class ScrapeService implements IScrapeService {
       fare_pts:       f.farePts ?? null,
       fare_hyb_pts:   f.fareHybPts ?? null,
       fare_hyb_cash:  f.fareHybCash ?? null,
+      return_date:    returnDate,
     }))
   }
 }

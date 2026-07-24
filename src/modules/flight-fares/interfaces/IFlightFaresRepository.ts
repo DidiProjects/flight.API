@@ -17,6 +17,8 @@ export interface FlightFareRow {
   fare_pts: number | null
   fare_hyb_pts: number | null
   fare_hyb_cash: number | null
+  /** Par de origem da tarifa. NULL = colhida numa busca one-way avulsa. */
+  return_date: string | null
   scraped_at: Date
 }
 
@@ -64,13 +66,25 @@ export interface PriceByDate {
 
 export interface IFlightFaresRepository {
   insertMany(jobId: string, requestId: string, fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'request_id' | 'scraped_at'>[]): Promise<number>
-  getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string, maxAgeHours?: number): Promise<LatestFaresByDate[]>
+  getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string, returnDate: string | null, maxAgeHours?: number): Promise<LatestFaresByDate[]>
+  getLatestPairs(airline: string, origin: string, destination: string, outFrom: string, outTo: string, inFrom: string, inTo: string, maxAgeHours?: number): Promise<PairFareRow[]>
   getPriceHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceHistory>
-  getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<CurrentBest>
+  getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<CurrentBest>
   getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceByDate[]>
   /** Moeda já observada em tarifas coletadas para o trajeto/companhias (fonte primária da rotina). */
   getKnownCurrency(airlines: string[], origin: string, destination: string): Promise<string | null>
   aggregateToDailyBucket(bucketDate: string): Promise<number>
   cleanupOlderThan(days: number): Promise<number>
+}
+
+/** Linha de tarifa colhida numa busca de PAR (ida-e-volta). */
+export interface PairFareRow extends LatestFaresByDate {
+  return_date: string
+  origin: string
+  destination: string
+  bundle_cash: string | number | null
+  bundle_pts: string | number | null
+  bundle_hyb_pts: string | number | null
+  bundle_hyb_cash: string | number | null
 }

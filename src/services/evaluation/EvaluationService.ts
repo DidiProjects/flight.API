@@ -1,6 +1,6 @@
 import { IEvaluationService } from './interfaces/IEvaluationService'
 import { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
-import { IFlightFaresRepository, LatestFaresByDate } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import { IFlightFaresRepository, LatestFaresByDate, PairFareRow } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { ITargetAlertStateRepository } from '../../modules/target-alert-state/interfaces/ITargetAlertStateRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { RoutineRow } from '../../types'
@@ -76,6 +76,9 @@ export class EvaluationService implements IEvaluationService {
           routine.destination,
           toDateStr(routine.outbound_start),
           toDateStr(routine.outbound_end),
+          // Rotina one-way só enxerga tarifa avulsa. Tarifa colhida numa busca
+          // ida-e-volta é preço de par e não vale como one-way.
+          null,
           MAX_FARE_AGE_HOURS,
         )
         allOutbound.push(...outbound)
@@ -173,52 +176,72 @@ export class EvaluationService implements IEvaluationService {
     const best = new Map<string, { outbound: LatestFaresByDate; inbound: LatestFaresByDate; total: number }>()
 
     for (const airline of routine.airlines) {
-      const [outbound, inbound] = await Promise.all([
-        this.flightFaresRepo.getLatestByRoute(
-          airline, routine.origin, routine.destination,
-          toDateStr(routine.outbound_start), toDateStr(routine.outbound_end), MAX_FARE_AGE_HOURS,
-        ),
-        this.flightFaresRepo.getLatestByRoute(
-          airline, routine.destination, routine.origin,
-          toDateStr(routine.inbound_start!), toDateStr(routine.inbound_end!), MAX_FARE_AGE_HOURS,
-        ),
-      ])
+      const rows = await this.flightFaresRepo.getLatestPairs(
+        airline, routine.origin, routine.destination,
+        toDateStr(routine.outbound_start), toDateStr(routine.outbound_end),
+        toDateStr(routine.inbound_start!), toDateStr(routine.inbound_end!),
+        MAX_FARE_AGE_HOURS,
+      )
+      if (rows.length === 0) continue
 
-      // Sem tarifa nenhuma: a companhia ainda não foi raspada, não é par incompleto.
-      if (outbound.length === 0 && inbound.length === 0) continue
-
-      // Uma perna só é dado corrompido, não oferta barata: descarta a companhia
-      // e reporta. O `err.type` vira label no Grafana.
-      if (outbound.length === 0 || inbound.length === 0) {
-        const missingLeg = outbound.length === 0 ? 'outbound' : 'inbound'
-        log.error(
-          { err: new IncompleteRoundTripError(routine.id, airline, missingLeg), routineId: routine.id, airline, missingLeg },
-          'evaluation: par round-trip incompleto — companhia descartada do ciclo',
-        )
-        continue
+      // Agrupa por par (ida, volta). As duas pernas vêm da MESMA busca RT.
+      const byPair = new Map<string, PairFareRow[]>()
+      for (const r of rows) {
+        const key = `${toDateStr(r.flight_date)}|${toDateStr(r.return_date)}`
+        const list = byPair.get(key)
+        if (list) list.push(r)
+        else byPair.set(key, [r])
       }
 
-      for (const out of outbound) {
-        const outValue = this.fareValue(out, routine)
-        if (outValue == null) continue
-        const outDate = toDateStr(out.flight_date)
+      for (const [key, legs] of byPair) {
+        const [outDate] = key.split('|')
+        const outbound = legs.filter((l) => !l.is_return)
+        const inbound = legs.filter((l) => l.is_return)
 
-        for (const inb of inbound) {
-          const inValue = this.fareValue(inb, routine)
-          if (inValue == null) continue
-          if (!isValidRoundTripPair(outDate, toDateStr(inb.flight_date))) continue
-          if ((out.currency ?? null) !== (inb.currency ?? null)) continue
+        // Par que voltou com uma perna só é dado corrompido, não oferta barata.
+        if (outbound.length === 0 || inbound.length === 0) {
+          const missingLeg = outbound.length === 0 ? 'outbound' : 'inbound'
+          log.error(
+            { err: new IncompleteRoundTripError(routine.id, airline, missingLeg), routineId: routine.id, airline, missingLeg, pair: key },
+            'evaluation: par round-trip incompleto — par descartado do ciclo',
+          )
+          continue
+        }
 
-          const total = outValue + inValue
-          if (!this.totalInTarget(total, routine, out, inb)) continue
+        // Moedas diferentes entre as pernas: sem conversão de câmbio, não avalia.
+        if ((outbound[0].currency ?? null) !== (inbound[0].currency ?? null)) continue
 
-          const cur = best.get(outDate)
-          if (cur == null || total < cur.total) best.set(outDate, { outbound: out, inbound: inb, total })
+        for (const out of outbound) {
+          const outValue = this.fareValue(out, routine)
+          if (outValue == null) continue
+          for (const inb of inbound) {
+            const inValue = this.fareValue(inb, routine)
+            if (inValue == null) continue
+
+            // Preço do par: o bundle da cia quando veio, senão a soma das pernas
+            // daquela mesma busca RT. Nunca mistura com tarifa avulsa.
+            const bundle = this.bundleValue(out, routine)
+            const total = bundle ?? outValue + inValue
+            if (!this.totalInTarget(total, routine, out, inb)) continue
+
+            const cur = best.get(outDate)
+            if (cur == null || total < cur.total) best.set(outDate, { outbound: out, inbound: inb, total })
+          }
         }
       }
     }
 
     return best
+  }
+
+  /** Total do par cobrado pela companhia (bundle), na dimensão de preço da rotina. */
+  private bundleValue(fare: PairFareRow, routine: RoutineRow): number | null {
+    const raw =
+      routine.priority === 'cash' ? fare.bundle_cash :
+      routine.priority === 'pts'  ? fare.bundle_pts :
+      routine.priority === 'hyb'  ? fare.bundle_hyb_pts :
+      null
+    return raw == null ? null : Number(raw)
   }
 
   /**

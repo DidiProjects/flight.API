@@ -89,9 +89,9 @@ export class EmailService implements IEmailService {
   // Private template helpers
   // ---------------------------------------------------------------------------
 
-  private buildDeepLink(offer: OfferBlock, airline: string, passengers: number, fareType: string): string | null {
+  private buildDeepLink(offer: OfferBlock, airline: string, passengers: number, fareType: string, ret?: OfferBlock | null): string | null {
     switch (airline.toLowerCase()) {
-      case 'azul':           return this.buildAzulLink(offer, passengers, fareType)
+      case 'azul':           return this.buildAzulLink(offer, passengers, fareType, ret)
       case 'latam':          return this.buildLatamLink(offer, passengers, fareType)
       case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers)
       case 'ryanair':        return this.buildRyanairLink(offer, passengers)
@@ -99,11 +99,18 @@ export class EmailService implements IEmailService {
     }
   }
 
-  private buildAzulLink(offer: OfferBlock, passengers: number, fareType: string): string {
+  private buildAzulLink(offer: OfferBlock, passengers: number, fareType: string, ret?: OfferBlock | null): string {
     const cc = fareType === 'cash' ? 'BRL' : 'PTS'
-    const [y, m, d] = offer.date.split('-')
-    const std = `${m}/${d}/${y}`
-    return `https://www.voeazul.com.br/br/pt/home/selecao-voo?c[0].ds=${offer.origin}&c[0].std=${std}&c[0].as=${offer.destination}&p[0].t=ADT&p[0].c=${passengers}&p[0].cp=false&f.dl=3&f.dr=3&cc=${cc}`
+    const azulDate = (iso: string) => {
+      const [y, m, d] = iso.split('-')
+      return `${m}/${d}/${y}`
+    }
+    const leg0 = `c[0].ds=${offer.origin}&c[0].std=${azulDate(offer.date)}&c[0].as=${offer.destination}`
+    // Com volta, o link reproduz a MESMA busca ida-e-volta que originou o preço.
+    const leg1 = ret
+      ? `&c[1].ds=${ret.origin}&c[1].std=${azulDate(ret.date)}&c[1].as=${ret.destination}`
+      : ''
+    return `https://www.voeazul.com.br/br/pt/home/selecao-voo?${leg0}${leg1}&p[0].t=ADT&p[0].c=${passengers}&p[0].cp=false&f.dl=3&f.dr=3&cc=${cc}`
   }
 
   private buildLatamLink(offer: OfferBlock, passengers: number, fareType: string): string {
@@ -149,9 +156,11 @@ export class EmailService implements IEmailService {
 
     const offers = airlineOffers.map((ao: AirlineOfferPair) => {
       const airlineName = ao.airline.charAt(0).toUpperCase() + ao.airline.slice(1).toLowerCase()
+      const link = this.buildDeepLink(ao.outbound, ao.airline, passengers, fareType, ao.return)
       return [
-        this.renderOffer(ao.outbound, 'IDA',   this.buildDeepLink(ao.outbound, ao.airline, passengers, fareType), airlineName, ao.currency),
-        ao.return ? this.renderOffer(ao.return, 'VOLTA', this.buildDeepLink(ao.return, ao.airline, passengers, fareType), airlineName, ao.currency) : '',
+        this.renderOffer(ao.outbound, 'IDA',   link, airlineName, ao.currency),
+        ao.return ? this.renderOffer(ao.return, 'VOLTA', link, airlineName, ao.currency) : '',
+        ao.return ? this.renderPairTotal(ao, fareType) : '',
       ].join('')
     }).join('')
 
@@ -193,6 +202,44 @@ export class EmailService implements IEmailService {
   </table>
 </body>
 </html>`
+  }
+
+  /**
+   * Total da viagem no e-mail de RT. O alerta é avaliado contra a soma das duas
+   * pernas — sem esta linha o usuário vê dois preços e nenhum deles é o número
+   * que disparou a notificação.
+   */
+  private renderPairTotal(ao: AirlineOfferPair, fareType: string): string {
+    const sum = (a: number | null | undefined, b: number | null | undefined) =>
+      a == null || b == null ? null : Number(a) + Number(b)
+
+    const out = ao.outbound
+    const ret = ao.return
+    if (!ret) return ''
+
+    const rows: string[] = []
+    const totalCash = sum(out.fareCash, ret.fareCash)
+    const totalPts = sum(out.farePts, ret.farePts)
+
+    if (fareType === 'cash' && totalCash != null) {
+      rows.push(this.renderFareRow(`${ao.currency} total`, this.fmtCurrency(totalCash, ao.currency)))
+    } else if (fareType === 'pts' && totalPts != null) {
+      rows.push(this.renderFareRow('Pontos total', `${totalPts.toLocaleString('pt-BR')} pts`))
+    } else {
+      const hybPts = sum(out.fareHybPts, ret.fareHybPts)
+      const hybCash = sum(out.fareHybCash, ret.fareHybCash)
+      if (hybPts != null && hybCash != null) {
+        rows.push(this.renderFareRow('Híbrido total', `${hybPts.toLocaleString('pt-BR')} pts + ${this.fmtCurrency(hybCash, ao.currency)}`))
+      }
+    }
+    if (rows.length === 0) return ''
+
+    return `<tr><td style="padding:8px 20px 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #041e42;">
+        <tr><td style="padding-top:10px;font-size:13px;font-weight:700;color:#041e42;">TOTAL IDA + VOLTA</td></tr>
+        ${rows.join('')}
+      </table>
+    </td></tr>`
   }
 
   private renderOffer(offer: OfferBlock, label: string, link: string | null, airline: string, currency: string): string {
@@ -267,9 +314,11 @@ export class EmailService implements IEmailService {
     const sections = params.routines.map((section) => {
       const offers = section.airlineOffers.map((ao: AirlineOfferPair) => {
         const airlineName = ao.airline.charAt(0).toUpperCase() + ao.airline.slice(1).toLowerCase()
+        const sectionLink = this.buildDeepLink(ao.outbound, ao.airline, section.passengers, section.fareType, ao.return)
         return [
-          this.renderOffer(ao.outbound, 'IDA',   this.buildDeepLink(ao.outbound, ao.airline, section.passengers, section.fareType), airlineName, ao.currency),
-          ao.return ? this.renderOffer(ao.return, 'VOLTA', this.buildDeepLink(ao.return, ao.airline, section.passengers, section.fareType), airlineName, ao.currency) : '',
+          this.renderOffer(ao.outbound, 'IDA',   sectionLink, airlineName, ao.currency),
+          ao.return ? this.renderOffer(ao.return, 'VOLTA', sectionLink, airlineName, ao.currency) : '',
+          ao.return ? this.renderPairTotal(ao, section.fareType) : '',
         ].join('')
       }).join('')
 

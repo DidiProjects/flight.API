@@ -234,6 +234,14 @@ export class SchedulerService implements ISchedulerService {
       this.airportsRepo.getCountryCode(job.destination),
     ])
 
+    // Job de par: manda as duas datas para o scraper fazer UMA busca
+    // ida-e-volta, que é a única forma de o desconto de bundle aparecer.
+    const returnDate = job.return_date == null
+      ? null
+      : typeof job.return_date === 'string'
+        ? job.return_date.slice(0, 10)
+        : (job.return_date as unknown as Date).toISOString().slice(0, 10)
+
     const payload = {
       requestId,
       routineId:     job.id,
@@ -242,12 +250,14 @@ export class SchedulerService implements ISchedulerService {
       destination:   job.destination,
       outboundStart: flightDate,
       outboundEnd:   flightDate,
+      returnStart:   returnDate ?? undefined,
+      returnEnd:     returnDate ?? undefined,
       passengers:    1,
       originCountry:      originCountry ?? undefined,
       destinationCountry: destinationCountry ?? undefined,
     }
 
-    const runData = { jobId: job.id, requestId, airline: job.airline, origin: job.origin, destination: job.destination, flightDate }
+    const runData = { jobId: job.id, requestId, airline: job.airline, origin: job.origin, destination: job.destination, flightDate, returnDate }
 
     try {
       await this.scraperClient.dispatch(payload)

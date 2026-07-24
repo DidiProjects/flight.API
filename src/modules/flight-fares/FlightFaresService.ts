@@ -12,9 +12,13 @@ export class FlightFaresService implements IFlightFaresService {
     return this.repo.getSummary(airlines, origin, destination, dateFrom, dateTo)
   }
 
-  async getCurrent(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<FlightFaresCurrent> {
+  async getCurrent(
+    airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string,
+    // Rotina round_trip: o preço atual é o TOTAL do par, não o da perna de ida.
+    inbound?: { from: string; to: string },
+  ): Promise<FlightFaresCurrent> {
     const [current, summary] = await Promise.all([
-      this.repo.getCurrentBest(airlines, origin, destination, dateFrom, dateTo),
+      this.repo.getCurrentBest(airlines, origin, destination, dateFrom, dateTo, inbound),
       this.repo.getSummary(airlines, origin, destination, dateFrom, dateTo),
     ])
     return { ...summary, ...current }

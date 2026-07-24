@@ -20,6 +20,8 @@ export interface AirlineRow {
   has_cash: boolean
   has_pts: boolean
   has_hyb: boolean
+  /** Sabe fazer busca ida-e-volta numa sessão só (pré-requisito para round_trip). */
+  has_roundtrip: boolean
 }
 
 export interface CcEmail {
