@@ -184,19 +184,35 @@ export class EvaluationService implements IEvaluationService {
       )
       if (rows.length === 0) continue
 
-      // Agrupa por par (ida, volta). As duas pernas vêm da MESMA busca RT.
+      // Agrupa pela EXECUÇÃO: as duas pernas do par saem da mesma busca RT e
+      // compartilham request_id. Agrupar por flight_date separava as pernas em
+      // grupos diferentes (a volta carrega a data DELA) e todo par real caía
+      // como incompleto.
       const byPair = new Map<string, PairFareRow[]>()
       for (const r of rows) {
-        const key = `${toDateStr(r.flight_date)}|${toDateStr(r.return_date)}`
-        const list = byPair.get(key)
+        const list = byPair.get(r.request_id)
         if (list) list.push(r)
-        else byPair.set(key, [r])
+        else byPair.set(r.request_id, [r])
       }
 
-      for (const [key, legs] of byPair) {
-        const [outDate] = key.split('|')
+      for (const legs of byPair.values()) {
+        const outDate = toDateStr(legs[0].pair_outbound_date)
+        // Só para log: identifica o par nas mensagens de par incompleto.
+        const key = `${outDate}|${toDateStr(legs[0].return_date)}`
         const outbound = legs.filter((l) => !l.is_return)
         const inbound = legs.filter((l) => l.is_return)
+
+        // Volta indefinida por limitação conhecida: a volta EXISTE, a companhia
+        // só não deixa vê-la (em pontos a Azul exige login do TudoAzul). Não é
+        // dado corrompido, então não reporta — mas também não vira total: se a
+        // volta é desconhecida, o preço da ida não é o preço da viagem.
+        if (inbound.length === 0 && outbound.length > 0 && outbound.every((o) => o.inbound_unavailable)) {
+          log.info(
+            { routineId: routine.id, airline, pair: key },
+            'evaluation: volta indefinida (limitação conhecida) — par exibido sem total, sem alerta',
+          )
+          continue
+        }
 
         // Par que voltou com uma perna só é dado corrompido, não oferta barata.
         if (outbound.length === 0 || inbound.length === 0) {
@@ -218,7 +234,25 @@ export class EvaluationService implements IEvaluationService {
           // As voltas desta ida — e só elas. Uma volta foi precificada NO
           // CONTEXTO de uma ida: cruzar com outra inventaria um par que a
           // companhia nunca ofereceu (e é justamente onde o desconto vive).
-          for (const inb of this.inboundsFor(out, inbound)) {
+          const mine = this.inboundsFor(out, inbound)
+          if (mine.length === 0) {
+            // O par tem voltas, mas nenhuma é desta ida. Se a limitação é
+            // conhecida, tolera em silêncio; senão é dado corrompido.
+            if (out.inbound_unavailable) {
+              log.info(
+                { routineId: routine.id, airline, pair: key, outboundFlight: out.flight_number },
+                'evaluation: ida com volta indefinida — sem total, sem alerta',
+              )
+            } else {
+              log.error(
+                { err: new IncompleteRoundTripError(routine.id, airline, 'inbound'), routineId: routine.id, airline, pair: key, outboundFlight: out.flight_number },
+                'evaluation: ida sem nenhuma volta vinculada — ida descartada do ciclo',
+              )
+            }
+            continue
+          }
+
+          for (const inb of mine) {
             const inValue = this.fareValue(inb, routine)
             if (inValue == null) continue
 

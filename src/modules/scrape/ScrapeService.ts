@@ -145,6 +145,8 @@ export class ScrapeService implements IScrapeService {
       return_date:    returnDate,
       // Vínculo 1-para-N: só as voltas carregam a ida que as precificou.
       paired_outbound_flight: f.isReturn ? (f.pairedOutboundFlight ?? null) : null,
+      // Volta indefinida é propriedade da IDA (as voltas DELA não abriram).
+      inbound_unavailable:    !f.isReturn && f.inboundUnavailable === true,
     }))
   }
 }

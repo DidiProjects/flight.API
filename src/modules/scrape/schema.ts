@@ -23,6 +23,13 @@ const flightOfferSchema = z.object({
    * ofereceu juntas.
    */
   pairedOutboundFlight: z.string().max(20).nullable().optional(),
+  /**
+   * Só na IDA: as voltas desta ida existem, mas uma limitação conhecida impede
+   * vê-las (em pontos a Azul exige login do TudoAzul). Volta indefinida — o par
+   * é exibido sem total e não alerta. Volta que sumiu sem motivo não vem
+   * marcada e segue tratada como dado corrompido.
+   */
+  inboundUnavailable: z.boolean().optional().default(false),
 })
 
 export type FlightOfferInput = z.infer<typeof flightOfferSchema>

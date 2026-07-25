@@ -13,6 +13,13 @@ import type { FlightFareRow } from './interfaces/IFlightFaresRepository'
 const DB_URL = process.env.TEST_DATABASE_URL
 const SCHEMA = 'flight_fares_it'
 
+/** Coluna DATE volta do pg como Date; normaliza para YYYY-MM-DD. */
+function toDateStr(v: string | Date): string {
+  return v instanceof Date
+    ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`
+    : String(v).slice(0, 10)
+}
+
 // Mesmo job (rota), execuções diferentes — exatamente o cenário de produção:
 // scraping_jobs é por rota (permanente), cada coleta tem seu próprio request_id.
 const JOB_ID = '00000000-0000-0000-0000-0000000000aa'
@@ -21,7 +28,7 @@ const REQ_2  = '22222222-2222-2222-2222-222222222222'
 
 type FareInput = Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'request_id' | 'scraped_at'>
 
-function fare(flightNumber: string, fareCash: number): FareInput {
+function fare(flightNumber: string, fareCash: number, over: Partial<FareInput> = {}): FareInput {
   return {
     flight_number:  flightNumber,
     flight_date:    '2026-07-12',
@@ -38,7 +45,33 @@ function fare(flightNumber: string, fareCash: number): FareInput {
     fare_pts:       null,
     fare_hyb_pts:   null,
     fare_hyb_cash:  null,
+    return_date:            null,
+    paired_outbound_flight: null,
+    inbound_unavailable:    false,
+    ...over,
   }
+}
+
+/**
+ * Perna de um par ida-e-volta.
+ *
+ * A volta tem `flight_date` igual à data DELA (a data de volta) e não à da ida —
+ * é o formato que o scraper realmente grava, e o que o SQL do par tem de casar
+ * pelo request_id.
+ */
+function pairLeg(o: {
+  flight: string; cash: number; outDate: string; retDate: string;
+  isReturn: boolean; pairedTo?: string | null; inboundUnavailable?: boolean;
+}): FareInput {
+  return fare(o.flight, o.cash, {
+    flight_date: o.isReturn ? o.retDate : o.outDate,
+    is_return:   o.isReturn,
+    origin:      o.isReturn ? 'VCP' : 'CNF',
+    destination: o.isReturn ? 'CNF' : 'VCP',
+    return_date: o.retDate,
+    paired_outbound_flight: o.pairedTo ?? null,
+    inbound_unavailable:    o.inboundUnavailable ?? false,
+  })
 }
 
 const describeIt = DB_URL ? describe : describe.skip
@@ -72,12 +105,20 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
         fare_pts         NUMERIC(10,0),
         fare_hyb_pts     NUMERIC(10,0),
         fare_hyb_cash    NUMERIC(10,2),
+        return_date      DATE,
+        paired_outbound_flight VARCHAR(20),
+        inbound_unavailable    BOOLEAN NOT NULL DEFAULT FALSE,
+        bundle_cash      NUMERIC(10,2),
+        bundle_pts       NUMERIC(10,0),
+        bundle_hyb_pts   NUMERIC(10,0),
+        bundle_hyb_cash  NUMERIC(10,2),
         scraped_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW()
       )
     `)
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_flight_fares_no_dup
-        ON ${SCHEMA}.flight_fares(request_id, flight_date, is_return, flight_number)
+        ON ${SCHEMA}.flight_fares(request_id, flight_date, is_return, flight_number, paired_outbound_flight)
+        NULLS NOT DISTINCT
         WHERE flight_number IS NOT NULL AND request_id IS NOT NULL
     `)
     repo = new FlightFaresRepository(pool)
@@ -154,5 +195,91 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
     const replay = await repo.insertMany(JOB_ID, REQ_1, [fare('AD4188', 702.05)])
     expect(replay).toBe(0)
     expect(await countRows()).toBe(1)
+  })
+
+  // ── par ida-e-volta (1-para-N) ──────────────────────────────────────────────
+
+  const OUT = '2026-07-12'
+  const RET = '2026-07-20'
+
+  it('REGRESSÃO: as duas pernas do par caem no MESMO grupo', async () => {
+    // O bug: o par era casado por flight_date, mas a volta carrega a data DELA.
+    // As pernas iam para grupos diferentes e TODO par real era descartado como
+    // incompleto — a avaliação RT nunca produzia um total.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 566.28, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+
+    const rows = await repo.getLatestPairs('azul', 'CNF', 'VCP', OUT, OUT, RET, RET)
+
+    expect(rows).toHaveLength(2)
+    // As duas pernas compartilham a identidade do par e a data de ida.
+    expect(new Set(rows.map((r) => r.request_id)).size).toBe(1)
+    expect(rows.map((r) => toDateStr(r.pair_outbound_date))).toEqual([OUT, OUT])
+    // A volta continua carregando a data DELA — é justamente por isso que
+    // flight_date não serve para agrupar o par.
+    const inbound = rows.find((r) => r.is_return)!
+    expect(toDateStr(inbound.flight_date)).toBe(RET)
+  })
+
+  it('a mesma volta sob idas diferentes sobrevive ao dedup', async () => {
+    // É o mecanismo do desconto RT: a volta AD900 custa diferente dependendo da
+    // ida escolhida. Sem paired_outbound_flight na chave única, o ON CONFLICT
+    // guardaria só a primeira e o 1-para-N ficaria sem dado.
+    const inserted = await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD200', cash: 500.00, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 566.28, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+      pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD200' }),
+    ])
+
+    expect(inserted).toBe(4)
+    const rows = await repo.getLatestPairs('azul', 'CNF', 'VCP', OUT, OUT, RET, RET)
+    const ad900 = rows.filter((r) => r.flight_number === 'AD900')
+    expect(ad900).toHaveLength(2)
+    expect(new Set(ad900.map((r) => r.paired_outbound_flight))).toEqual(new Set(['AD100', 'AD200']))
+  })
+
+  it('getCurrentBest do par soma a ida com a volta DELA', async () => {
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD200', cash: 500.00, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 566.28, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+      pairLeg({ flight: 'AD901', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD200' }),
+    ])
+
+    const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    // 500 + 300 = 800 vence 365.45 + 566.28 = 931.73. O cruzamento proibido
+    // (365.45 + 300) daria 665.45 — um par que a companhia nunca ofereceu.
+    expect(Number(current.best_cash)).toBe(800)
+    expect(current.inbound_unavailable).toBe(false)
+  })
+
+  it('volta indefinida: sem total, com o motivo (exibe "-", não alerta)', async () => {
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false, inboundUnavailable: true }),
+    ])
+
+    const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    // O preço da ida NÃO é o preço da viagem: nada de 365.45 aqui.
+    expect(current.best_cash).toBeNull()
+    expect(current.inbound_unavailable).toBe(true)
+  })
+
+  it('tarifa avulsa não vaza para o total do par, nem o contrário', async () => {
+    await repo.insertMany(JOB_ID, REQ_1, [fare('AD4188', 100.00)])
+    await repo.insertMany(JOB_ID, REQ_2, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 566.28, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+
+    const pair = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+    const oneWay = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT)
+
+    expect(Number(pair.best_cash)).toBe(931.73)
+    expect(Number(oneWay.best_cash)).toBe(100)
   })
 })

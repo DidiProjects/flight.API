@@ -24,6 +24,11 @@ export interface FlightFareRow {
    * qualquer tarifa one-way. É o vínculo 1-para-N.
    */
   paired_outbound_flight: string | null
+  /**
+   * Só na ida: as voltas dela existem mas uma limitação conhecida impede vê-las
+   * (login do TudoAzul em pontos). Par exibido sem total, sem alerta.
+   */
+  inbound_unavailable: boolean
   scraped_at: Date
 }
 
@@ -59,6 +64,12 @@ export interface CurrentBest {
   best_hyb_pts: number | null
   best_hyb_cash: number | null
   scraped_at: Date | null
+  /**
+   * Round-trip sem total porque a volta é indefinida (limitação conhecida da
+   * companhia). Distingue "a viagem não tem total" de "nada foi coletado" — a
+   * ida existe, ela só não é o preço da viagem.
+   */
+  inbound_unavailable?: boolean
 }
 
 export interface PriceByDate {
@@ -88,9 +99,18 @@ export interface PairFareRow extends LatestFaresByDate {
   return_date: string
   origin: string
   destination: string
+  /** Execução que colheu o par. É a identidade do par: as duas pernas a compartilham. */
+  request_id: string
+  /**
+   * Data de IDA do par. Vem da perna de ida — a de volta tem `flight_date`
+   * igual à data dela, então `flight_date` não serve para agrupar o par.
+   */
+  pair_outbound_date: string
   flight_number: string | null
   /** Ida que precificou esta volta. NULL na ida (e em volta de coleta antiga). */
   paired_outbound_flight: string | null
+  /** Só na ida: volta indefinida por limitação conhecida (não é par corrompido). */
+  inbound_unavailable: boolean
   bundle_cash: string | number | null
   bundle_pts: string | number | null
   bundle_hyb_pts: string | number | null

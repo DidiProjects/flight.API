@@ -260,4 +260,37 @@ describe('ScrapeService.processCallback', () => {
     const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
     expect(calledFares[0]).toMatchObject({ paired_outbound_flight: null })
   })
+
+  it('volta indefinida e marcada na ida, nunca na volta', async () => {
+    const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
+    // A limitacao e da IDA: as voltas DELA nao abriram.
+    const outbound = { ...makeFlightOffer(), inboundUnavailable: true }
+    const inbound = {
+      ...makeFlightOffer(),
+      flightNumber: 'AD9999', isReturn: true, origin: 'LIS', destination: 'VCP',
+      inboundUnavailable: true,
+    }
+
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(2)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [outbound, inbound] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ is_return: false, inbound_unavailable: true })
+    expect(calledFares[1]).toMatchObject({ is_return: true, inbound_unavailable: false })
+  })
+
+  it('callback sem o campo novo - ida nao fica marcada', async () => {
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [makeFlightOffer()] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ inbound_unavailable: false })
+  })
 })

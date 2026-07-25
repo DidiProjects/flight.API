@@ -20,7 +20,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     for (const f of fares) {
       placeholders.push(
-        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
+        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
       )
       values.push(
         jobId,
@@ -42,6 +42,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         f.fare_hyb_cash,
         f.return_date,
         f.paired_outbound_flight,
+        f.inbound_unavailable,
         scrapedAt,
       )
     }
@@ -54,7 +55,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          (scraping_job_id, request_id, flight_number, flight_date, is_return, origin, destination, airline,
           departure_time, arrival_time, duration_min, stops, currency,
           fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, return_date,
-          paired_outbound_flight, scraped_at)
+          paired_outbound_flight, inbound_unavailable, scraped_at)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (request_id, flight_date, is_return, flight_number, paired_outbound_flight)
          WHERE flight_number IS NOT NULL AND request_id IS NOT NULL
@@ -71,8 +72,13 @@ export class FlightFaresRepository implements IFlightFaresRepository {
    * Só considera linhas com `return_date` preenchido — tarifa avulsa não entra,
    * porque não foi precificada no contexto do par.
    *
-   * A perna de ida vem como (origin -> destination) e a de volta como a rota
-   * invertida, ambas compartilhando (flight_date, return_date).
+   * O par é identificado pela EXECUÇÃO (`request_id`): as duas pernas da mesma
+   * busca RT compartilham request_id. A perna de volta tem `flight_date` igual à
+   * data DELA (a data de volta), não à data da ida — casar as pernas por
+   * flight_date separava o par em dois grupos e todo par real era descartado
+   * como incompleto.
+   *
+   * A data de ida do par vem da perna de ida e volta em `pair_outbound_date`.
    */
   async getLatestPairs(
     airline: string,
@@ -94,30 +100,34 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       SELECT
         f.airline, f.flight_date, f.return_date, f.is_return,
         f.origin, f.destination,
-        f.flight_number, f.paired_outbound_flight,
+        f.request_id, latest.outbound_date AS pair_outbound_date,
+        f.flight_number, f.paired_outbound_flight, f.inbound_unavailable,
         f.departure_time, f.arrival_time, f.duration_min, f.stops, f.currency,
         f.fare_cash, f.fare_pts, f.fare_hyb_pts, f.fare_hyb_cash,
         f.bundle_cash, f.bundle_pts, f.bundle_hyb_pts, f.bundle_hyb_cash,
         f.scraped_at
       FROM flight_fares f
       INNER JOIN (
-        -- Snapshot mais recente de cada par.
+        -- Snapshot mais recente de cada par. As datas do par vêm da perna de
+        -- IDA: é ela que tem flight_date = data de ida e return_date = data de
+        -- volta. A perna de volta tem flight_date = data DELA.
         SELECT DISTINCT ON (flight_date, return_date)
-          flight_date, return_date, request_id
+          flight_date AS outbound_date, return_date, request_id
         FROM flight_fares
         WHERE airline = $1
           AND return_date IS NOT NULL
+          AND NOT is_return
           AND flight_date BETWEEN $4 AND $5
           AND return_date BETWEEN $6 AND $7
-          AND ((origin = $2 AND destination = $3) OR (origin = $3 AND destination = $2))
+          AND origin = $2 AND destination = $3
         ORDER BY flight_date, return_date, scraped_at DESC
       ) latest
-        ON f.flight_date = latest.flight_date
-       AND f.return_date = latest.return_date
-       AND f.request_id  = latest.request_id
+        -- request_id é a identidade do par: as duas pernas saem da mesma busca.
+        ON f.request_id = latest.request_id
       WHERE f.airline = $1
+        AND f.return_date = latest.return_date
         ${freshFilter}
-      ORDER BY f.flight_date, f.return_date, f.is_return, f.fare_cash ASC NULLS LAST
+      ORDER BY latest.outbound_date, f.return_date, f.is_return, f.fare_cash ASC NULLS LAST
     `, params)
     return rows
   }
@@ -263,37 +273,52 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   ): Promise<CurrentBest> {
     const { rows } = await this.db.query<CurrentBest>(`
       WITH latest_pair AS (
+        -- Datas do par pela perna de IDA; a de volta tem flight_date igual à
+        -- data dela. O par é identificado pelo request_id da busca.
         SELECT DISTINCT ON (flight_date, return_date)
-          flight_date, return_date, request_id, scraped_at
+          flight_date AS outbound_date, return_date, request_id, scraped_at
         FROM flight_fares
         WHERE airline = ANY($1::text[])
           AND return_date IS NOT NULL
+          AND NOT is_return
           AND flight_date BETWEEN $4 AND $5
           AND return_date BETWEEN $6 AND $7
-          AND ((origin = $2 AND destination = $3) OR (origin = $3 AND destination = $2))
+          AND origin = $2 AND destination = $3
           AND scraped_at >= NOW() - INTERVAL '30 days'
         ORDER BY flight_date, return_date, scraped_at DESC
       ),
-      per_pair AS (
+      -- Uma linha por COMBINAÇÃO (ida, volta-mais-barata-daquela-ida), não por
+      -- par de datas: a volta é precificada no contexto da ida, então somar o
+      -- mínimo das idas com o mínimo de todas as voltas mostraria um total que a
+      -- companhia nunca ofereceu.
+      per_combo AS (
         SELECT
           lp.scraped_at,
-          MAX(f.currency) FILTER (WHERE f.currency IS NOT NULL) AS currency,
-          -- Bundle da companhia manda; sem ele, soma das pernas DA MESMA busca.
-          COALESCE(MAX(f.bundle_cash),
-            MIN(f.fare_cash) FILTER (WHERE NOT f.is_return) + MIN(f.fare_cash) FILTER (WHERE f.is_return)) AS total_cash,
-          COALESCE(MAX(f.bundle_pts),
-            MIN(f.fare_pts) FILTER (WHERE NOT f.is_return) + MIN(f.fare_pts) FILTER (WHERE f.is_return)) AS total_pts,
-          COALESCE(MAX(f.bundle_hyb_pts),
-            MIN(f.fare_hyb_pts) FILTER (WHERE NOT f.is_return) + MIN(f.fare_hyb_pts) FILTER (WHERE f.is_return)) AS total_hyb_pts,
-          COALESCE(MAX(f.bundle_hyb_cash),
-            MIN(f.fare_hyb_cash) FILTER (WHERE NOT f.is_return) + MIN(f.fare_hyb_cash) FILTER (WHERE f.is_return)) AS total_hyb_cash
-        FROM flight_fares f
-        INNER JOIN latest_pair lp
-          ON f.flight_date = lp.flight_date
-         AND f.return_date = lp.return_date
-         AND f.request_id  = lp.request_id
-        WHERE f.airline = ANY($1::text[])
-        GROUP BY lp.flight_date, lp.return_date, lp.scraped_at
+          o.currency,
+          o.inbound_unavailable,
+          -- Bundle da companhia manda; sem ele, ida + a volta mais barata DELA.
+          COALESCE(o.bundle_cash,     o.fare_cash     + MIN(i.fare_cash))     AS total_cash,
+          COALESCE(o.bundle_pts,      o.fare_pts      + MIN(i.fare_pts))      AS total_pts,
+          COALESCE(o.bundle_hyb_pts,  o.fare_hyb_pts  + MIN(i.fare_hyb_pts))  AS total_hyb_pts,
+          COALESCE(o.bundle_hyb_cash, o.fare_hyb_cash + MIN(i.fare_hyb_cash)) AS total_hyb_cash
+        FROM latest_pair lp
+        INNER JOIN flight_fares o
+          ON o.request_id  = lp.request_id
+         AND o.flight_date = lp.outbound_date
+         AND o.return_date = lp.return_date
+         AND NOT o.is_return
+         AND o.airline = ANY($1::text[])
+        -- LEFT JOIN de propósito: ida cuja volta é indefinida (login do TudoAzul)
+        -- fica com total NULL e a rotina exibe "-", em vez de mostrar o preço da
+        -- ida como se fosse o da viagem.
+        LEFT JOIN flight_fares i
+          ON i.request_id  = lp.request_id
+         AND i.return_date = lp.return_date
+         AND i.is_return
+         AND i.airline = o.airline
+         -- paired_outbound_flight NULL = coleta anterior ao vínculo 1-para-N.
+         AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
+        GROUP BY lp.scraped_at, o.id
       )
       SELECT
         MAX(currency)       AS currency,
@@ -301,13 +326,20 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         MIN(total_pts)      AS best_pts,
         MIN(total_hyb_pts)  AS best_hyb_pts,
         MIN(total_hyb_cash) AS best_hyb_cash,
-        MAX(scraped_at)     AS scraped_at
-      FROM per_pair
+        MAX(scraped_at)     AS scraped_at,
+        -- Só quando NENHUMA dimensão fechou total e existe ida com volta
+        -- indefinida: aí o "sem total" tem motivo conhecido, e a rotina exibe
+        -- isso em vez de "nada coletado".
+        (MIN(total_cash) IS NULL AND MIN(total_pts) IS NULL
+         AND MIN(total_hyb_pts) IS NULL AND MIN(total_hyb_cash) IS NULL
+         AND BOOL_OR(inbound_unavailable)) AS inbound_unavailable
+      FROM per_combo
     `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to])
 
     return rows[0] ?? {
       currency: null, best_cash: null, best_pts: null,
       best_hyb_pts: null, best_hyb_cash: null, scraped_at: null,
+      inbound_unavailable: false,
     }
   }
 

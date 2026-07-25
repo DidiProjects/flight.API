@@ -6,6 +6,16 @@ import type { ITargetAlertStateRepository, AlertWatermark } from '../../modules/
 import type { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import type { RoutineRow } from '../../types/index'
 
+// O erro de par incompleto é o que chega no Grafana; o teste precisa distinguir
+// "descartado e reportado" de "tolerado em silêncio". O serviço loga por
+// logger.child(), então o mock precisa ser do módulo, não um spy no logger raiz.
+const logSpy = vi.hoisted(() => ({
+  error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(),
+}))
+vi.mock('../../utils/logger', () => ({
+  logger: { ...logSpy, child: () => logSpy },
+}))
+
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 function makeRoutine(overrides: Partial<RoutineRow> = {}): RoutineRow {
@@ -109,6 +119,7 @@ describe('EvaluationService', () => {
   let svc: EvaluationService
 
   beforeEach(() => {
+    Object.values(logSpy).forEach((fn) => fn.mockClear())
     const mocks = makeMocks()
     mockRoutinesRepo    = mocks.mockRoutinesRepo
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
@@ -365,17 +376,28 @@ describe('EvaluationService', () => {
       target_cash:   3000,
     })
 
-    // Uma busca RT devolve as DUAS pernas do mesmo par: mesma (flight_date,
-    // return_date), a volta com a rota invertida e is_return=true.
+    // Uma busca RT devolve as DUAS pernas do mesmo par, compartilhando o
+    // request_id da execução — que é a identidade do par.
+    //
+    // ATENÇÃO: a perna de volta tem flight_date igual à data DELA (a data de
+    // volta), não à data da ida. A data de ida do par vem em pair_outbound_date.
+    // O fixture antigo dava o mesmo flight_date às duas pernas e por isso não
+    // pegou o bug que descartava todo par real como incompleto.
+    let reqSeq = 0
     const pair = (o: {
       out: string; ret: string; outCash: number; inCash: number;
       bundle?: number | null; outCur?: string; inCur?: string;
-    }) => [
-      { ...makeFare({ flight_date: o.out, is_return: false, fare_cash: o.outCash, currency: o.outCur ?? 'BRL' }),
-        return_date: o.ret, origin: 'VCP', destination: 'LIS', bundle_cash: o.bundle ?? null },
-      { ...makeFare({ flight_date: o.out, is_return: true, fare_cash: o.inCash, currency: o.inCur ?? 'BRL' }),
-        return_date: o.ret, origin: 'LIS', destination: 'VCP', bundle_cash: o.bundle ?? null },
-    ]
+    }) => {
+      const request_id = `req-pair-${++reqSeq}`
+      return [
+        { ...makeFare({ flight_date: o.out, is_return: false, fare_cash: o.outCash, currency: o.outCur ?? 'BRL' }),
+          return_date: o.ret, origin: 'VCP', destination: 'LIS', bundle_cash: o.bundle ?? null,
+          request_id, pair_outbound_date: o.out },
+        { ...makeFare({ flight_date: o.ret, is_return: true, fare_cash: o.inCash, currency: o.inCur ?? 'BRL' }),
+          return_date: o.ret, origin: 'LIS', destination: 'VCP', bundle_cash: o.bundle ?? null,
+          request_id, pair_outbound_date: o.out },
+      ]
+    }
 
     const givenPairs = (...rows: unknown[][]) =>
       vi.mocked(mockFlightFaresRepo.getLatestPairs).mockResolvedValue(rows.flat() as never)
@@ -455,20 +477,27 @@ describe('EvaluationService', () => {
     // trazer varias idas, cada uma com a sua lista de voltas.
     const linkedPair = (o: {
       out: string; ret: string;
-      outs: { flight: string; cash: number }[];
+      outs: { flight: string; cash: number; inboundUnavailable?: boolean }[];
       ins: { flight: string; cash: number; paired: string }[];
-    }) => [
-      ...o.outs.map((x) => ({
-        ...makeFare({ flight_date: o.out, is_return: false, fare_cash: x.cash, currency: 'BRL' }),
-        return_date: o.ret, origin: 'VCP', destination: 'LIS',
-        flight_number: x.flight, paired_outbound_flight: null, bundle_cash: null,
-      })),
-      ...o.ins.map((x) => ({
-        ...makeFare({ flight_date: o.out, is_return: true, fare_cash: x.cash, currency: 'BRL' }),
-        return_date: o.ret, origin: 'LIS', destination: 'VCP',
-        flight_number: x.flight, paired_outbound_flight: x.paired, bundle_cash: null,
-      })),
-    ]
+    }) => {
+      const request_id = `req-linked-${++reqSeq}`
+      return [
+        ...o.outs.map((x) => ({
+          ...makeFare({ flight_date: o.out, is_return: false, fare_cash: x.cash, currency: 'BRL' }),
+          return_date: o.ret, origin: 'VCP', destination: 'LIS',
+          flight_number: x.flight, paired_outbound_flight: null, bundle_cash: null,
+          inbound_unavailable: x.inboundUnavailable ?? false,
+          request_id, pair_outbound_date: o.out,
+        })),
+        ...o.ins.map((x) => ({
+          ...makeFare({ flight_date: o.ret, is_return: true, fare_cash: x.cash, currency: 'BRL' }),
+          return_date: o.ret, origin: 'LIS', destination: 'VCP',
+          flight_number: x.flight, paired_outbound_flight: x.paired, bundle_cash: null,
+          inbound_unavailable: false,
+          request_id, pair_outbound_date: o.out,
+        })),
+      ]
+    }
 
     it('so soma a volta que pertence a ida', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
@@ -513,6 +542,57 @@ describe('EvaluationService', () => {
 
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
       expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2500, airline: 'azul' }])
+    })
+
+    // -- 4.2 volta indefinida: exibe, nao alerta ------------------------------
+
+    it('volta indefinida por limitacao conhecida - nao alerta e nao reporta erro', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      // Nenhuma volta abriu (login do TudoAzul). A ida existe e e barata, mas o
+      // preco da ida NAO e o preco da viagem.
+      givenPairs(linkedPair({
+        out: '2026-08-15', ret: '2026-09-10',
+        outs: [{ flight: 'AD100', cash: 400, inboundUnavailable: true }],
+        ins:  [],
+      }))
+
+      await svc.runCycle()
+
+      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+      // Limitacao conhecida nao e dado corrompido: nada de erro no Grafana.
+      expect(logSpy.error).not.toHaveBeenCalled()
+    })
+
+    it('volta que sumiu sem motivo - segue descartada e reportada', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      givenPairs(linkedPair({
+        out: '2026-08-15', ret: '2026-09-10',
+        outs: [{ flight: 'AD100', cash: 400 }],
+        ins:  [],
+      }))
+
+      await svc.runCycle()
+
+      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+      expect(logSpy.error).toHaveBeenCalled()
+      const [payload] = logSpy.error.mock.calls[0]
+      expect((payload as { err: Error }).err.name).toBe('IncompleteRoundTripError')
+    })
+
+    it('ida com volta indefinida nao contamina a ida que tem volta', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      // AD200 e mais barata mas ficou sem volta; o total tem de sair de AD100.
+      givenPairs(linkedPair({
+        out: '2026-08-15', ret: '2026-09-10',
+        outs: [{ flight: 'AD100', cash: 1200 }, { flight: 'AD200', cash: 400, inboundUnavailable: true }],
+        ins:  [{ flight: 'AD900', cash: 1300, paired: 'AD100' }],
+      }))
+
+      await svc.runCycle()
+
+      const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
+      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2500, airline: 'azul' }])
+      expect(logSpy.error).not.toHaveBeenCalled()
     })
 
     it('nenhum par colhido - segue silencioso', async () => {
