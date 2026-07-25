@@ -143,6 +143,8 @@ export class ScrapeService implements IScrapeService {
       fare_hyb_pts:   f.fareHybPts ?? null,
       fare_hyb_cash:  f.fareHybCash ?? null,
       return_date:    returnDate,
+      // Vínculo 1-para-N: só as voltas carregam a ida que as precificou.
+      paired_outbound_flight: f.isReturn ? (f.pairedOutboundFlight ?? null) : null,
     }))
   }
 }

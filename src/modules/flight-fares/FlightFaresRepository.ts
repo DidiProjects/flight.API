@@ -20,7 +20,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     for (const f of fares) {
       placeholders.push(
-        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
+        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
       )
       values.push(
         jobId,
@@ -41,6 +41,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         f.fare_hyb_pts,
         f.fare_hyb_cash,
         f.return_date,
+        f.paired_outbound_flight,
         scrapedAt,
       )
     }
@@ -52,9 +53,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       `INSERT INTO flight_fares
          (scraping_job_id, request_id, flight_number, flight_date, is_return, origin, destination, airline,
           departure_time, arrival_time, duration_min, stops, currency,
-          fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, return_date, scraped_at)
+          fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, return_date,
+          paired_outbound_flight, scraped_at)
        VALUES ${placeholders.join(', ')}
-       ON CONFLICT (request_id, flight_date, is_return, flight_number)
+       ON CONFLICT (request_id, flight_date, is_return, flight_number, paired_outbound_flight)
          WHERE flight_number IS NOT NULL AND request_id IS NOT NULL
        DO NOTHING`,
       values,
@@ -92,6 +94,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       SELECT
         f.airline, f.flight_date, f.return_date, f.is_return,
         f.origin, f.destination,
+        f.flight_number, f.paired_outbound_flight,
         f.departure_time, f.arrival_time, f.duration_min, f.stops, f.currency,
         f.fare_cash, f.fare_pts, f.fare_hyb_pts, f.fare_hyb_cash,
         f.bundle_cash, f.bundle_pts, f.bundle_hyb_pts, f.bundle_hyb_cash,

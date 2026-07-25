@@ -449,6 +449,72 @@ describe('EvaluationService', () => {
       expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
     })
 
+    // -- 1-para-N: a volta pertence a UMA ida ---------------------------------
+
+    // Cada volta vem carimbada com o voo de ida que a precificou. Um par pode
+    // trazer varias idas, cada uma com a sua lista de voltas.
+    const linkedPair = (o: {
+      out: string; ret: string;
+      outs: { flight: string; cash: number }[];
+      ins: { flight: string; cash: number; paired: string }[];
+    }) => [
+      ...o.outs.map((x) => ({
+        ...makeFare({ flight_date: o.out, is_return: false, fare_cash: x.cash, currency: 'BRL' }),
+        return_date: o.ret, origin: 'VCP', destination: 'LIS',
+        flight_number: x.flight, paired_outbound_flight: null, bundle_cash: null,
+      })),
+      ...o.ins.map((x) => ({
+        ...makeFare({ flight_date: o.out, is_return: true, fare_cash: x.cash, currency: 'BRL' }),
+        return_date: o.ret, origin: 'LIS', destination: 'VCP',
+        flight_number: x.flight, paired_outbound_flight: x.paired, bundle_cash: null,
+      })),
+    ]
+
+    it('so soma a volta que pertence a ida', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      // A volta de 700 existe, mas so no contexto da ida de 1500. Cruzar com a
+      // ida de 1200 daria 1900 — um par que a companhia nunca ofereceu.
+      givenPairs(linkedPair({
+        out: '2026-08-15', ret: '2026-09-10',
+        outs: [{ flight: 'AD100', cash: 1200 }, { flight: 'AD200', cash: 1500 }],
+        ins:  [{ flight: 'AD900', cash: 1300, paired: 'AD100' },
+               { flight: 'AD901', cash: 700,  paired: 'AD200' }],
+      }))
+
+      await svc.runCycle()
+
+      const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
+      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2200, airline: 'azul' }])
+    })
+
+    it('ida sem volta vinculada nao produz total', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      // AD200 nao teve as voltas coletadas; a unica volta pertence a AD100.
+      givenPairs(linkedPair({
+        out: '2026-08-15', ret: '2026-09-10',
+        outs: [{ flight: 'AD100', cash: 1400 }, { flight: 'AD200', cash: 1000 }],
+        ins:  [{ flight: 'AD900', cash: 1300, paired: 'AD100' }],
+      }))
+
+      await svc.runCycle()
+
+      // 1000 + 1300 nao vale: a volta nao foi precificada no contexto de AD200.
+      const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
+      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2700, airline: 'azul' }])
+    })
+
+    it('coleta antiga sem vinculo mantem o comportamento por data', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      // Tarifas gravadas antes do carimbo: sem vinculo, cruza tudo do par —
+      // senao o que ja esta no banco pararia de ser avaliado.
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300 }))
+
+      await svc.runCycle()
+
+      const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
+      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2500, airline: 'azul' }])
+    })
+
     it('nenhum par colhido - segue silencioso', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
       givenPairs()

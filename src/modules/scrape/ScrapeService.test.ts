@@ -225,4 +225,39 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledOnce()
     expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledWith(job.id, expect.any(Date))
   })
+
+  it('volta carrega o vinculo com a ida que a precificou', async () => {
+    const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
+    const outbound = makeFlightOffer()
+    const inbound = {
+      ...makeFlightOffer(),
+      flightNumber: 'AD9999', isReturn: true, origin: 'LIS', destination: 'VCP',
+      pairedOutboundFlight: 'AD1234',
+    }
+
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(2)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [outbound, inbound] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ is_return: false, paired_outbound_flight: null })
+    expect(calledFares[1]).toMatchObject({ is_return: true, paired_outbound_flight: 'AD1234' })
+  })
+
+  it('ida que venha carimbada por engano nao guarda o vinculo', async () => {
+    const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
+    // O vinculo existe SO na volta; guardar na ida corromperia o agrupamento.
+    const outbound = { ...makeFlightOffer(), isReturn: false, pairedOutboundFlight: 'AD1234' }
+
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [outbound] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ paired_outbound_flight: null })
+  })
 })

@@ -214,7 +214,11 @@ export class EvaluationService implements IEvaluationService {
         for (const out of outbound) {
           const outValue = this.fareValue(out, routine)
           if (outValue == null) continue
-          for (const inb of inbound) {
+
+          // As voltas desta ida — e só elas. Uma volta foi precificada NO
+          // CONTEXTO de uma ida: cruzar com outra inventaria um par que a
+          // companhia nunca ofereceu (e é justamente onde o desconto vive).
+          for (const inb of this.inboundsFor(out, inbound)) {
             const inValue = this.fareValue(inb, routine)
             if (inValue == null) continue
 
@@ -232,6 +236,20 @@ export class EvaluationService implements IEvaluationService {
     }
 
     return best
+  }
+
+  /**
+   * Voltas que pertencem a esta ida.
+   *
+   * O scraper carimba `paired_outbound_flight` em cada volta com o número do voo
+   * de ida que a precificou. Coleta anterior a esse carimbo não tem o vínculo:
+   * nesse caso cai no comportamento antigo (todas as voltas do par), senão as
+   * tarifas já no banco parariam de ser avaliadas da noite para o dia.
+   */
+  private inboundsFor(out: PairFareRow, inbound: PairFareRow[]): PairFareRow[] {
+    const linked = inbound.filter((i) => i.paired_outbound_flight != null)
+    if (linked.length === 0) return inbound
+    return linked.filter((i) => i.paired_outbound_flight === out.flight_number)
   }
 
   /** Total do par cobrado pela companhia (bundle), na dimensão de preço da rotina. */

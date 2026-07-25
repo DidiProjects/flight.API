@@ -16,6 +16,13 @@ const flightOfferSchema = z.object({
   farePts: z.number().int().positive().nullable().optional(),
   fareHybPts: z.number().int().positive().nullable().optional(),
   fareHybCash: z.number().positive().nullable().optional(),
+  /**
+   * Número do voo de IDA em cujo contexto esta volta foi precificada (busca
+   * ida-e-volta). Só vem nas voltas; ausente na ida e no one-way. É o vínculo
+   * 1-para-N: sem ele a avaliação soma mínimos de pernas que a companhia nunca
+   * ofereceu juntas.
+   */
+  pairedOutboundFlight: z.string().max(20).nullable().optional(),
 })
 
 export type FlightOfferInput = z.infer<typeof flightOfferSchema>

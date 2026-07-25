@@ -19,6 +19,11 @@ export interface FlightFareRow {
   fare_hyb_cash: number | null
   /** Par de origem da tarifa. NULL = colhida numa busca one-way avulsa. */
   return_date: string | null
+  /**
+   * Voo de IDA em cujo contexto esta volta foi precificada. NULL na ida e em
+   * qualquer tarifa one-way. É o vínculo 1-para-N.
+   */
+  paired_outbound_flight: string | null
   scraped_at: Date
 }
 
@@ -83,6 +88,9 @@ export interface PairFareRow extends LatestFaresByDate {
   return_date: string
   origin: string
   destination: string
+  flight_number: string | null
+  /** Ida que precificou esta volta. NULL na ida (e em volta de coleta antiga). */
+  paired_outbound_flight: string | null
   bundle_cash: string | number | null
   bundle_pts: string | number | null
   bundle_hyb_pts: string | number | null
