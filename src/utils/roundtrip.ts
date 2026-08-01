@@ -42,3 +42,33 @@ export function windowsCanFormValidPair(
 ): boolean {
   return toUtcDate(outStart) <= toUtcDate(inEnd) && toUtcDate(inStart) <= maxInboundDate(outEnd)
 }
+
+/**
+ * Round-trip só fecha total em DINHEIRO (decisão de 2026-08-01).
+ *
+ * A ida é selecionada em reais de propósito — em pontos a Azul exige login do
+ * TudoAzul e a volta fica inacessível. Escolhida a tarifa de ida, a companhia
+ * deixa de oferecer a troca de moeda na lista de voltas, e as voltas voltam sem
+ * `fare_pts`/`fare_hyb_*`.
+ *
+ * Sem as duas pernas na mesma dimensão não há total, e uma rotina RT em pontos
+ * ou híbrido nunca alertaria — ficaria ligada prometendo um aviso que não vem.
+ * Barrar na entrada é honesto; aceitar e silenciar não é.
+ *
+ * Medida temporária: cai quando a coleta de pontos da volta for resolvida
+ * (bundle/Fase 2 ou outra companhia que publique a volta em pontos).
+ */
+export function roundTripPricingError(d: {
+  priority?: string | null
+  targetPts?: number | null
+  targetHybPts?: number | null
+  targetHybCash?: number | null
+}): string | null {
+  if (d.priority === 'pts' || d.priority === 'hyb') {
+    return 'Rotina de ida e volta só aceita prioridade em dinheiro: a companhia não publica o preço da volta em pontos'
+  }
+  if (d.targetPts != null || d.targetHybPts != null || d.targetHybCash != null) {
+    return 'Rotina de ida e volta só aceita alvo em dinheiro (targetCash): sem o preço da volta em pontos o alvo nunca seria avaliado'
+  }
+  return null
+}

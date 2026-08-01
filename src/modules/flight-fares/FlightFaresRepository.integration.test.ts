@@ -255,6 +255,34 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
     // (365.45 + 300) daria 665.45 — um par que a companhia nunca ofereceu.
     expect(Number(current.best_cash)).toBe(800)
     expect(current.inbound_unavailable).toBe(false)
+
+    // As parcelas exibidas têm de ser as do par VENCEDOR. Pegar o menor out e o
+    // menor in isoladamente devolveria 365.45 / 300 — o tal par inexistente.
+    expect(Number(current.best_cash_outbound)).toBe(500)
+    expect(Number(current.best_cash_inbound)).toBe(300)
+    expect(
+      Number(current.best_cash_outbound) + Number(current.best_cash_inbound),
+    ).toBe(Number(current.best_cash))
+  })
+
+  it('bundle da companhia: total sem parcelas, porque não há divisão publicada', async () => {
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 566.28, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+    // `insertMany` ainda não grava bundle_* (Fase 2 do round-trip); o UPDATE
+    // simula a coleta que vai preencher, para a exibição já estar correta.
+    await pool.query(
+      `UPDATE ${SCHEMA}.flight_fares SET bundle_cash = 700 WHERE flight_number = 'AD100'`,
+    )
+
+    const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    // O bundle é um preço único; dividi-lo em ida e volta mostraria um número
+    // que a companhia não ofereceu.
+    expect(Number(current.best_cash)).toBe(700)
+    expect(current.best_cash_outbound).toBeNull()
+    expect(current.best_cash_inbound).toBeNull()
   })
 
   it('volta indefinida: sem total, com o motivo (exibe "-", não alerta)', async () => {

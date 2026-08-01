@@ -64,3 +64,39 @@ describe('createRoutineSchema — round-trip', () => {
     }).success).toBe(true)
   })
 })
+
+/**
+ * Round-trip só fecha total em dinheiro: a companhia não publica o preço da
+ * volta em pontos (a ida é escolhida em reais, e aí some o seletor de moeda da
+ * lista de voltas). Aceitar pts/hyb criaria rotina ligada que nunca alerta.
+ */
+describe('createRoutineSchema — round-trip só em dinheiro', () => {
+  const rt = { tripType: 'round_trip', inboundStart: '2026-08-20', inboundEnd: '2026-08-25' }
+
+  it('prioridade em pontos é rejeitada no round-trip', () => {
+    expect(errorOn(parse({ ...rt, priority: 'pts', targetPts: 30000, targetCash: null })))
+      .toMatch(/só aceita prioridade em dinheiro/)
+  })
+
+  it('prioridade híbrida é rejeitada no round-trip', () => {
+    expect(errorOn(parse({ ...rt, priority: 'hyb', targetHybPts: 10000, targetHybCash: 500, targetCash: null })))
+      .toMatch(/só aceita prioridade em dinheiro/)
+  })
+
+  it('alvo em pontos é rejeitado mesmo com prioridade em dinheiro', () => {
+    // A prioridade manda no que é exibido, mas o alvo em pontos seria avaliado
+    // contra um total que nunca existe.
+    expect(errorOn(parse({ ...rt, priority: 'cash', targetPts: 30000 })))
+      .toMatch(/só aceita alvo em dinheiro/)
+  })
+
+  it('one_way continua aceitando pontos e híbrido', () => {
+    // A restrição é do par, não do produto: perna avulsa tem preço em pontos.
+    expect(parse({ priority: 'pts', targetPts: 30000, targetCash: null }).success).toBe(true)
+    expect(parse({ priority: 'hyb', targetHybPts: 10000, targetHybCash: 500, targetCash: null }).success).toBe(true)
+  })
+
+  it('round-trip em dinheiro segue passando', () => {
+    expect(parse({ ...rt, priority: 'cash', targetCash: 2000 }).success).toBe(true)
+  })
+})

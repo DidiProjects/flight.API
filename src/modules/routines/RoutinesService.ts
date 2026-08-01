@@ -5,6 +5,7 @@ import { IAirlinesRepository } from '../airlines/interfaces/IAirlinesRepository'
 import { IAirportsRepository } from '../airports/interfaces/IAirportsRepository'
 import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../utils/errors'
+import { roundTripPricingError } from '../../utils/roundtrip'
 
 const MAX_ROUTINES = 10
 
@@ -123,6 +124,20 @@ export class RoutinesService implements IRoutinesService {
   ): Promise<RoutineRow> {
     const existing = await this.routinesRepo.findById(id, userId)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
+
+    // O schema de update é parcial e não enxerga a rotina atual: trocar só a
+    // prioridade para 'pts' numa rotina que já é round_trip passaria por ele.
+    // A regra vale sobre o estado FINAL, então é aqui que ela cabe.
+    const finalTripType = fields.tripType ?? existing.trip_type
+    if (finalTripType === 'round_trip') {
+      const pricingError = roundTripPricingError({
+        priority:      fields.priority      ?? existing.priority,
+        targetPts:     fields.targetPts     ?? existing.target_pts,
+        targetHybPts:  fields.targetHybPts  ?? existing.target_hyb_pts,
+        targetHybCash: fields.targetHybCash ?? existing.target_hyb_cash,
+      })
+      if (pricingError) throw new BadRequestError(pricingError)
+    }
 
     const changingAirlines = !!fields.airlines && fields.airlines.length > 0
     if (changingAirlines || fields.origin != null || fields.destination != null) {

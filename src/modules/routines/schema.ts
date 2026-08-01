@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { MAX_ROUNDTRIP_SPAN_MONTHS, windowsCanFormValidPair } from '../../utils/roundtrip'
+import { MAX_ROUNDTRIP_SPAN_MONTHS, roundTripPricingError, windowsCanFormValidPair } from '../../utils/roundtrip'
 
 const iata = z.string().length(3).toUpperCase()
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado: YYYY-MM-DD')
@@ -115,6 +115,10 @@ export const createRoutineSchema = routineBaseSchema
       message: `Nenhuma combinação de ida e volta cabe no limite de ${MAX_ROUNDTRIP_SPAN_MONTHS} meses`,
       path: ['inboundEnd'],
     },
+  )
+  .refine(
+    (d) => d.tripType !== 'round_trip' || roundTripPricingError(d) == null,
+    (d) => ({ message: roundTripPricingError(d) ?? '', path: ['priority'] }),
   )
 
 export const updateRoutineSchema = routineBaseSchema

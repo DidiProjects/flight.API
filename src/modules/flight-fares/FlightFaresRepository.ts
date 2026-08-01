@@ -300,7 +300,18 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           COALESCE(o.bundle_cash,     o.fare_cash     + MIN(i.fare_cash))     AS total_cash,
           COALESCE(o.bundle_pts,      o.fare_pts      + MIN(i.fare_pts))      AS total_pts,
           COALESCE(o.bundle_hyb_pts,  o.fare_hyb_pts  + MIN(i.fare_hyb_pts))  AS total_hyb_pts,
-          COALESCE(o.bundle_hyb_cash, o.fare_hyb_cash + MIN(i.fare_hyb_cash)) AS total_hyb_cash
+          COALESCE(o.bundle_hyb_cash, o.fare_hyb_cash + MIN(i.fare_hyb_cash)) AS total_hyb_cash,
+          -- Parcelas do total, para exibir o par segregado em ida e volta.
+          -- NULL quando o total veio de bundle: aí a companhia cobrou um preço
+          -- só, e inventar uma divisão mostraria um número que ela não ofereceu.
+          CASE WHEN o.bundle_cash     IS NULL THEN o.fare_cash          END AS out_cash,
+          CASE WHEN o.bundle_cash     IS NULL THEN MIN(i.fare_cash)     END AS in_cash,
+          CASE WHEN o.bundle_pts      IS NULL THEN o.fare_pts           END AS out_pts,
+          CASE WHEN o.bundle_pts      IS NULL THEN MIN(i.fare_pts)      END AS in_pts,
+          CASE WHEN o.bundle_hyb_pts  IS NULL THEN o.fare_hyb_pts       END AS out_hyb_pts,
+          CASE WHEN o.bundle_hyb_pts  IS NULL THEN MIN(i.fare_hyb_pts)  END AS in_hyb_pts,
+          CASE WHEN o.bundle_hyb_cash IS NULL THEN o.fare_hyb_cash      END AS out_hyb_cash,
+          CASE WHEN o.bundle_hyb_cash IS NULL THEN MIN(i.fare_hyb_cash) END AS in_hyb_cash
         FROM latest_pair lp
         INNER JOIN flight_fares o
           ON o.request_id  = lp.request_id
@@ -319,13 +330,28 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          -- paired_outbound_flight NULL = coleta anterior ao vínculo 1-para-N.
          AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
         GROUP BY lp.scraped_at, o.id
-      )
+      ),
+      -- As parcelas têm de vir da MESMA combinação que ganhou cada dimensão.
+      -- Pegar o menor out e o menor in separadamente descreveria um par que a
+      -- companhia não vendeu — a volta barata pode pertencer a outra ida.
+      win_cash     AS (SELECT out_cash,     in_cash     FROM per_combo WHERE total_cash     IS NOT NULL ORDER BY total_cash     LIMIT 1),
+      win_pts      AS (SELECT out_pts,      in_pts      FROM per_combo WHERE total_pts      IS NOT NULL ORDER BY total_pts      LIMIT 1),
+      win_hyb_pts  AS (SELECT out_hyb_pts,  in_hyb_pts  FROM per_combo WHERE total_hyb_pts  IS NOT NULL ORDER BY total_hyb_pts  LIMIT 1),
+      win_hyb_cash AS (SELECT out_hyb_cash, in_hyb_cash FROM per_combo WHERE total_hyb_cash IS NOT NULL ORDER BY total_hyb_cash LIMIT 1)
       SELECT
         MAX(currency)       AS currency,
         MIN(total_cash)     AS best_cash,
         MIN(total_pts)      AS best_pts,
         MIN(total_hyb_pts)  AS best_hyb_pts,
         MIN(total_hyb_cash) AS best_hyb_cash,
+        (SELECT out_cash     FROM win_cash)     AS best_cash_outbound,
+        (SELECT in_cash      FROM win_cash)     AS best_cash_inbound,
+        (SELECT out_pts      FROM win_pts)      AS best_pts_outbound,
+        (SELECT in_pts       FROM win_pts)      AS best_pts_inbound,
+        (SELECT out_hyb_pts  FROM win_hyb_pts)  AS best_hyb_pts_outbound,
+        (SELECT in_hyb_pts   FROM win_hyb_pts)  AS best_hyb_pts_inbound,
+        (SELECT out_hyb_cash FROM win_hyb_cash) AS best_hyb_cash_outbound,
+        (SELECT in_hyb_cash  FROM win_hyb_cash) AS best_hyb_cash_inbound,
         MAX(scraped_at)     AS scraped_at,
         -- Só quando NENHUMA dimensão fechou total e existe ida com volta
         -- indefinida: aí o "sem total" tem motivo conhecido, e a rotina exibe
@@ -340,6 +366,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       currency: null, best_cash: null, best_pts: null,
       best_hyb_pts: null, best_hyb_cash: null, scraped_at: null,
       inbound_unavailable: false,
+      best_cash_outbound: null, best_cash_inbound: null,
+      best_pts_outbound: null, best_pts_inbound: null,
+      best_hyb_pts_outbound: null, best_hyb_pts_inbound: null,
+      best_hyb_cash_outbound: null, best_hyb_cash_inbound: null,
     }
   }
 

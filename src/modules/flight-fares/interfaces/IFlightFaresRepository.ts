@@ -70,6 +70,23 @@ export interface CurrentBest {
    * ida existe, ela só não é o preço da viagem.
    */
   inbound_unavailable?: boolean
+  /**
+   * Parcelas do melhor par, para exibir o total segregado em ida e volta.
+   *
+   * Cada dimensão traz as parcelas da SUA combinação vencedora — o par mais
+   * barato em dinheiro não é necessariamente o mais barato em pontos.
+   *
+   * Ficam nulas quando o total veio do bundle da companhia (preço único, sem
+   * divisão publicada) e em rotina one-way, que não tem par.
+   */
+  best_cash_outbound?: number | null
+  best_cash_inbound?: number | null
+  best_pts_outbound?: number | null
+  best_pts_inbound?: number | null
+  best_hyb_pts_outbound?: number | null
+  best_hyb_pts_inbound?: number | null
+  best_hyb_cash_outbound?: number | null
+  best_hyb_cash_inbound?: number | null
 }
 
 export interface PriceByDate {
