@@ -102,9 +102,11 @@ export interface IFlightFaresRepository {
   getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string, returnDate: string | null, maxAgeHours?: number): Promise<LatestFaresByDate[]>
   getLatestPairs(airline: string, origin: string, destination: string, outFrom: string, outTo: string, inFrom: string, inTo: string, maxAgeHours?: number): Promise<PairFareRow[]>
   getPriceHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
-  getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceHistory>
+  /** Com `inbound`, a régua é a distribuição dos TOTAIS de par; sem, a de tarifa avulsa. */
+  getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceHistory>
   getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<CurrentBest>
-  getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string): Promise<PriceByDate[]>
+  /** Com `inbound`, cada data de IDA traz o menor total de par daquele dia. */
+  getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceByDate[]>
   /** Moeda já observada em tarifas coletadas para o trajeto/companhias (fonte primária da rotina). */
   getKnownCurrency(airlines: string[], origin: string, destination: string): Promise<string | null>
   aggregateToDailyBucket(bucketDate: string): Promise<number>

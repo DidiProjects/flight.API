@@ -297,6 +297,59 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
     expect(current.inbound_unavailable).toBe(true)
   })
 
+  /**
+   * REGRESSÃO — o veredito do card comparava grandezas diferentes.
+   *
+   * `best_cash` de uma rotina RT é o TOTAL do par (duas pernas), mas a régua
+   * saía de tarifas com origin→destination, que exclui a volta (rota invertida).
+   * Total contra média de UMA perna faz todo round-trip parecer caro para
+   * sempre — inclusive na melhor oferta que a rota já teve.
+   */
+  it('a régua do round-trip é de TOTAIS de par, não de pernas', async () => {
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 400, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+
+    const pair = await repo.getSummary(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+    const oneWay = await repo.getSummary(['azul'], 'CNF', 'VCP', OUT, OUT)
+
+    // 400 + 300: a régua fala na mesma grandeza do valor exibido no card.
+    expect(Number(pair.avg_cash_30d)).toBe(700)
+    expect(Number(pair.min_cash_30d)).toBe(700)
+
+    // E a rotina one-way não enxerga a perna de par: contexto de preço diferente.
+    expect(oneWay.avg_cash_30d).toBeNull()
+  })
+
+  it('calendário de round-trip traz o total do par por data de IDA', async () => {
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 400, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD200', cash: 500, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+      pairLeg({ flight: 'AD901', cash: 150, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD200' }),
+    ])
+
+    const dates = await repo.getPriceByDate(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    // 500 + 150 = 650 vence 400 + 300 = 700. O cruzamento proibido (400 + 150)
+    // daria 550 — par que a companhia nunca ofereceu.
+    expect(dates).toHaveLength(1)
+    expect(Number(dates[0].best_cash)).toBe(650)
+  })
+
+  it('sem a janela de volta o calendário ignora tarifas de par', async () => {
+    // Era o motivo de o calendário vir VAZIO em rotina RT: a coleta de par grava
+    // as duas pernas com return_date, e o ramo one-way filtra return_date IS NULL.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 400, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+
+    expect(await repo.getPriceByDate(['azul'], 'CNF', 'VCP', OUT, OUT)).toHaveLength(0)
+    expect(await repo.getPriceByDate(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })).toHaveLength(1)
+  })
+
   it('tarifa avulsa não vaza para o total do par, nem o contrário', async () => {
     await repo.insertMany(JOB_ID, REQ_1, [fare('AD4188', 100.00)])
     await repo.insertMany(JOB_ID, REQ_2, [

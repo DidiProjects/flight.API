@@ -1,6 +1,16 @@
 import { Pool } from 'pg'
 import { CurrentBest, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
+/** Rota sem coleta nos últimos 30 dias: sem régua, o card não emite veredito. */
+const EMPTY_HISTORY: PriceHistory = {
+  currency: null,
+  avg_cash_30d: null,
+  min_cash_30d: null,
+  p20_cash_30d: null,
+  avg_pts_30d: null,
+  min_pts_30d: null,
+}
+
 export class FlightFaresRepository implements IFlightFaresRepository {
   constructor(private readonly db: Pool) {}
 
@@ -216,24 +226,99 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     }
   }
 
+  /**
+   * Distribuição histórica dos TOTAIS de par — a régua do veredito em round-trip.
+   *
+   * Sem isto o card comparava o total do par (duas pernas) contra a média de uma
+   * perna só, porque `origin/destination` da rota exclui a volta, que tem a rota
+   * invertida. O total é ~2x a régua, então TODA rotina RT dizia "Preço alto"
+   * para sempre — inclusive na melhor oferta que a rota já teve.
+   *
+   * Sem `DISTINCT ON` de propósito: aqui se quer a distribuição ao longo dos 30
+   * dias, não a foto da coleta mais recente.
+   *
+   * `INNER JOIN` na volta: par sem volta não tem total, e entrar na régua como
+   * se tivesse distorceria a média para baixo.
+   */
+  private async getPairSummary(
+    airlines: string[],
+    origin: string,
+    destination: string,
+    outFrom: string,
+    outTo: string,
+    inbound: { from: string; to: string },
+  ): Promise<PriceHistory> {
+    const { rows } = await this.db.query<PriceHistory>(`
+      WITH per_combo AS (
+        SELECT
+          o.currency,
+          COALESCE(o.bundle_cash, o.fare_cash + MIN(i.fare_cash)) AS total_cash,
+          COALESCE(o.bundle_pts,  o.fare_pts  + MIN(i.fare_pts))  AS total_pts
+        FROM flight_fares o
+        INNER JOIN flight_fares i
+          ON i.request_id  = o.request_id
+         AND i.return_date = o.return_date
+         AND i.is_return
+         AND i.airline = o.airline
+         -- paired_outbound_flight NULL = coleta anterior ao vínculo 1-para-N.
+         AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
+        WHERE o.airline = ANY($1::text[])
+          AND o.origin = $2 AND o.destination = $3
+          AND NOT o.is_return
+          AND o.return_date IS NOT NULL
+          AND o.flight_date BETWEEN $4 AND $5
+          AND o.return_date BETWEEN $6 AND $7
+          AND o.scraped_at >= NOW() - INTERVAL '30 days'
+        GROUP BY o.id
+      )
+      SELECT
+        MAX(currency)                                            AS currency,
+        AVG(total_cash)                                          AS avg_cash_30d,
+        MIN(total_cash)                                          AS min_cash_30d,
+        PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY total_cash)  AS p20_cash_30d,
+        AVG(total_pts)                                           AS avg_pts_30d,
+        MIN(total_pts)                                           AS min_pts_30d
+      FROM per_combo
+    `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to])
+    return rows[0] ?? EMPTY_HISTORY
+  }
+
+  /**
+   * Régua de preço da rotina (30 dias).
+   *
+   * Com `inbound`, é a distribuição dos totais de PAR; sem, a de tarifa avulsa.
+   * Os dois ramos são exclusivos porque o veredito compara a régua com o valor
+   * exibido no card, e esse valor é total de par ou tarifa avulsa — nunca uma
+   * mistura.
+   *
+   * ⚠ Sem filtro de `stops`: `getCurrentBest` não filtra, então o valor exibido
+   * pode vir de um voo com escala. Uma régua só de voos diretos (mais caros)
+   * fazia qualquer conexão barata parecer uma pechincha histórica.
+   */
   async getSummary(
     airlines: string[],
     origin: string,
     destination: string,
     dateFrom: string,
     dateTo: string,
+    inbound?: { from: string; to: string },
   ): Promise<PriceHistory> {
+    if (inbound) return this.getPairSummary(airlines, origin, destination, dateFrom, dateTo, inbound)
+
     const { rows } = await this.db.query<PriceHistory>(`
       WITH latest_per_date AS (
-        SELECT DISTINCT ON (flight_date, is_return)
-          flight_date, is_return, request_id, scraping_job_id
+        SELECT DISTINCT ON (flight_date)
+          flight_date, request_id, scraping_job_id
         FROM flight_fares
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
-          AND stops = 0
+          AND is_return = false
+          -- Tarifa avulsa só: a ida de um par é precificada noutro contexto e
+          -- contaminaria a régua da rotina one-way.
+          AND return_date IS NULL
           AND scraped_at >= NOW() - INTERVAL '30 days'
-        ORDER BY flight_date, is_return, scraped_at DESC
+        ORDER BY flight_date, scraped_at DESC
       )
       SELECT
         MAX(f.currency) FILTER (WHERE f.currency IS NOT NULL)           AS currency,
@@ -245,21 +330,13 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       FROM flight_fares f
       INNER JOIN latest_per_date lpd
         ON f.flight_date = lpd.flight_date
-       AND f.is_return   = lpd.is_return
        AND COALESCE(f.request_id::text, f.scraping_job_id::text)
          = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[])
         AND f.origin = $2 AND f.destination = $3
-        AND f.stops = 0
+        AND f.return_date IS NULL
     `, [airlines, origin, destination, dateFrom, dateTo])
-    return rows[0] ?? {
-      currency: null,
-      avg_cash_30d: null,
-      min_cash_30d: null,
-      p20_cash_30d: null,
-      avg_pts_30d: null,
-      min_pts_30d: null,
-    }
+    return rows[0] ?? EMPTY_HISTORY
   }
 
   /** Menor total de par para as janelas da rotina (bundle da cia, ou soma da mesma busca RT). */
@@ -430,13 +507,86 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     }
   }
 
+  /**
+   * Calendário de uma rotina round-trip: por data de IDA, o menor TOTAL de par.
+   *
+   * A pergunta que o calendário responde numa viagem de ida e volta é "em que
+   * dia sair deixa a VIAGEM mais barata" — não quanto custa a perna de ida.
+   *
+   * Antes desta variante o calendário vinha vazio em RT: `getPriceByDate` filtra
+   * `return_date IS NULL` e a coleta de par grava as duas pernas com a data de
+   * volta preenchida, que é o que identifica o par.
+   */
+  private async getPairPriceByDate(
+    airlines: string[],
+    origin: string,
+    destination: string,
+    outFrom: string,
+    outTo: string,
+    inbound: { from: string; to: string },
+  ): Promise<PriceByDate[]> {
+    const { rows } = await this.db.query<PriceByDate>(`
+      WITH latest_pair AS (
+        SELECT DISTINCT ON (flight_date, return_date)
+          flight_date AS outbound_date, return_date, request_id
+        FROM flight_fares
+        WHERE airline = ANY($1::text[])
+          AND origin = $2 AND destination = $3
+          AND NOT is_return
+          AND return_date IS NOT NULL
+          AND flight_date BETWEEN $4 AND $5
+          AND return_date BETWEEN $6 AND $7
+          AND scraped_at >= NOW() - INTERVAL '30 days'
+        ORDER BY flight_date, return_date, scraped_at DESC
+      ),
+      -- Uma linha por combinação (ida, volta-mais-barata-daquela-ida): a volta é
+      -- precificada no contexto da ida, então cruzar a ida barata com a volta
+      -- barata de OUTRA ida descreveria um par que a companhia não vende.
+      per_combo AS (
+        SELECT
+          o.flight_date,
+          COALESCE(o.bundle_cash,     o.fare_cash     + MIN(i.fare_cash))     AS total_cash,
+          COALESCE(o.bundle_pts,      o.fare_pts      + MIN(i.fare_pts))      AS total_pts,
+          COALESCE(o.bundle_hyb_pts,  o.fare_hyb_pts  + MIN(i.fare_hyb_pts))  AS total_hyb_pts,
+          COALESCE(o.bundle_hyb_cash, o.fare_hyb_cash + MIN(i.fare_hyb_cash)) AS total_hyb_cash
+        FROM latest_pair lp
+        INNER JOIN flight_fares o
+          ON o.request_id  = lp.request_id
+         AND o.flight_date = lp.outbound_date
+         AND o.return_date = lp.return_date
+         AND NOT o.is_return
+         AND o.airline = ANY($1::text[])
+        INNER JOIN flight_fares i
+          ON i.request_id  = lp.request_id
+         AND i.return_date = lp.return_date
+         AND i.is_return
+         AND i.airline = o.airline
+         AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
+        GROUP BY o.id, o.flight_date
+      )
+      SELECT
+        flight_date,
+        MIN(total_cash)     AS best_cash,
+        MIN(total_pts)      AS best_pts,
+        MIN(total_hyb_pts)  AS best_hyb_pts,
+        MIN(total_hyb_cash) AS best_hyb_cash
+      FROM per_combo
+      GROUP BY flight_date
+      ORDER BY flight_date
+    `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to])
+    return rows
+  }
+
   async getPriceByDate(
     airlines: string[],
     origin: string,
     destination: string,
     dateFrom: string,
     dateTo: string,
+    inbound?: { from: string; to: string },
   ): Promise<PriceByDate[]> {
+    if (inbound) return this.getPairPriceByDate(airlines, origin, destination, dateFrom, dateTo, inbound)
+
     const { rows } = await this.db.query<PriceByDate>(`
       WITH latest_per_date AS (
         SELECT DISTINCT ON (flight_date)
