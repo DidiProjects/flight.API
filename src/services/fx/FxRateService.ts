@@ -50,6 +50,37 @@ export class FxRateService implements IFxRateService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  /**
+   * Conversão entre duas moedas, com o Real como pivô.
+   *
+   * Existe para o TOTAL do par sair na moeda da ida: a volta é trazida para a
+   * moeda de quem parte, e o total nunca some por as pernas divergirem.
+   */
+  async convert(amount: number, from: string, to: string): Promise<ConvertedAmount | null> {
+    const origem  = from?.toUpperCase()
+    const destino = to?.toUpperCase()
+    if (origem === destino) {
+      return { amount, rate: 1, source: 'native', rateDate: this.today(), stale: false }
+    }
+
+    const emBrl = await this.toBrl(amount, origem)
+    if (emBrl == null) return null
+    if (destino === 'BRL') return emBrl
+
+    // Quanto vale 1 unidade do destino em Real — a razão dá a taxa direta.
+    const destinoEmBrl = await this.toBrl(1, destino)
+    if (destinoEmBrl == null || destinoEmBrl.amount <= 0) return null
+
+    const rate = emBrl.rate / destinoEmBrl.rate
+    return {
+      amount: Math.round((emBrl.amount / destinoEmBrl.amount) * 100) / 100,
+      rate,
+      source: emBrl.source,
+      rateDate: emBrl.rateDate,
+      stale: emBrl.stale || destinoEmBrl.stale,
+    }
+  }
+
   async toBrl(amount: number, currency: string): Promise<ConvertedAmount | null> {
     if (!Number.isFinite(amount)) return null
 
@@ -67,7 +98,7 @@ export class FxRateService implements IFxRateService {
 
     const cached = this.cache.get(code)
     if (cached && cached.fetchedOn === this.today()) {
-      return this.convert(amount, cached, false)
+      return this.applyRate(amount, cached, false)
     }
 
     for (const provider of this.providers) {
@@ -88,7 +119,7 @@ export class FxRateService implements IFxRateService {
         this.cache.set(code, entry)
         this.recordSuccess(provider.source)
         log.info({ provider: provider.source, currency: code, rate, rateDate }, 'fx: cotação obtida')
-        return this.convert(amount, entry, false)
+        return this.applyRate(amount, entry, false)
       } catch (err) {
         this.recordFailure(provider.source)
         log.warn({ provider: provider.source, currency: code, err: String(err).slice(0, 200) }, 'fx: provedor falhou')
@@ -99,14 +130,15 @@ export class FxRateService implements IFxRateService {
     // SABER que é velho — daí `stale`, e não um número que se passa por fresco.
     if (cached) {
       log.warn({ currency: code, rateDate: cached.rateDate }, 'fx: todos os provedores falharam, usando cotação anterior')
-      return this.convert(amount, cached, true)
+      return this.applyRate(amount, cached, true)
     }
 
     log.error({ currency: code }, 'fx: sem cotação disponível')
     return null
   }
 
-  private convert(amount: number, entry: CacheEntry, stale: boolean): ConvertedAmount {
+  /** Aplica uma taxa em cache ao valor. Nome distinto do `convert` público de propósito. */
+  private applyRate(amount: number, entry: CacheEntry, stale: boolean): ConvertedAmount {
     return {
       // Duas casas: é dinheiro, e comparar centavo fantasma com alvo seria ruído.
       amount: Math.round(amount * entry.rate * 100) / 100,

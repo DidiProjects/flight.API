@@ -290,3 +290,69 @@ describe('providers — validação da resposta', () => {
     expect(http.getJson).not.toHaveBeenCalled()
   })
 })
+
+describe('FxRateService — conversão entre duas moedas', () => {
+  /** GBP→BRL 6,8 e EUR→BRL 6,0: a razão dá GBP→EUR = 1,1333… */
+  const provedor = () => fakeProvider('frankfurter', async () => ({ rate: 0, rateDate: '' }))
+
+  function svcCom(taxas: Record<string, number>) {
+    const p: IExchangeRateProvider = {
+      source: 'frankfurter',
+      fetchToBrl: vi.fn(async (c: string) => {
+        const r = taxas[c]
+        if (r == null) throw new Error('sem cotação')
+        return { rate: r, rateDate: '2026-08-04' }
+      }),
+    }
+    return new FxRateService([p], FIXED_NOW)
+  }
+
+  it('mesma moeda não vai à rede', async () => {
+    const p = provedor()
+    const svc = new FxRateService([p], FIXED_NOW)
+
+    expect(await svc.convert(100, 'GBP', 'GBP')).toMatchObject({ amount: 100, rate: 1, source: 'native' })
+    expect(p.fetchToBrl).not.toHaveBeenCalled()
+  })
+
+  it('para BRL é a conversão direta', async () => {
+    const svc = svcCom({ GBP: 6.8 })
+    expect((await svc.convert(100, 'GBP', 'BRL'))!.amount).toBe(680)
+  })
+
+  it('entre duas estrangeiras usa o Real como pivô', async () => {
+    // £100 = R$680; €1 = R$6 ⇒ £100 = €113,33
+    const svc = svcCom({ GBP: 6.8, EUR: 6.0 })
+    const out = await svc.convert(100, 'GBP', 'EUR')
+
+    expect(out!.amount).toBeCloseTo(113.33, 2)
+    expect(out!.rate).toBeCloseTo(1.1333, 3)
+  })
+
+  it('sem cotação de alguma ponta, devolve null', async () => {
+    // Meia conversão não existe: melhor o card omitir o total do que somar
+    // libra com euro por engano.
+    const svc = svcCom({ GBP: 6.8 })
+    expect(await svc.convert(100, 'GBP', 'EUR')).toBeNull()
+    expect(await svc.convert(100, 'JPY', 'GBP')).toBeNull()
+  })
+
+  it('propaga o stale de qualquer uma das pontas', async () => {
+    let falhar = false
+    const p: IExchangeRateProvider = {
+      source: 'frankfurter',
+      fetchToBrl: vi.fn(async (c: string) => {
+        if (falhar) throw new Error('fora do ar')
+        return { rate: c === 'GBP' ? 6.8 : 6.0, rateDate: '2026-08-04' }
+      }),
+    }
+    let agora = new Date('2026-08-04T12:00:00Z')
+    const svc = new FxRateService([p], () => agora)
+
+    await svc.convert(100, 'GBP', 'EUR')
+    agora = new Date('2026-08-05T09:00:00Z')
+    falhar = true
+
+    expect((await svc.convert(100, 'GBP', 'EUR'))!.stale).toBe(true)
+  })
+})

@@ -28,6 +28,16 @@ export interface ConvertedAmount {
  */
 export interface IFxRateService {
   /**
+   * Converte entre duas moedas quaisquer. `null` quando não há taxa confiável
+   * para alguma das pontas.
+   *
+   * O pivô é o Real: as duas cotações que já temos em cache viram uma razão.
+   * Assim não há um segundo conjunto de pares para manter, e a faixa de
+   * sanidade continua sendo aplicada nas duas pontas.
+   */
+  convert(amount: number, from: string, to: string): Promise<ConvertedAmount | null>
+
+  /**
    * Converte para BRL. Devolve `null` quando não há taxa confiável.
    *
    * `null` em vez de exceção de propósito: a avaliação precisa poder PULAR um
