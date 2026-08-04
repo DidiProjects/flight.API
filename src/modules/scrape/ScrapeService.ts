@@ -126,7 +126,27 @@ export class ScrapeService implements IScrapeService {
    * indistinguível de uma avulsa e voltaria a ser reaproveitada como se fosse.
    */
   private toFareRows(data: ScrapeCallback, returnDate: string | null) {
-    return data.flights.map((f) => ({
+    // Tarifa sem moeda não entra. A `scraping.API` já descarta na origem, mas a
+    // garantia tem que existir deste lado também: a coluna é NOT NULL e o INSERT
+    // é UM comando multi-linha — uma oferta ruim abortaria o lote inteiro e a
+    // coleta toda se perderia por causa de uma linha.
+    //
+    // Filtrar em vez de recusar o callback é deliberado: o erro é de quem
+    // coletou, e perder 1 oferta é melhor que perder as 44 da mesma busca.
+    const usable = data.flights.filter((f) => f.currency != null && f.currency.length === 3)
+    const dropped = data.flights.length - usable.length
+    if (dropped > 0) {
+      log.warn({
+        requestId:   data.requestId,
+        airline:     data.airline,
+        origin:      data.origin,
+        destination: data.destination,
+        dropped,
+        received:    data.flights.length,
+      }, 'scrape: ofertas sem moeda descartadas antes de persistir')
+    }
+
+    return usable.map((f) => ({
       flight_number:  f.flightNumber ?? null,
       flight_date:    f.date,
       is_return:      f.isReturn,

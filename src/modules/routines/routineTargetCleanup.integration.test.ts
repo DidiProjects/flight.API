@@ -20,11 +20,17 @@ const SCHEMA = 'routine_cleanup_it'
 // A migration mora no flight.DB, projeto irmão. Ler o arquivo (em vez de copiar
 // o SQL) é o que impede o teste de validar uma versão da regra que já mudou.
 const MIGRATION = path.resolve(
-  __dirname, '../../../../flight.DB/migrations/012_limpa_alvos_incompativeis_com_a_companhia.sql',
+  __dirname, '../../../../flight.DB/migrations/014_limpa_alvos_incompativeis_com_a_companhia.sql',
 )
 
-const temTudo = !!DB_URL && fs.existsSync(MIGRATION)
-const describeIt = temTudo ? describe : describe.skip
+// Pular por caminho errado é pior que falhar: a suíte fica verde e a regra deixa
+// de ser testada em silêncio — foi o que aconteceu quando a migration mudou de
+// número. Sem banco, pula; COM banco e sem o arquivo, quebra.
+if (DB_URL && !fs.existsSync(MIGRATION)) {
+  throw new Error(`Migration não encontrada em ${MIGRATION} — o teste da limpeza pararia de rodar sem avisar`)
+}
+
+const describeIt = DB_URL ? describe : describe.skip
 
 type Alvos = {
   priority?: string

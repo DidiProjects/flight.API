@@ -293,4 +293,39 @@ describe('ScrapeService.processCallback', () => {
     const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
     expect(calledFares[0]).toMatchObject({ inbound_unavailable: false })
   })
+
+  // ── moeda obrigatória ────────────────────────────────────────────────────────
+
+  it('oferta sem moeda é descartada, e as boas da mesma coleta são gravadas', async () => {
+    // `flight_fares.currency` é NOT NULL e o insert é UM comando multi-linha:
+    // sem este filtro, uma oferta ruim abortaria o lote e a coleta inteira se
+    // perderia por causa de uma linha.
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const boa = makeFlightOffer()
+    const semMoeda = { ...makeFlightOffer(), flightNumber: 'AD9999', currency: undefined }
+
+    await svc.processCallback(makeCallback({ flights: [boa, semMoeda] as never }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toHaveLength(1)
+    expect(calledFares[0]).toMatchObject({ flight_number: 'AD1234', currency: 'BRL' })
+  })
+
+  it('código de moeda malformado também é descartado', async () => {
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(0)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const ruim = { ...makeFlightOffer(), currency: 'REAIS' }
+
+    await svc.processCallback(makeCallback({ flights: [ruim] as never }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toEqual([])
+  })
 })
