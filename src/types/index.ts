@@ -14,8 +14,6 @@ export interface UserRow {
 export interface AirlineRow {
   code: string
   name: string
-  /** Moeda fixa da companhia (opcional). Quando definida, prevalece na resolução da moeda da rotina. */
-  currency: string | null
   active: boolean
   has_cash: boolean
   has_pts: boolean

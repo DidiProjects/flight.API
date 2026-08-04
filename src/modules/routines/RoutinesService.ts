@@ -49,32 +49,18 @@ export class RoutinesService implements IRoutinesService {
   ) {}
 
   /**
-   * Moeda da rotina, resolvida na ordem:
-   *   1. moeda fixa da companhia (airlines.currency), quando definida — prioridade máxima;
-   *   2. moeda já observada em tarifas coletadas para o trajeto/companhias;
-   *   3. moeda do aeroporto de ORIGEM (resolução pelo trajeto);
-   *   4. indefinida (null) — quando nada está disponível ainda, a UI não exibe moeda.
-   * Não há bloqueio por companhias com moedas diferentes.
+   * Moeda da rotina: SEMPRE Real.
+   *
+   * Antes era deduzida do cadastro (airlines.currency → tarifas já coletadas →
+   * airports.currency), e o cadastro está errado: a BA tem GBP nos 1192
+   * aeroportos, inclusive os 46 no Brasil. Rotina GRU→LHR ficava marcada em
+   * libra recebendo tarifa em real.
+   *
+   * Agora o alvo é sempre em Real e a moeda da COLETA vem do scraping, por
+   * tarifa. Este campo passa a ser só a unidade do alvo — fixa, e não mais um
+   * palpite sobre o mercado.
    */
-  private async resolveCurrency(
-    airlines: string[],
-    origin: string,
-    destination: string,
-  ): Promise<string | null> {
-    for (const code of airlines) {
-      const airline = await this.airlinesRepo.findByCode(code)
-      if (airline?.currency) return airline.currency
-    }
-
-    const known = await this.flightFaresRepo.getKnownCurrency(airlines, origin, destination)
-    if (known) return known
-
-    for (const code of airlines) {
-      const fromOrigin = await this.airportsRepo.getCurrency(code, origin)
-      if (fromOrigin) return fromOrigin
-    }
-    return null
-  }
+  private readonly targetCurrency = 'BRL'
 
   /**
    * Não permite companhia que não cubra ambos os pontos (origem e destino) do trajeto:
@@ -147,7 +133,7 @@ export class RoutinesService implements IRoutinesService {
 
     await this.assertCoverage(data.airlines, data.origin, data.destination)
 
-    const currency = await this.resolveCurrency(data.airlines, data.origin, data.destination)
+    const currency = this.targetCurrency
 
     const today = new Date().toISOString().slice(0, 10)
     if (data.outboundEnd < today) {
@@ -196,7 +182,7 @@ export class RoutinesService implements IRoutinesService {
       const origin = fields.origin ?? existing.origin
       const destination = fields.destination ?? existing.destination
       await this.assertCoverage(airlines, origin, destination)
-      fields = { ...fields, currency: await this.resolveCurrency(airlines, origin, destination) }
+      fields = { ...fields, currency: this.targetCurrency }
     }
 
     const updated = await this.routinesRepo.update(id, userId, fields)
@@ -258,7 +244,7 @@ export class RoutinesService implements IRoutinesService {
       const origin = fields.origin ?? existing.origin
       const destination = fields.destination ?? existing.destination
       await this.assertCoverage(airlines, origin, destination)
-      fields = { ...fields, currency: await this.resolveCurrency(airlines, origin, destination) }
+      fields = { ...fields, currency: this.targetCurrency }
     }
 
     const updated = await this.routinesRepo.updateById(id, fields)
