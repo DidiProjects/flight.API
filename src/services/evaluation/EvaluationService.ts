@@ -7,6 +7,7 @@ import {
 } from '../../modules/target-alert-state/interfaces/ITargetAlertStateRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { IFxRateService } from '../fx/interfaces/IFxRateService'
+import { AlertTotal } from '../email/interfaces/IEmailService'
 import { RoutineRow } from '../../types'
 import { logger } from '../../utils/logger'
 import { isValidRoundTripPair } from '../../utils/roundtrip'
@@ -24,6 +25,9 @@ interface PairChoice {
   inbound: LatestFaresByDate
   total: number
   breakdown: PriceBreakdown[]
+  /** Alguma das duas pernas foi convertida, e com que cotação. */
+  converted: boolean
+  rateDate: string | null
 }
 
 /**
@@ -39,6 +43,9 @@ interface Comparable {
   /** Só em `hyb`: a parte em dinheiro, já em BRL. */
   hybCashBrl: number | null
   breakdown: PriceBreakdown
+  /** Houve conversão? E com que cotação? É o que o e-mail precisa dizer. */
+  converted: boolean
+  rateDate: string | null
 }
 
 function toDateStr(v: string | Date): string {
@@ -97,6 +104,8 @@ export class EvaluationService implements IEvaluationService {
     let breakdownByDate: Map<string, PriceBreakdown[]>
     // Valor que a data vale para o alerta: a perna (one-way) ou o total do par (RT).
     let amountByDate: Map<string, number>
+    // Só em round_trip: o total já convertido, para o e-mail não somar moedas.
+    let totalsByDate: Map<string, AlertTotal> | undefined
 
     if (routine.trip_type === 'round_trip') {
       const pairs = await this.bestPairsByOutboundDate(routine)
@@ -105,6 +114,14 @@ export class EvaluationService implements IEvaluationService {
       inboundByDate   = new Map([...pairs].map(([date, p]) => [date, p.inbound]))
       amountByDate    = new Map([...pairs].map(([date, p]) => [date, p.total]))
       breakdownByDate = new Map([...pairs].map(([date, p]) => [date, p.breakdown]))
+      // O total do par, pronto para o e-mail: quem soma é aqui, depois de
+      // converter. Somar as pernas lá na frente somaria libra com euro.
+      totalsByDate = new Map([...pairs].map(([date, p]) => [date, {
+        amount: p.total,
+        currency: routine.priority === 'cash' ? 'BRL' : 'PTS',
+        converted: p.converted,
+        rateDate: p.rateDate,
+      }]))
     } else {
       const allOutbound: LatestFaresByDate[] = []
       for (const airline of routine.airlines) {
@@ -212,7 +229,7 @@ export class EvaluationService implements IEvaluationService {
     // One-way chama com a assinatura original (sem o 4º argumento) para não
     // mudar nada no caminho que já existia.
     const fares = offers.map((o) => o.fare)
-    if (inboundByDate) await this.notifSvc.dispatchAlert(routine, fares, history, inboundByDate)
+    if (inboundByDate) await this.notifSvc.dispatchAlert(routine, fares, history, inboundByDate, totalsByDate)
     else await this.notifSvc.dispatchAlert(routine, fares, history)
   }
 
@@ -331,6 +348,8 @@ export class EvaluationService implements IEvaluationService {
               best.set(outDate, {
                 outbound: out, inbound: inb, total,
                 breakdown: [outCmp.breakdown, inCmp.breakdown],
+                converted: outCmp.converted || inCmp.converted,
+                rateDate:  outCmp.rateDate ?? inCmp.rateDate,
               })
             }
           }
@@ -464,7 +483,7 @@ export class EvaluationService implements IEvaluationService {
     const breakdown: PriceBreakdown = { direction, currency: currency ?? 'PTS', amount: raw }
 
     if (routine.priority === 'pts') {
-      return { value: raw, hybCashBrl: null, breakdown }
+      return { value: raw, hybCashBrl: null, breakdown, converted: false, rateDate: null }
     }
 
     if (routine.priority === 'cash') {
@@ -474,7 +493,10 @@ export class EvaluationService implements IEvaluationService {
         log.warn({ routineId: routine.id, currency }, 'evaluation: sem cotação — tarifa fora do ciclo')
         return null
       }
-      return { value: conv.amount, hybCashBrl: null, breakdown }
+      return {
+        value: conv.amount, hybCashBrl: null, breakdown,
+        converted: conv.source !== 'native', rateDate: conv.rateDate,
+      }
     }
 
     // hyb: a dimensão comparada é pontos; a parte em dinheiro também vira Real.
@@ -484,7 +506,10 @@ export class EvaluationService implements IEvaluationService {
       log.warn({ routineId: routine.id, currency }, 'evaluation: sem cotação para a parte em dinheiro do híbrido')
       return null
     }
-    return { value: raw, hybCashBrl: conv.amount, breakdown }
+    return {
+      value: raw, hybCashBrl: conv.amount, breakdown,
+      converted: conv.source !== 'native', rateDate: conv.rateDate,
+    }
   }
 
   /**

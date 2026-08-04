@@ -158,8 +158,8 @@ export class EmailService implements IEmailService {
       const airlineName = ao.airline.charAt(0).toUpperCase() + ao.airline.slice(1).toLowerCase()
       const link = this.buildDeepLink(ao.outbound, ao.airline, passengers, fareType, ao.return)
       return [
-        this.renderOffer(ao.outbound, 'IDA',   link, airlineName, ao.currency),
-        ao.return ? this.renderOffer(ao.return, 'VOLTA', link, airlineName, ao.currency) : '',
+        this.renderOffer(ao.outbound, 'IDA',   link, airlineName, ao.outbound.currency),
+        ao.return ? this.renderOffer(ao.return, 'VOLTA', link, airlineName, ao.return.currency) : '',
         ao.return ? this.renderPairTotal(ao, fareType) : '',
       ].join('')
     }).join('')
@@ -218,18 +218,30 @@ export class EmailService implements IEmailService {
     if (!ret) return ''
 
     const rows: string[] = []
-    const totalCash = sum(out.fareCash, ret.fareCash)
     const totalPts = sum(out.farePts, ret.farePts)
 
-    if (fareType === 'cash' && totalCash != null) {
-      rows.push(this.renderFareRow(`${ao.currency} total`, this.fmtCurrency(totalCash, ao.currency)))
+    if (fareType === 'cash') {
+      // O total NÃO é somado aqui: em par de moedas diferentes, out.fareCash +
+      // ret.fareCash daria libra somada com euro. Quem soma é a avaliação, que
+      // converte antes — e é o número que disparou o alerta.
+      if (ao.total == null) return ''
+      const nota = ao.total.converted && ao.total.rateDate
+        ? ` <span style="font-weight:400;color:#6b7280;">(convertido, cotação de ${ao.total.rateDate.split('-').reverse().join('/')})</span>`
+        : ''
+      rows.push(this.renderFareRow(
+        `${ao.total.currency} total`,
+        `${this.fmtCurrency(ao.total.amount, ao.total.currency)}${nota}`,
+      ))
     } else if (fareType === 'pts' && totalPts != null) {
+      // Pontos não convertem: somar é legítimo.
       rows.push(this.renderFareRow('Pontos total', `${totalPts.toLocaleString('pt-BR')} pts`))
-    } else {
+    } else if (fareType === 'hyb') {
       const hybPts = sum(out.fareHybPts, ret.fareHybPts)
-      const hybCash = sum(out.fareHybCash, ret.fareHybCash)
-      if (hybPts != null && hybCash != null) {
-        rows.push(this.renderFareRow('Híbrido total', `${hybPts.toLocaleString('pt-BR')} pts + ${this.fmtCurrency(hybCash, ao.currency)}`))
+      if (hybPts != null && ao.total != null) {
+        rows.push(this.renderFareRow(
+          'Híbrido total',
+          `${hybPts.toLocaleString('pt-BR')} pts + ${this.fmtCurrency(ao.total.amount, ao.total.currency)}`,
+        ))
       }
     }
     if (rows.length === 0) return ''
@@ -316,8 +328,8 @@ export class EmailService implements IEmailService {
         const airlineName = ao.airline.charAt(0).toUpperCase() + ao.airline.slice(1).toLowerCase()
         const sectionLink = this.buildDeepLink(ao.outbound, ao.airline, section.passengers, section.fareType, ao.return)
         return [
-          this.renderOffer(ao.outbound, 'IDA',   sectionLink, airlineName, ao.currency),
-          ao.return ? this.renderOffer(ao.return, 'VOLTA', sectionLink, airlineName, ao.currency) : '',
+          this.renderOffer(ao.outbound, 'IDA',   sectionLink, airlineName, ao.outbound.currency),
+          ao.return ? this.renderOffer(ao.return, 'VOLTA', sectionLink, airlineName, ao.return.currency) : '',
           ao.return ? this.renderPairTotal(ao, section.fareType) : '',
         ].join('')
       }).join('')

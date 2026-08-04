@@ -5,7 +5,7 @@ import { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutines
 import { IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { IUnsubscribeTokensRepository } from '../../modules/unsubscribe/interfaces/IUnsubscribeTokensRepository'
 import { IUsersRepository } from '../../modules/users/interfaces/IUsersRepository'
-import { IEmailService, AirlineOfferPair, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
+import { IEmailService, AirlineOfferPair, AlertTotal, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 import { toDateStr } from '../evaluation/EvaluationService'
@@ -134,12 +134,15 @@ export class NotificationsService implements INotificationsService {
           fareType:     routine.priority,
           airlineOffers: [{
             airline:  bestOutbound.airline,
-            currency: bestOutbound.currency ?? routine.currency ?? 'BRL',
             outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
             // A volta é a rota invertida.
             return:   bestPairInbound
               ? this.fareToBlock(bestPairInbound, routine.destination, routine.origin)
               : null,
+            // O resumo agendado não passa pela avaliação, então não tem total
+            // convertido. Sem ele o e-mail mostra as pernas e omite a soma —
+            // que é o certo quando as moedas podem ser diferentes.
+            total: null,
           }],
           unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
         })
@@ -186,6 +189,7 @@ export class NotificationsService implements INotificationsService {
     // Round-trip: perna de volta que fecha o par de cada data de ida. O e-mail
     // exibe o par da headline; one-way não passa nada e o card segue igual.
     inboundByOutboundDate?: Map<string, LatestFaresByDate>,
+    totalsByDate?: Map<string, AlertTotal>,
   ): Promise<void> {
     if (outboundFares.length === 0) return
 
@@ -222,12 +226,14 @@ export class NotificationsService implements INotificationsService {
 
     const airlineOffers: AirlineOfferPair[] = [{
       airline:  headline.airline,
-      currency: headline.currency ?? routine.currency ?? 'BRL',
       outbound: this.fareToBlock(headline, routine.origin, routine.destination),
       // A volta é a rota invertida.
       return:   inboundOfHeadline
         ? this.fareToBlock(inboundOfHeadline, routine.destination, routine.origin)
         : null,
+      // O total vem PRONTO da avaliação — é o número que disparou o alerta.
+      // Recalcular aqui somando as pernas somaria libra com euro.
+      total: inboundOfHeadline ? (totalsByDate?.get(toDateStr(headline.flight_date)) ?? null) : null,
     }]
 
     await this.emailSvc.sendFlightAlert({
@@ -286,6 +292,9 @@ export class NotificationsService implements INotificationsService {
     return {
       flightNumber:  '',
       date:          toDateStr(fare.flight_date),
+      // A moeda é DA PERNA. Herdar do par era o que fazia a volta em real
+      // aparecer rotulada em libra.
+      currency:      fare.currency ?? '',
       origin,
       departureTime: fare.departure_time ?? '',
       destination,
