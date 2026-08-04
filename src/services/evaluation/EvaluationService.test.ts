@@ -2,9 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EvaluationService } from './EvaluationService'
 import type { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
 import type { IFlightFaresRepository, LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
-import type { ITargetAlertStateRepository, AlertWatermark } from '../../modules/target-alert-state/interfaces/ITargetAlertStateRepository'
+import type { ITargetAlertStateRepository, AlertWatermark, WatermarkState } from '../../modules/target-alert-state/interfaces/ITargetAlertStateRepository'
+import type { IFxRateService } from '../fx/interfaces/IFxRateService'
 import type { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import type { RoutineRow } from '../../types/index'
+
+/**
+ * Watermark de teste. A composição fica `null` de propósito no default: é o
+ * estado das linhas gravadas antes de a composição existir, e o comportamento
+ * delas não pode regredir.
+ */
+function wm(entries: Record<string, number>): Map<string, WatermarkState> {
+  return new Map(Object.entries(entries).map(([d, amount]) => [d, { amount, breakdown: null }]))
+}
 
 // O erro de par incompleto é o que chega no Grafana; o teste precisa distinguir
 // "descartado e reportado" de "tolerado em silêncio". O serviço loga por
@@ -95,7 +105,7 @@ function makeMocks() {
 
   // Por padrão o "banco" confirma como avançadas todas as datas candidatas.
   const mockAlertStateRepo = {
-    getWatermarks:   vi.fn().mockResolvedValue(new Map<string, number>()),
+    getWatermarks:   vi.fn().mockResolvedValue(new Map<string, WatermarkState>()),
     recordNotified:  vi.fn().mockImplementation(
       async (_r: string, _f: string, entries: AlertWatermark[]) => new Set(entries.map((e) => e.flightDate)),
     ),
@@ -106,7 +116,16 @@ function makeMocks() {
     dispatchAlert: vi.fn().mockResolvedValue(undefined),
   } satisfies Partial<INotificationsService> as unknown as INotificationsService
 
-  return { mockRoutinesRepo, mockFlightFaresRepo, mockAlertStateRepo, mockNotifSvc }
+  // Câmbio: por padrão a tarifa já está em Real, então a conversão é identidade
+  // e os testes existentes seguem falando dos mesmos números.
+  const mockFx = {
+    toBrl: vi.fn(async (amount: number, currency: string) =>
+      currency === 'BRL'
+        ? { amount, rate: 1, source: 'native' as const, rateDate: '2026-08-04', stale: false }
+        : null),
+  } satisfies Partial<IFxRateService> as unknown as IFxRateService
+
+  return { mockRoutinesRepo, mockFlightFaresRepo, mockAlertStateRepo, mockNotifSvc, mockFx }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -116,6 +135,7 @@ describe('EvaluationService', () => {
   let mockFlightFaresRepo: IFlightFaresRepository
   let mockAlertStateRepo: ITargetAlertStateRepository
   let mockNotifSvc: INotificationsService
+  let mockFx: IFxRateService
   let svc: EvaluationService
 
   beforeEach(() => {
@@ -125,8 +145,9 @@ describe('EvaluationService', () => {
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
     mockAlertStateRepo  = mocks.mockAlertStateRepo
     mockNotifSvc        = mocks.mockNotifSvc
+    mockFx              = mocks.mockFx
 
-    svc = new EvaluationService(mockRoutinesRepo, mockFlightFaresRepo, mockAlertStateRepo, mockNotifSvc)
+    svc = new EvaluationService(mockRoutinesRepo, mockFlightFaresRepo, mockAlertStateRepo, mockNotifSvc, mockFx)
   })
 
   it('sem fares recentes — não chama dispatchAlert', async () => {
@@ -173,7 +194,7 @@ describe('EvaluationService', () => {
     await svc.runCycle()
 
     expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledWith(
-      routine.id, 'cash', [{ flightDate: '2026-08-15', amount: 1900, airline: 'azul' }],
+      routine.id, 'cash', [expect.objectContaining({ flightDate: '2026-08-15', amount: 1900, airline: 'azul' })],
     )
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, [fare], history)
@@ -185,7 +206,7 @@ describe('EvaluationService', () => {
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
-    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2026-08-15', 3350]]))
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2026-08-15': 3350 }))
 
     await svc.runCycle()
 
@@ -199,7 +220,7 @@ describe('EvaluationService', () => {
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
-    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2026-08-15', 3350]]))
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2026-08-15': 3350 }))
 
     await svc.runCycle()
 
@@ -212,12 +233,12 @@ describe('EvaluationService', () => {
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([fare])
-    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2026-08-15', 3350]]))
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2026-08-15': 3350 }))
 
     await svc.runCycle()
 
     expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledWith(
-      routine.id, 'cash', [{ flightDate: '2026-08-15', amount: 3100, airline: 'azul' }],
+      routine.id, 'cash', [expect.objectContaining({ flightDate: '2026-08-15', amount: 3100, airline: 'azul' })],
     )
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, [fare], expect.anything())
@@ -249,15 +270,15 @@ describe('EvaluationService', () => {
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([d22, d25])
-    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([
-      ['2027-02-22', 3350],
-      ['2027-02-25', 3300],
-    ]))
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({
+      '2027-02-22': 3350,
+      '2027-02-25': 3300,
+    }))
 
     await svc.runCycle()
 
     const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
-    expect(entries).toEqual([{ flightDate: '2027-02-25', amount: 3100, airline: 'azul' }])
+    expect(entries).toEqual([expect.objectContaining({ flightDate: '2027-02-25', amount: 3100, airline: 'azul' })])
     const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
     expect(fares.map((f) => f.flight_date)).toEqual(['2027-02-25'])
   })
@@ -271,13 +292,13 @@ describe('EvaluationService', () => {
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([d25])
-    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2027-02-22', 3100]]))
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2027-02-22': 3100 }))
 
     await svc.runCycle()
 
     // O watermark por data é gravado (histórico/monotonicidade intactos)...
     expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledWith(
-      routine.id, 'cash', [{ flightDate: '2027-02-25', amount: 3350, airline: 'azul' }],
+      routine.id, 'cash', [expect.objectContaining({ flightDate: '2027-02-25', amount: 3350, airline: 'azul' })],
     )
     // ...mas nenhum e-mail é enviado, pois 3350 não bate o piso 3100.
     expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
@@ -289,7 +310,7 @@ describe('EvaluationService', () => {
 
     vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
     vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([d25])
-    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(new Map([['2027-02-22', 3100]]))
+    vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2027-02-22': 3100 }))
 
     await svc.runCycle()
 
@@ -326,7 +347,7 @@ describe('EvaluationService', () => {
     const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
     expect(fares).toEqual([latam])
     const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
-    expect(entries).toEqual([{ flightDate: '2027-02-22', amount: 3100, airline: 'latam' }])
+    expect(entries).toEqual([expect.objectContaining({ flightDate: '2027-02-22', amount: 3100, airline: 'latam' })])
   })
 
   it('escolhe o menor preço NUMÉRICO quando fare_cash vem como string do pg (regressão)', async () => {
@@ -341,7 +362,7 @@ describe('EvaluationService', () => {
     await svc.runCycle()
 
     const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
-    expect(entries).toEqual([{ flightDate: '2026-08-11', amount: 652, airline: 'azul' }])
+    expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-11', amount: 652, airline: 'azul' })])
   })
 
   it('erro em getLatestByRoute — ciclo continua avaliando outras rotinas', async () => {
@@ -410,7 +431,7 @@ describe('EvaluationService', () => {
 
       expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
-      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2500, airline: 'azul' }])
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2500, airline: 'azul' })])
       const inboundArg = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0][3]
       expect(inboundArg?.get('2026-08-15')?.is_return).toBe(true)
     })
@@ -422,7 +443,7 @@ describe('EvaluationService', () => {
       await svc.runCycle()
 
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
-      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2100, airline: 'azul' }])
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2100, airline: 'azul' })])
     })
 
     it('escolhe o menor total entre pares da mesma data de ida', async () => {
@@ -435,7 +456,7 @@ describe('EvaluationService', () => {
       await svc.runCycle()
 
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
-      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2100, airline: 'azul' }])
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2100, airline: 'azul' })])
     })
 
     it('moedas diferentes entre as pernas - par descartado', async () => {
@@ -513,7 +534,7 @@ describe('EvaluationService', () => {
       await svc.runCycle()
 
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
-      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2200, airline: 'azul' }])
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2200, airline: 'azul' })])
     })
 
     it('ida sem volta vinculada nao produz total', async () => {
@@ -529,7 +550,7 @@ describe('EvaluationService', () => {
 
       // 1000 + 1300 nao vale: a volta nao foi precificada no contexto de AD200.
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
-      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2700, airline: 'azul' }])
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2700, airline: 'azul' })])
     })
 
     it('coleta antiga sem vinculo mantem o comportamento por data', async () => {
@@ -541,7 +562,7 @@ describe('EvaluationService', () => {
       await svc.runCycle()
 
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
-      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2500, airline: 'azul' }])
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2500, airline: 'azul' })])
     })
 
     // -- 4.2 volta indefinida: exibe, nao alerta ------------------------------
@@ -591,7 +612,7 @@ describe('EvaluationService', () => {
       await svc.runCycle()
 
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
-      expect(entries).toEqual([{ flightDate: '2026-08-15', amount: 2500, airline: 'azul' }])
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2500, airline: 'azul' })])
       expect(logSpy.error).not.toHaveBeenCalled()
     })
 

@@ -29,6 +29,10 @@ import { UnsubscribeService }   from './modules/unsubscribe/UnsubscribeService'
 import { SchedulerService }     from './services/scheduler/SchedulerService'
 import { AirportsService }      from './modules/airports/AirportsService'
 import { EvaluationService }    from './services/evaluation/EvaluationService'
+import { FxRateService }        from './services/fx/FxRateService'
+import { ExchangeRateHttpClient } from './services/fx/ExchangeRateHttpClient'
+import { FrankfurterProvider }  from './services/fx/providers/FrankfurterProvider'
+import { CurrencyApiProvider }  from './services/fx/providers/CurrencyApiProvider'
 import { AnalysisRunsService }  from './modules/analysis-runs/AnalysisRunsService'
 import { AdminService }         from './modules/admin/AdminService'
 
@@ -73,7 +77,16 @@ const notifSvc = new NotificationsService(
   env,
 )
 
-const evaluationSvc = new EvaluationService(routinesRepo, flightFaresRepo, alertStateRepo, notifSvc)
+// Câmbio: a rede fica atrás do client, os provedores atrás da interface, e só
+// service consome. A ordem da lista É a ordem de fallback.
+const fxHttp = new ExchangeRateHttpClient(env.FX_TIMEOUT_MS)
+const fxSvc  = new FxRateService(
+  [new FrankfurterProvider(fxHttp), new CurrencyApiProvider(fxHttp)],
+)
+
+const evaluationSvc = new EvaluationService(
+  routinesRepo, flightFaresRepo, alertStateRepo, notifSvc, fxSvc, env.FX_NOISE_MARGIN,
+)
 
 const authSvc      = new AuthService(usersRepo, authRepo, refreshTokenRepo, emailSvc)
 const usersSvc     = new UsersService(usersRepo, emailSvc)
