@@ -92,9 +92,9 @@ export class EmailService implements IEmailService {
   private buildDeepLink(offer: OfferBlock, airline: string, passengers: number, fareType: string, ret?: OfferBlock | null): string | null {
     switch (airline.toLowerCase()) {
       case 'azul':           return this.buildAzulLink(offer, passengers, fareType, ret)
-      case 'latam':          return this.buildLatamLink(offer, passengers, fareType)
-      case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers)
-      case 'ryanair':        return this.buildRyanairLink(offer, passengers)
+      case 'latam':          return this.buildLatamLink(offer, passengers, fareType, ret)
+      case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers, ret)
+      case 'ryanair':        return this.buildRyanairLink(offer, passengers, ret)
       default:               return null
     }
   }
@@ -113,12 +113,39 @@ export class EmailService implements IEmailService {
     return `https://www.voeazul.com.br/br/pt/home/selecao-voo?${leg0}${leg1}&p[0].t=ADT&p[0].c=${passengers}&p[0].cp=false&f.dl=3&f.dr=3&cc=${cc}`
   }
 
-  private buildLatamLink(offer: OfferBlock, passengers: number, fareType: string): string {
+  private buildLatamLink(offer: OfferBlock, passengers: number, fareType: string, ret?: OfferBlock | null): string {
     const redemption = fareType === 'cash' ? 'false' : 'true'
-    return `https://www.latamairlines.com/br/pt/oferta-voos?origin=${offer.origin}&outbound=${offer.date}&destination=${offer.destination}&inbound=undefined&adt=${passengers}&chd=0&inf=0&trip=OW&cabin=Economy&redemption=${redemption}&sort=RECOMMENDED`
+    // `trip=RT&inbound=<data>` conferido contra o site em 2026-08-05: a busca
+    // abre com 35 cards e o cabeçalho "Escolha um voo de ida".
+    const inbound = ret ? ret.date : 'undefined'
+    const trip = ret ? 'RT' : 'OW'
+    return `https://www.latamairlines.com/br/pt/oferta-voos?origin=${offer.origin}&outbound=${offer.date}&destination=${offer.destination}&inbound=${inbound}&adt=${passengers}&chd=0&inf=0&trip=${trip}&cabin=Economy&redemption=${redemption}&sort=RECOMMENDED`
   }
 
-  private buildBritishAirwaysLink(offer: OfferBlock, passengers: number): string {
+  /**
+   * Só-ida vai para a UI nova; ida-e-volta, para a velha.
+   *
+   * O fluxo de ida-e-volta da BA só foi medido na UI velha (`flightList`, com
+   * `onds` de duas pernas e `ond=2`) — é a que o scraper percorre quando a
+   * origem é Brasil, e é de lá que sai todo par BA que dispara alerta hoje.
+   * Montar `trip=return` na UI nova sem ter conferido o fluxo era o que já
+   * fazia o link cair em só-ida.
+   */
+  private buildBritishAirwaysLink(offer: OfferBlock, passengers: number, ret?: OfferBlock | null): string {
+    if (ret) {
+      const p = new URLSearchParams({
+        onds: `${offer.origin}-${offer.destination}_${offer.date},${ret.origin}-${ret.destination}_${ret.date}`,
+        ad:    String(passengers),
+        yad:  '0',
+        ch:   '0',
+        inf:  '0',
+        cabin: 'M',
+        flex:  'LOWEST',
+        ond:  '2',
+      })
+      return `https://www.britishairways.com/travel/book/public/en_gb/flightList?${p.toString()}`
+    }
+
     const p = new URLSearchParams({
       trip: 'oneWay',
       departureDate: offer.date,
@@ -134,19 +161,31 @@ export class EmailService implements IEmailService {
     return `https://www.britishairways.com/nx/b/airselect/en/gbr/book/search/?${p.toString()}`
   }
 
-  private buildRyanairLink(offer: OfferBlock, passengers: number): string {
+  /** Espelha o `buildSearchUrl` do scraper: os `tp*` acompanham a busca. */
+  private buildRyanairLink(offer: OfferBlock, passengers: number, ret?: OfferBlock | null): string {
     const p = new URLSearchParams({
-      adults:            String(passengers),
-      teens:             '0',
-      children:          '0',
-      infants:           '0',
-      dateOut:           offer.date,
-      dateIn:            '',
-      isConnectedFlight: 'false',
-      isReturn:          'false',
-      discount:          '0',
-      originIata:        offer.origin,
-      destinationIata:   offer.destination,
+      adults:              String(passengers),
+      teens:               '0',
+      children:            '0',
+      infants:             '0',
+      dateOut:             offer.date,
+      dateIn:              ret?.date ?? '',
+      isConnectedFlight:   'false',
+      discount:            '0',
+      promoCode:           '',
+      isReturn:            ret ? 'true' : 'false',
+      originIata:          offer.origin,
+      destinationIata:     offer.destination,
+      tpAdults:            String(passengers),
+      tpTeens:             '0',
+      tpChildren:          '0',
+      tpInfants:           '0',
+      tpStartDate:         offer.date,
+      tpEndDate:           ret?.date ?? '',
+      tpDiscount:          '0',
+      tpPromoCode:         '',
+      tpOriginIata:        offer.origin,
+      tpDestinationIata:   offer.destination,
     })
     return `https://www.ryanair.com/gb/en/trip/flights/select?${p.toString()}`
   }
