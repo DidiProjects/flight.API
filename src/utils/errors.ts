@@ -54,6 +54,22 @@ export class MissingCurrencyError extends Error {
   }
 }
 
+/**
+ * Rotina round-trip cuja análise voltou com só uma das pernas. O par não fecha,
+ * então a avaliação é descartada — é dado incompleto, não oferta barata.
+ * O nome vira label no Grafana via o campo `err.type` do log.
+ */
+export class IncompleteRoundTripError extends Error {
+  constructor(
+    public readonly routineId: string,
+    public readonly airline: string,
+    public readonly missingLeg: 'outbound' | 'inbound',
+  ) {
+    super(`Round-trip routine ${routineId} on ${airline} is missing the ${missingLeg} leg`)
+    this.name = 'IncompleteRoundTripError'
+  }
+}
+
 export function errorHandler(
   error: FastifyError | ApiError | ZodError | Error,
   req: FastifyRequest,

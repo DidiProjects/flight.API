@@ -14,12 +14,12 @@ export interface UserRow {
 export interface AirlineRow {
   code: string
   name: string
-  /** Moeda fixa da companhia (opcional). Quando definida, prevalece na resolução da moeda da rotina. */
-  currency: string | null
   active: boolean
   has_cash: boolean
   has_pts: boolean
   has_hyb: boolean
+  /** Sabe fazer busca ida-e-volta numa sessão só (pré-requisito para round_trip). */
+  has_roundtrip: boolean
 }
 
 export interface CcEmail {
@@ -36,6 +36,9 @@ export interface RoutineRow {
   destination: string
   outbound_start: string
   outbound_end: string
+  trip_type: 'one_way' | 'round_trip'
+  inbound_start: string | null
+  inbound_end: string | null
   passengers: number
   currency: string | null
   target_cash: number | null

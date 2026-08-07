@@ -17,6 +17,9 @@ const summaryQuerySchema = z.object({
   destination: z.string().length(3).toUpperCase(),
   date_from:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
   date_to:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
+  // Janela de volta: quando presente, /current devolve o total do PAR.
+  inbound_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  inbound_to:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 })
 
 export function flightFaresRoute(flightFaresSvc: IFlightFaresService) {
@@ -29,19 +32,24 @@ export function flightFaresRoute(flightFaresSvc: IFlightFaresService) {
       reply.send(await flightFaresSvc.getHistory(q.airline, q.origin, q.destination, q.flight_date))
     })
 
+    // A janela de volta é o que distingue rotina de par da avulsa: quando vem,
+    // régua, preço atual e calendário passam todos a falar em TOTAL de par.
+    const inboundOf = (q: { inbound_from?: string; inbound_to?: string }) =>
+      q.inbound_from && q.inbound_to ? { from: q.inbound_from, to: q.inbound_to } : undefined
+
     app.get('/summary', async (req, reply) => {
       const q = summaryQuerySchema.parse(req.query)
-      reply.send(await flightFaresSvc.getSummary(q.airlines, q.origin, q.destination, q.date_from, q.date_to))
+      reply.send(await flightFaresSvc.getSummary(q.airlines, q.origin, q.destination, q.date_from, q.date_to, inboundOf(q)))
     })
 
     app.get('/current', async (req, reply) => {
       const q = summaryQuerySchema.parse(req.query)
-      reply.send(await flightFaresSvc.getCurrent(q.airlines, q.origin, q.destination, q.date_from, q.date_to))
+      reply.send(await flightFaresSvc.getCurrent(q.airlines, q.origin, q.destination, q.date_from, q.date_to, inboundOf(q)))
     })
 
     app.get('/by-date', async (req, reply) => {
       const q = summaryQuerySchema.parse(req.query)
-      reply.send({ dates: await flightFaresSvc.getByDate(q.airlines, q.origin, q.destination, q.date_from, q.date_to) })
+      reply.send({ dates: await flightFaresSvc.getByDate(q.airlines, q.origin, q.destination, q.date_from, q.date_to, inboundOf(q)) })
     })
   }
 }

@@ -1,5 +1,7 @@
 export interface OfferBlock {
   flightNumber: string
+  /** Moeda DESTA perna, como a companhia cobrou. Nunca herdada do par. */
+  currency: string
   date: string
   origin: string
   departureTime: string
@@ -13,11 +15,26 @@ export interface OfferBlock {
   fareHybCash?: number | null
 }
 
+/**
+ * O total do par, já na unidade do alvo (Real em rotina `cash`).
+ *
+ * Vem pronto da avaliação: é o número que de fato disparou o alerta. O e-mail
+ * não soma perna com perna — somar £ com € daria número sem significado.
+ */
+export interface AlertTotal {
+  amount: number
+  currency: string
+  /** Alguma perna foi convertida? Então o e-mail diz a cotação usada. */
+  converted: boolean
+  rateDate: string | null
+}
+
 export interface AirlineOfferPair {
   airline: string
-  currency: string
   outbound: OfferBlock
   return: OfferBlock | null
+  /** Só em ida-e-volta. `null` em rotina só-ida, que não tem total de par. */
+  total: AlertTotal | null
 }
 
 export interface FlightAlertEmailParams {

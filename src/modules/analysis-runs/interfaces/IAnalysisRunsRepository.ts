@@ -43,6 +43,8 @@ export interface InsertRunningData {
   origin: string
   destination: string
   flightDate: string
+  /** Preenchido quando a execução é uma busca ida-e-volta. */
+  returnDate?: string | null
 }
 
 export interface MarkFinishedData {

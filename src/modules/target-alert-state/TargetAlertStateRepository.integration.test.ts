@@ -15,6 +15,9 @@ const SCHEMA = 'target_alert_state_it'
 const ROUTINE = '00000000-0000-0000-0000-0000000000aa'
 const OTHER   = '00000000-0000-0000-0000-0000000000bb'
 
+/** Composição de uma perna só — o suficiente para o teste do upsert. */
+const bd = (amount: number) => [{ direction: 'outbound' as const, currency: 'BRL', amount }]
+
 const describeIt = DB_URL ? describe : describe.skip
 
 describeIt('TargetAlertStateRepository (integração / Postgres real)', () => {
@@ -31,6 +34,7 @@ describeIt('TargetAlertStateRepository (integração / Postgres real)', () => {
         flight_date      DATE          NOT NULL,
         fare_type        VARCHAR(10)   NOT NULL,
         notified_amount  NUMERIC(12,2) NOT NULL,
+        notified_breakdown JSONB,
         notified_airline VARCHAR(20),
         notified_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
         updated_at       TIMESTAMPTZ   NOT NULL DEFAULT now(),
@@ -53,70 +57,70 @@ describeIt('TargetAlertStateRepository (integração / Postgres real)', () => {
 
   it('primeira gravação — todas as datas voltam como avançadas e viram watermark', async () => {
     const advanced = await repo.recordNotified(ROUTINE, 'cash', [
-      { flightDate: '2027-02-22', amount: 3350, airline: 'britishairways' },
-      { flightDate: '2027-02-25', amount: 3100, airline: 'latam' },
+      { flightDate: '2027-02-22', amount: 3350, airline: 'britishairways', breakdown: bd(3350) },
+      { flightDate: '2027-02-25', amount: 3100, airline: 'latam', breakdown: bd(3100) },
     ])
     expect([...advanced].sort()).toEqual(['2027-02-22', '2027-02-25'])
 
     const wm = await repo.getWatermarks(ROUTINE, 'cash')
-    expect(wm.get('2027-02-22')).toBe(3350)
-    expect(wm.get('2027-02-25')).toBe(3100)
+    expect(wm.get('2027-02-22')?.amount).toBe(3350)
+    expect(wm.get('2027-02-25')?.amount).toBe(3100)
   })
 
   it('mesmo preço re-gravado — não avança (à prova de corrida entre ciclos)', async () => {
-    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul' }])
+    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul', breakdown: bd(3350) }])
 
-    const advanced = await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul' }])
+    const advanced = await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul', breakdown: bd(3350) }])
     expect(advanced.size).toBe(0)
   })
 
   it('preço maior — não avança e não sobe o watermark', async () => {
-    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul' }])
+    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul', breakdown: bd(3350) }])
 
-    const advanced = await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3500, airline: 'azul' }])
+    const advanced = await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3500, airline: 'azul', breakdown: bd(3500) }])
     expect(advanced.size).toBe(0)
 
     const wm = await repo.getWatermarks(ROUTINE, 'cash')
-    expect(wm.get('2027-02-22')).toBe(3350) // inalterado
+    expect(wm.get('2027-02-22')?.amount).toBe(3350) // inalterado
   })
 
   it('preço menor — avança e rebaixa o watermark', async () => {
-    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul' }])
+    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul', breakdown: bd(3350) }])
 
-    const advanced = await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3100, airline: 'latam' }])
+    const advanced = await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3100, airline: 'latam', breakdown: bd(3100) }])
     expect([...advanced]).toEqual(['2027-02-22'])
 
     const wm = await repo.getWatermarks(ROUTINE, 'cash')
-    expect(wm.get('2027-02-22')).toBe(3100)
+    expect(wm.get('2027-02-22')?.amount).toBe(3100)
   })
 
   it('lote misto — só as datas que melhoraram voltam no RETURNING', async () => {
     await repo.recordNotified(ROUTINE, 'cash', [
-      { flightDate: '2027-02-22', amount: 3350, airline: 'azul' },
-      { flightDate: '2027-02-25', amount: 3100, airline: 'azul' },
+      { flightDate: '2027-02-22', amount: 3350, airline: 'azul', breakdown: bd(3350) },
+      { flightDate: '2027-02-25', amount: 3100, airline: 'azul', breakdown: bd(3100) },
     ])
 
     const advanced = await repo.recordNotified(ROUTINE, 'cash', [
-      { flightDate: '2027-02-22', amount: 3000, airline: 'latam' }, // melhora
-      { flightDate: '2027-02-25', amount: 3200, airline: 'azul' },  // piora → corta
-      { flightDate: '2027-02-28', amount: 4000, airline: 'azul' },  // nova → entra
+      { flightDate: '2027-02-22', amount: 3000, airline: 'latam', breakdown: bd(3000) }, // melhora
+      { flightDate: '2027-02-25', amount: 3200, airline: 'azul', breakdown: bd(3200) },  // piora → corta
+      { flightDate: '2027-02-28', amount: 4000, airline: 'azul', breakdown: bd(4000) },  // nova → entra
     ])
     expect([...advanced].sort()).toEqual(['2027-02-22', '2027-02-28'])
 
     const wm = await repo.getWatermarks(ROUTINE, 'cash')
-    expect(wm.get('2027-02-22')).toBe(3000)
-    expect(wm.get('2027-02-25')).toBe(3100) // inalterado
-    expect(wm.get('2027-02-28')).toBe(4000)
+    expect(wm.get('2027-02-22')?.amount).toBe(3000)
+    expect(wm.get('2027-02-25')?.amount).toBe(3100) // inalterado
+    expect(wm.get('2027-02-28')?.amount).toBe(4000)
   })
 
   it('getWatermarks isola por rotina e por tipo de tarifa', async () => {
-    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul' }])
-    await repo.recordNotified(OTHER,   'cash', [{ flightDate: '2027-02-22', amount: 9999, airline: 'azul' }])
-    await repo.recordNotified(ROUTINE, 'pts',  [{ flightDate: '2027-02-22', amount: 50000, airline: 'azul' }])
+    await repo.recordNotified(ROUTINE, 'cash', [{ flightDate: '2027-02-22', amount: 3350, airline: 'azul', breakdown: bd(3350) }])
+    await repo.recordNotified(OTHER,   'cash', [{ flightDate: '2027-02-22', amount: 9999, airline: 'azul', breakdown: bd(9999) }])
+    await repo.recordNotified(ROUTINE, 'pts',  [{ flightDate: '2027-02-22', amount: 50000, airline: 'azul', breakdown: bd(50000) }])
 
     const wm = await repo.getWatermarks(ROUTINE, 'cash')
     expect(wm.size).toBe(1)
-    expect(wm.get('2027-02-22')).toBe(3350)
+    expect(wm.get('2027-02-22')?.amount).toBe(3350)
   })
 
   it('cleanupPastDates remove só datas passadas', async () => {

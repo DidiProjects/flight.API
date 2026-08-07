@@ -29,6 +29,13 @@ const envSchema = z.object({
   // — backpressure para não inflar a fila do scraper.
   SCRAPE_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(6),
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
+
+  // Câmbio. O timeout é curto de propósito: o ciclo de avaliação não pode ficar
+  // preso num terceiro, e a mediana medida das duas APIs é ~120ms.
+  FX_TIMEOUT_MS: z.coerce.number().int().positive().default(3_000),
+  // Melhora mínima em Real para alertar quando a composição do preço mudou.
+  // Absorve ruído de câmbio; a composição idêntica já barra o caso comum.
+  FX_NOISE_MARGIN: z.coerce.number().min(0).max(0.5).default(0.01),
   SCRAPING_API_URL: z.string().url(),
   SCRAPING_API_KEY: z.string(),
   FLIGHT_API_KEY: z.string(),
