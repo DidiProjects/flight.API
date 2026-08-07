@@ -195,9 +195,16 @@ export class EvaluationService implements IEvaluationService {
     if (advanced.size === 0) return
 
     // 5. Ofertas das datas que avançaram, da mais barata para a mais cara.
+    //    Empate de preço → tarifa coletada mais recentemente (scraped_at). Esse é
+    //    o MESMO critério que o dispatchAlert usa para escolher a headline, então
+    //    offers[0] é provadamente a tarifa que o e-mail renderiza — e o histórico
+    //    (passo 7) é calculado para ela, sem divergência entre card e nota.
     const offers = candidates
       .filter((c) => advanced.has(c.flightDate))
-      .sort((a, b) => a.amount - b.amount)
+      .sort((a, b) =>
+        a.amount - b.amount ||
+        new Date(b.fare.scraped_at).getTime() - new Date(a.fare.scraped_at).getTime(),
+      )
     if (offers.length === 0) return
 
     // 6. Gate de recorde por rotina. As datas que avançaram já foram gravadas no
