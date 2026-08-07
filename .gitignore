@@ -2,3 +2,4 @@ node_modules/
 build/
 *.http
 *.log
+.env
