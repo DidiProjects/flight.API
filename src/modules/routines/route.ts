@@ -26,16 +26,19 @@ export function routinesRoute(
         destination:           body.destination,
         outboundStart:         body.outboundStart,
         outboundEnd:           body.outboundEnd,
+        tripType:              body.tripType,
+        inboundStart:          body.inboundStart,
+        inboundEnd:            body.inboundEnd,
         passengers:            body.passengers,
-        targetCash:            body.targetCash    ?? null,
-        targetPts:             body.targetPts     ?? null,
-        targetHybPts:          body.targetHybPts  ?? null,
-        targetHybCash:         body.targetHybCash ?? null,
+        targetCash:            body.targetCash,
+        targetPts:             body.targetPts,
+        targetHybPts:          body.targetHybPts,
+        targetHybCash:         body.targetHybCash,
         margin:                body.margin,
         priority:              body.priority,
         notificationModes:     body.notificationModes,
         notificationFrequency: body.notificationFrequency,
-        scheduledTime:         body.scheduledTime ?? null,
+        scheduledTime:         body.scheduledTime,
         ccEmails:              body.ccEmails,
         isActive:              body.isActive,
       })
@@ -57,16 +60,19 @@ export function routinesRoute(
         destination:           body.destination,
         outboundStart:         body.outboundStart,
         outboundEnd:           body.outboundEnd,
+        tripType:              body.tripType,
+        inboundStart:          body.inboundStart,
+        inboundEnd:            body.inboundEnd,
         passengers:            body.passengers,
-        targetCash:            body.targetCash    ?? null,
-        targetPts:             body.targetPts     ?? null,
-        targetHybPts:          body.targetHybPts  ?? null,
-        targetHybCash:         body.targetHybCash ?? null,
+        targetCash:            body.targetCash,
+        targetPts:             body.targetPts,
+        targetHybPts:          body.targetHybPts,
+        targetHybCash:         body.targetHybCash,
         margin:                body.margin,
         priority:              body.priority,
         notificationModes:     body.notificationModes,
         notificationFrequency: body.notificationFrequency,
-        scheduledTime:         body.scheduledTime ?? null,
+        scheduledTime:         body.scheduledTime,
         ccEmails:              body.ccEmails,
         isActive:              body.isActive,
       }))
@@ -111,16 +117,19 @@ export function routinesRoute(
         destination:           body.destination,
         outboundStart:         body.outboundStart,
         outboundEnd:           body.outboundEnd,
+        tripType:              body.tripType,
+        inboundStart:          body.inboundStart,
+        inboundEnd:            body.inboundEnd,
         passengers:            body.passengers,
-        targetCash:            body.targetCash    ?? null,
-        targetPts:             body.targetPts     ?? null,
-        targetHybPts:          body.targetHybPts  ?? null,
-        targetHybCash:         body.targetHybCash ?? null,
+        targetCash:            body.targetCash,
+        targetPts:             body.targetPts,
+        targetHybPts:          body.targetHybPts,
+        targetHybCash:         body.targetHybCash,
         margin:                body.margin,
         priority:              body.priority,
         notificationModes:     body.notificationModes,
         notificationFrequency: body.notificationFrequency,
-        scheduledTime:         body.scheduledTime ?? null,
+        scheduledTime:         body.scheduledTime,
         ccEmails:              body.ccEmails,
         isActive:              body.isActive,
       }))
@@ -138,7 +147,12 @@ export function routinesRoute(
 
     app.post('/:id/dispatch', { preHandler: [app.requireAdmin] }, async (req, reply) => {
       const { id } = req.params as { id: string }
-      await schedulerSvc.dispatchOne(id)
+      // 202 assíncrono: o dispatch cobre todas as datas elegíveis da rotina e pode
+      // fazer várias chamadas sequenciais ao scraper. Roda em background para não
+      // segurar o request no loop; erros ficam no log, não na resposta.
+      void schedulerSvc.dispatchOne(id).catch((err) => {
+        req.log.error({ err, routineId: id }, 'manual dispatch failed')
+      })
       reply.status(202).send({ message: 'Dispatch iniciado' })
     })
   }

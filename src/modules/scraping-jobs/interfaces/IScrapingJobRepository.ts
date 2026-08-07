@@ -4,6 +4,8 @@ export interface ScrapingJobRow {
   origin: string
   destination: string
   flight_date: string
+  /** Preenchido = job de ida-e-volta (busca RT com as duas datas). NULL = one-way. */
+  return_date: string | null
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead' | 'cancelled'
   priority: number
   retry_count: number
@@ -34,6 +36,7 @@ export interface IScrapingJobRepository {
   expireOldJobs(): Promise<number>
   updatePriorities(): Promise<void>
   claimNextJob(airline: string): Promise<ScrapingJobRow | null>
+  claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null>
   countInFlight(): Promise<number>
   deferJob(id: string, nextRunAt: Date): Promise<void>
   markRunning(id: string, requestId: string): Promise<void>

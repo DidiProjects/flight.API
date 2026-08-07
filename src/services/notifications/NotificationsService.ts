@@ -2,10 +2,10 @@ import { RoutineRow } from '../../types'
 import { INotificationsService } from './interfaces/INotificationsService'
 import { INotificationLogRepository } from './interfaces/INotificationLogRepository'
 import { IRoutinesRepository } from '../../modules/routines/interfaces/IRoutinesRepository'
-import { IFlightFaresRepository, LatestFaresByDate, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
+import { IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceHistory } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { IUnsubscribeTokensRepository } from '../../modules/unsubscribe/interfaces/IUnsubscribeTokensRepository'
 import { IUsersRepository } from '../../modules/users/interfaces/IUsersRepository'
-import { IEmailService, AirlineOfferPair, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
+import { IEmailService, AirlineOfferPair, AlertTotal, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 import { toDateStr } from '../evaluation/EvaluationService'
@@ -56,17 +56,64 @@ export class NotificationsService implements INotificationsService {
           continue
         }
 
+        // Round-trip lê PARES; one-way lê tarifa avulsa. Os dois mundos não se
+        // misturam: mostrar o preço de uma perna como se fosse o da viagem (ou
+        // o preço de par como se fosse avulso) seria mentira em ambos os casos.
+        const isRoundTrip = routine.trip_type === 'round_trip'
         const allOutbound: LatestFaresByDate[] = []
+        let bestPairInbound: LatestFaresByDate | null = null
+        let bestPairTotal: number | null = null
 
-        for (const airline of routine.airlines) {
-          const outbound = await this.flightFaresRepo.getLatestByRoute(
-            airline,
-            routine.origin,
-            routine.destination,
-            toDateStr(routine.outbound_start),
-            toDateStr(routine.outbound_end),
-          )
-          allOutbound.push(...outbound)
+        if (isRoundTrip) {
+          for (const airline of routine.airlines) {
+            const rows = await this.flightFaresRepo.getLatestPairs(
+              airline, routine.origin, routine.destination,
+              toDateStr(routine.outbound_start), toDateStr(routine.outbound_end),
+              toDateStr(routine.inbound_start!), toDateStr(routine.inbound_end!),
+            )
+            const byPair = new Map<string, PairFareRow[]>()
+            for (const r of rows) {
+              const key = `${toDateStr(r.flight_date)}|${toDateStr(r.return_date)}`
+              const list = byPair.get(key)
+              if (list) list.push(r)
+              else byPair.set(key, [r])
+            }
+            for (const legs of byPair.values()) {
+              const out = this.bestFare(legs.filter((l) => !l.is_return), routine.priority)
+              const inb = this.bestFare(legs.filter((l) => l.is_return), routine.priority)
+              if (!out || !inb) continue
+              if ((out.currency ?? null) !== (inb.currency ?? null)) continue
+
+              const outV = this.fareAmount(out, routine.priority)
+              const inV = this.fareAmount(inb, routine.priority)
+              if (outV == null || inV == null) continue
+
+              const bundleRaw =
+                routine.priority === 'cash' ? (out as PairFareRow).bundle_cash :
+                routine.priority === 'pts'  ? (out as PairFareRow).bundle_pts :
+                (out as PairFareRow).bundle_hyb_pts
+              const total = bundleRaw == null ? outV + inV : Number(bundleRaw)
+
+              if (bestPairTotal == null || total < bestPairTotal) {
+                bestPairTotal = total
+                bestPairInbound = inb
+                allOutbound.length = 0
+                allOutbound.push(out)
+              }
+            }
+          }
+        } else {
+          for (const airline of routine.airlines) {
+            const outbound = await this.flightFaresRepo.getLatestByRoute(
+              airline,
+              routine.origin,
+              routine.destination,
+              toDateStr(routine.outbound_start),
+              toDateStr(routine.outbound_end),
+              null,
+            )
+            allOutbound.push(...outbound)
+          }
         }
 
         if (allOutbound.length === 0) {
@@ -87,9 +134,15 @@ export class NotificationsService implements INotificationsService {
           fareType:     routine.priority,
           airlineOffers: [{
             airline:  bestOutbound.airline,
-            currency: bestOutbound.currency ?? routine.currency ?? 'BRL',
             outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
-            return:   null,
+            // A volta é a rota invertida.
+            return:   bestPairInbound
+              ? this.fareToBlock(bestPairInbound, routine.destination, routine.origin)
+              : null,
+            // O resumo agendado não passa pela avaliação, então não tem total
+            // convertido. Sem ele o e-mail mostra as pernas e omite a soma —
+            // que é o certo quando as moedas podem ser diferentes.
+            total: null,
           }],
           unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
         })
@@ -133,6 +186,10 @@ export class NotificationsService implements INotificationsService {
     routine: RoutineRow,
     outboundFares: LatestFaresByDate[],
     history: PriceHistory,
+    // Round-trip: perna de volta que fecha o par de cada data de ida. O e-mail
+    // exibe o par da headline; one-way não passa nada e o card segue igual.
+    inboundByOutboundDate?: Map<string, LatestFaresByDate>,
+    totalsByDate?: Map<string, AlertTotal>,
   ): Promise<void> {
     if (outboundFares.length === 0) return
 
@@ -165,11 +222,18 @@ export class NotificationsService implements INotificationsService {
     // Apenas UMA tarifa por rotina no email: a headline. As demais datas que
     // avançaram já foram gravadas no watermark (target_alert_state) pelo
     // EvaluationService — só não são exibidas aqui.
+    const inboundOfHeadline = inboundByOutboundDate?.get(toDateStr(headline.flight_date)) ?? null
+
     const airlineOffers: AirlineOfferPair[] = [{
       airline:  headline.airline,
-      currency: headline.currency ?? routine.currency ?? 'BRL',
       outbound: this.fareToBlock(headline, routine.origin, routine.destination),
-      return:   null,
+      // A volta é a rota invertida.
+      return:   inboundOfHeadline
+        ? this.fareToBlock(inboundOfHeadline, routine.destination, routine.origin)
+        : null,
+      // O total vem PRONTO da avaliação — é o número que disparou o alerta.
+      // Recalcular aqui somando as pernas somaria libra com euro.
+      total: inboundOfHeadline ? (totalsByDate?.get(toDateStr(headline.flight_date)) ?? null) : null,
     }]
 
     await this.emailSvc.sendFlightAlert({
@@ -228,6 +292,9 @@ export class NotificationsService implements INotificationsService {
     return {
       flightNumber:  '',
       date:          toDateStr(fare.flight_date),
+      // A moeda é DA PERNA. Herdar do par era o que fazia a volta em real
+      // aparecer rotulada em libra.
+      currency:      fare.currency ?? '',
       origin,
       departureTime: fare.departure_time ?? '',
       destination,

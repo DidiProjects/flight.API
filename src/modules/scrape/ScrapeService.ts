@@ -16,6 +16,12 @@ function isBlockError(error: string): boolean {
   return /bot|block|ip[\s/_-]?block|captcha|detection|acesso foi limitado|comportamento incomum/i.test(error)
 }
 
+/** DATE do pg volta como string ou Date; normaliza para YYYY-MM-DD ou null. */
+function toDateOrNull(v: string | Date | null): string | null {
+  if (v == null) return null
+  return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
+}
+
 export class ScrapeService implements IScrapeService {
   constructor(
     private readonly scrapingJobRepo: IScrapingJobRepository,
@@ -65,7 +71,7 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
-    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data))
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data, toDateOrNull(job.return_date)))
 
     const nextRunAt = calcNextRunAt(job.flight_date)
     await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
@@ -101,7 +107,7 @@ export class ScrapeService implements IScrapeService {
     }
 
     // Persiste a coleta (ON CONFLICT protege contra duplicata na mesma execução).
-    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data))
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data, toDateOrNull(job.return_date)))
 
     // Só reagenda o job se ele NÃO estiver no meio de uma nova coleta (re-despacho
     // já em voo com outro request_id) — nesse caso evitamos sobrescrever o estado.
@@ -114,9 +120,61 @@ export class ScrapeService implements IScrapeService {
     log.info({ jobId: job.id, faresCount: count, jobMovedOn }, 'orphan callback: coleta salva')
   }
 
-  private toFareRows(data: ScrapeCallback) {
-    return data.flights.map((f) => ({
-      flight_number:  f.flightNumber ?? null,
+  /**
+   * O `return_date` vem do JOB, não do callback: o job é quem define o par que
+   * foi buscado. Sem este carimbo a tarifa colhida numa busca ida-e-volta ficaria
+   * indistinguível de uma avulsa e voltaria a ser reaproveitada como se fosse.
+   */
+  private toFareRows(data: ScrapeCallback, returnDate: string | null) {
+    // Tarifa sem moeda não entra. A `scraping.API` já descarta na origem, mas a
+    // garantia tem que existir deste lado também: a coluna é NOT NULL e o INSERT
+    // é UM comando multi-linha — uma oferta ruim abortaria o lote inteiro e a
+    // coleta toda se perderia por causa de uma linha.
+    //
+    // Filtrar em vez de recusar o callback é deliberado: o erro é de quem
+    // coletou, e perder 1 oferta é melhor que perder as 44 da mesma busca.
+    const comMoeda = data.flights.filter((f) => f.currency != null && f.currency.length === 3)
+    const dropped = data.flights.length - comMoeda.length
+    if (dropped > 0) {
+      log.warn({
+        requestId:   data.requestId,
+        airline:     data.airline,
+        origin:      data.origin,
+        destination: data.destination,
+        dropped,
+        received:    data.flights.length,
+      }, 'scrape: ofertas sem moeda descartadas antes de persistir')
+    }
+
+    // Volta com a MESMA rota da busca é a lista de idas lida como se fosse a de
+    // voltas — o par fecharia a ida com ela mesma e somaria dois trechos na
+    // mesma direção. O scraper já corta na origem; aqui é a rede, porque o dado
+    // errado é indistinguível do certo depois de gravado.
+    //
+    // O critério é rota IGUAL à da ida, não rota exatamente invertida: a BA
+    // devolve 21 voltas LCY→GRU numa busca GRU→LHR, e exigir o inverso exato
+    // descartaria volta legítima de qualquer companhia multi-aeroporto.
+    const usable = comMoeda.filter(
+      (f) => !(f.isReturn && f.origin === data.origin && f.destination === data.destination),
+    )
+    const mesmaDirecao = comMoeda.length - usable.length
+    if (mesmaDirecao > 0) {
+      log.warn({
+        requestId:   data.requestId,
+        airline:     data.airline,
+        origin:      data.origin,
+        destination: data.destination,
+        dropped:     mesmaDirecao,
+      }, 'scrape: voltas com a rota da ida descartadas antes de persistir')
+    }
+
+    return usable.map((f) => ({
+      // `|| null`, não `?? null`: o scraper usa string vazia para "não consegui
+      // ler o número do voo", e ela passava direto. O índice único de dedup só
+      // exclui NULL (`WHERE flight_number IS NOT NULL`), então duas leituras
+      // falhas na mesma coleta colidiam na chave e a segunda era silenciosamente
+      // descartada — perdendo uma tarifa real por não saber o número dela.
+      flight_number:  f.flightNumber || null,
       flight_date:    f.date,
       is_return:      f.isReturn,
       origin:         f.origin,
@@ -131,6 +189,11 @@ export class ScrapeService implements IScrapeService {
       fare_pts:       f.farePts ?? null,
       fare_hyb_pts:   f.fareHybPts ?? null,
       fare_hyb_cash:  f.fareHybCash ?? null,
+      return_date:    returnDate,
+      // Vínculo 1-para-N: só as voltas carregam a ida que as precificou.
+      paired_outbound_flight: f.isReturn ? (f.pairedOutboundFlight ?? null) : null,
+      // Volta indefinida é propriedade da IDA (as voltas DELA não abriram).
+      inbound_unavailable:    !f.isReturn && f.inboundUnavailable === true,
     }))
   }
 }

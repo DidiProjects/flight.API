@@ -11,6 +11,14 @@ const ORPHAN_PREDICATE = `
       AND r.origin       = j.origin
       AND r.destination  = j.destination
       AND j.flight_date BETWEEN r.outbound_start AND r.outbound_end
+      -- Job RT só pertence a uma rotina RT cujo par de janelas o contém; job
+      -- one-way (return_date NULL) só pertence a rotina one_way.
+      AND (
+        (j.return_date IS NULL     AND r.trip_type = 'one_way')
+        OR
+        (j.return_date IS NOT NULL AND r.trip_type = 'round_trip'
+         AND j.return_date BETWEEN r.inbound_start AND r.inbound_end)
+      )
   )`
 
 const OWNER_EMAILS_BY_ROUTE = `
@@ -23,6 +31,12 @@ const OWNER_EMAILS_BY_ROUTE = `
     AND rt.origin      = j.origin
     AND rt.destination = j.destination
     AND j.flight_date BETWEEN rt.outbound_start AND rt.outbound_end
+    AND (
+      (j.return_date IS NULL     AND rt.trip_type = 'one_way')
+      OR
+      (j.return_date IS NOT NULL AND rt.trip_type = 'round_trip'
+       AND j.return_date BETWEEN rt.inbound_start AND rt.inbound_end)
+    )
 `
 
 // Janela de espalhamento do next_run_at na criação/revival, casada com a cadência
@@ -62,21 +76,46 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
 
   async upsertFromRoutines(): Promise<number> {
     const { rowCount } = await this.db.query(`
-      INSERT INTO scraping_jobs (airline, origin, destination, flight_date, next_run_at)
-      SELECT airline, origin, destination, flight_date,
+      INSERT INTO scraping_jobs (airline, origin, destination, flight_date, return_date, next_run_at)
+      SELECT airline, origin, destination, flight_date, return_date,
              NOW() + random() * ${SPREAD_WINDOW}
       FROM (
         SELECT DISTINCT
           ra.airline,
           r.origin,
           r.destination,
-          generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date
+          generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date,
+          NULL::date AS return_date
         FROM routines r
         JOIN routine_airlines ra ON ra.routine_id = r.id
         WHERE r.is_active = true
+          AND r.trip_type = 'one_way'
           AND r.outbound_end >= CURRENT_DATE
+
+        UNION
+
+        -- Round-trip: a unidade de coleta é o PAR de datas, não a perna. Uma
+        -- tarifa one-way avulsa não serve para precificar RT — se a cia dá
+        -- desconto de ida-e-volta, ele só aparece na busca com as duas datas.
+        -- Por isso o job carrega return_date e só casa com outro job do MESMO par.
+        SELECT DISTINCT
+          ra.airline,
+          r.origin,
+          r.destination,
+          ob::date AS flight_date,
+          ib::date AS return_date
+        FROM routines r
+        JOIN routine_airlines ra ON ra.routine_id = r.id
+        CROSS JOIN LATERAL generate_series(r.outbound_start, r.outbound_end, '1 day'::interval) ob
+        CROSS JOIN LATERAL generate_series(r.inbound_start,  r.inbound_end,  '1 day'::interval) ib
+        WHERE r.is_active = true
+          AND r.trip_type = 'round_trip'
+          AND r.inbound_end >= CURRENT_DATE
+          AND ib >= ob
+          -- Mesmo teto de MAX_ROUNDTRIP_SPAN_MONTHS (utils/roundtrip.ts).
+          AND ib <= ob + INTERVAL '3 months'
       ) g
-      ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
+      ON CONFLICT (airline, origin, destination, flight_date, return_date) DO UPDATE
         -- Revive job aposentado cuja rota voltou a ter rotina ativa, também espalhado.
         SET orphaned_at = NULL,
             next_run_at = NOW() + random() * ${SPREAD_WINDOW_CONFLICT},
@@ -88,17 +127,38 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
 
   async upsertFromRoutine(routineId: string): Promise<void> {
     await this.db.query(`
-      INSERT INTO scraping_jobs (airline, origin, destination, flight_date)
+      INSERT INTO scraping_jobs (airline, origin, destination, flight_date, return_date)
       SELECT DISTINCT
         ra.airline,
         r.origin,
         r.destination,
-        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date
+        generate_series(r.outbound_start, r.outbound_end, '1 day'::interval)::date AS flight_date,
+        NULL::date AS return_date
       FROM routines r
       JOIN routine_airlines ra ON ra.routine_id = r.id
       WHERE r.id = $1
+        AND r.trip_type = 'one_way'
         AND r.outbound_end >= CURRENT_DATE
-      ON CONFLICT (airline, origin, destination, flight_date) DO UPDATE
+
+      UNION
+
+      -- Round-trip: par de datas (ver upsertFromRoutines).
+      SELECT DISTINCT
+        ra.airline,
+        r.origin,
+        r.destination,
+        ob::date AS flight_date,
+        ib::date AS return_date
+      FROM routines r
+      JOIN routine_airlines ra ON ra.routine_id = r.id
+      CROSS JOIN LATERAL generate_series(r.outbound_start, r.outbound_end, '1 day'::interval) ob
+      CROSS JOIN LATERAL generate_series(r.inbound_start,  r.inbound_end,  '1 day'::interval) ib
+      WHERE r.id = $1
+        AND r.trip_type = 'round_trip'
+        AND r.inbound_end >= CURRENT_DATE
+        AND ib >= ob
+        AND ib <= ob + INTERVAL '3 months'
+      ON CONFLICT (airline, origin, destination, flight_date, return_date) DO UPDATE
         SET next_run_at = NOW(),
             priority    = 100,
             orphaned_at = NULL,
@@ -160,6 +220,30 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       )
       RETURNING *
     `, [airline])
+    return rows[0] ?? null
+  }
+
+  async claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null> {
+    const { rows } = await this.db.query<ScrapingJobRow>(`
+      UPDATE scraping_jobs
+      SET status = 'running', running_since = NOW(), started_at = NULL, updated_at = NOW()
+      WHERE id = (
+        SELECT sj.id FROM scraping_jobs sj
+        JOIN routines r ON r.id = $1
+        JOIN routine_airlines ra ON ra.routine_id = r.id AND ra.airline = sj.airline
+        WHERE sj.origin = r.origin
+          AND sj.destination = r.destination
+          AND sj.flight_date BETWEEN r.outbound_start AND r.outbound_end
+          AND sj.status IN ('pending', 'failed', 'success')
+          AND sj.orphaned_at IS NULL
+          AND sj.next_run_at <= NOW()
+          AND sj.retry_count < sj.max_retries
+        ORDER BY sj.priority DESC, sj.next_run_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `, [routineId])
     return rows[0] ?? null
   }
 

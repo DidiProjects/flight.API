@@ -8,6 +8,9 @@ export interface CreateRoutineData {
   destination: string
   outboundStart: string
   outboundEnd: string
+  tripType?: 'one_way' | 'round_trip'
+  inboundStart?: string | null
+  inboundEnd?: string | null
   passengers: number
   currency: string | null
   targetCash?: number | null

@@ -225,4 +225,198 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledOnce()
     expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledWith(job.id, expect.any(Date))
   })
+
+  it('volta carrega o vinculo com a ida que a precificou', async () => {
+    const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
+    const outbound = makeFlightOffer()
+    const inbound = {
+      ...makeFlightOffer(),
+      flightNumber: 'AD9999', isReturn: true, origin: 'LIS', destination: 'VCP',
+      pairedOutboundFlight: 'AD1234',
+    }
+
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(2)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [outbound, inbound] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ is_return: false, paired_outbound_flight: null })
+    expect(calledFares[1]).toMatchObject({ is_return: true, paired_outbound_flight: 'AD1234' })
+  })
+
+  it('ida que venha carimbada por engano nao guarda o vinculo', async () => {
+    const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
+    // O vinculo existe SO na volta; guardar na ida corromperia o agrupamento.
+    const outbound = { ...makeFlightOffer(), isReturn: false, pairedOutboundFlight: 'AD1234' }
+
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [outbound] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ paired_outbound_flight: null })
+  })
+
+  it('volta indefinida e marcada na ida, nunca na volta', async () => {
+    const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
+    // A limitacao e da IDA: as voltas DELA nao abriram.
+    const outbound = { ...makeFlightOffer(), inboundUnavailable: true }
+    const inbound = {
+      ...makeFlightOffer(),
+      flightNumber: 'AD9999', isReturn: true, origin: 'LIS', destination: 'VCP',
+      inboundUnavailable: true,
+    }
+
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(2)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [outbound, inbound] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ is_return: false, inbound_unavailable: true })
+    expect(calledFares[1]).toMatchObject({ is_return: true, inbound_unavailable: false })
+  })
+
+  it('callback sem o campo novo - ida nao fica marcada', async () => {
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [makeFlightOffer()] }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares[0]).toMatchObject({ inbound_unavailable: false })
+  })
+
+  // ── moeda obrigatória ────────────────────────────────────────────────────────
+
+  it('oferta sem moeda é descartada, e as boas da mesma coleta são gravadas', async () => {
+    // `flight_fares.currency` é NOT NULL e o insert é UM comando multi-linha:
+    // sem este filtro, uma oferta ruim abortaria o lote e a coleta inteira se
+    // perderia por causa de uma linha.
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const boa = makeFlightOffer()
+    const semMoeda = { ...makeFlightOffer(), flightNumber: 'AD9999', currency: undefined }
+
+    await svc.processCallback(makeCallback({ flights: [boa, semMoeda] as never }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toHaveLength(1)
+    expect(calledFares[0]).toMatchObject({ flight_number: 'AD1234', currency: 'BRL' })
+  })
+
+  it('código de moeda malformado também é descartado', async () => {
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(0)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const ruim = { ...makeFlightOffer(), currency: 'REAIS' }
+
+    await svc.processCallback(makeCallback({ flights: [ruim] as never }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toEqual([])
+  })
+
+  // ── número de voo ilegível ───────────────────────────────────────────────────
+
+  it('número de voo vazio vira NULL, e duas leituras falhas não colidem na dedup', async () => {
+    // O scraper da LATAM usa '' quando o modal não abre. O índice único de dedup
+    // só ignora NULL, então duas linhas com '' colidiam na chave e a segunda era
+    // descartada — perdendo uma tarifa real por não saber o número dela.
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(2)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const semNumero1 = { ...makeFlightOffer(), flightNumber: '', fareCash: 363.65 }
+    const semNumero2 = { ...makeFlightOffer(), flightNumber: '', fareCash: 418.65 }
+
+    await svc.processCallback(makeCallback({ flights: [semNumero1, semNumero2] as never }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toHaveLength(2)
+    expect(calledFares.map((f: { flight_number: unknown }) => f.flight_number)).toEqual([null, null])
+  })
+
+  // ── direção da perna de volta ────────────────────────────────────────────────
+
+  it('volta com a rota da ida é descartada, e a ida da mesma coleta fica', async () => {
+    // Retrato do request 8be20a19: a tela de voltas da LATAM não avançou, o
+    // scraper leu os cards de IDA e carimbou isReturn. O par fechava o voo com
+    // ele mesmo — R$730,65 + R$730,65 num trecho só de ida.
+    const job = makeJob({ flight_date: '2026-08-15' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const ida = makeFlightOffer()
+    const voltaFantasma = {
+      ...makeFlightOffer(),
+      isReturn: true, origin: 'VCP', destination: 'LIS',
+      pairedOutboundFlight: 'AD1234',
+    }
+
+    await svc.processCallback(makeCallback({ flights: [ida, voltaFantasma] as never }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toHaveLength(1)
+    expect(calledFares[0]).toMatchObject({ flight_number: 'AD1234', is_return: false })
+  })
+
+  it('volta que pousa em outro aeroporto da cidade é preservada', async () => {
+    // A BA devolve 21 voltas LCY→GRU numa busca GRU→LHR. O corte é por rota
+    // IGUAL à da ida; exigir o inverso exato perderia essas.
+    const job = makeJob({ origin: 'GRU', destination: 'LHR', flight_date: '2026-09-21' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const volta = {
+      ...makeFlightOffer(),
+      flightNumber: 'BA247', isReturn: true, origin: 'LCY', destination: 'GRU',
+      pairedOutboundFlight: 'BA246',
+    }
+
+    await svc.processCallback(makeCallback({
+      origin: 'GRU', destination: 'LHR', flights: [volta] as never,
+    }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toHaveLength(1)
+    expect(calledFares[0]).toMatchObject({ flight_number: 'BA247', is_return: true })
+  })
+
+  it('só-volta continua gravando: a rotina inverte a rota, e a perna é ida', async () => {
+    // Jornada "Teste 3 VOLTA": rotina CNF→GRU one_way. As tarifas chegam com
+    // isReturn=false, então o corte não pode encostar nelas.
+    const job = makeJob({ origin: 'CNF', destination: 'GRU', flight_date: '2026-09-25' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    const perna = {
+      ...makeFlightOffer(),
+      flightNumber: 'LA3553', isReturn: false, origin: 'CNF', destination: 'GRU',
+    }
+
+    await svc.processCallback(makeCallback({
+      origin: 'CNF', destination: 'GRU', flights: [perna] as never,
+    }))
+
+    const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
+    expect(calledFares).toHaveLength(1)
+    expect(calledFares[0]).toMatchObject({ flight_number: 'LA3553', is_return: false })
+  })
 })

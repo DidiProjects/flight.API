@@ -75,6 +75,7 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     expireOldJobs:       vi.fn().mockResolvedValue(0),
     updatePriorities:    vi.fn().mockResolvedValue(undefined),
     claimNextJob:        vi.fn().mockResolvedValue(job),
+    claimNextJobForRoutine: vi.fn().mockResolvedValueOnce(job).mockResolvedValue(null),
     countInFlight:       vi.fn().mockResolvedValue(0),
     deferJob:            vi.fn().mockResolvedValue(undefined),
     markRunning:         vi.fn().mockResolvedValue(undefined),
@@ -188,6 +189,9 @@ describe('SchedulerService — dispatch loop', () => {
 
     expect(scrapingJobRepo.upsertFromRoutine).toHaveBeenCalledWith(routineId)
     expect(scrapingJobRepo.upsertFromRoutines).not.toHaveBeenCalled()
+    expect(scrapingJobRepo.claimNextJobForRoutine).toHaveBeenCalledWith(routineId)
+    expect(scrapingJobRepo.claimNextJob).not.toHaveBeenCalled()
+    expect(scrapingJobRepo.getActiveAirlines).not.toHaveBeenCalled()
   })
 
   it('despacha em lote até o orçamento por companhia, parando quando não há mais job', async () => {
