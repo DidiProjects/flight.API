@@ -133,8 +133,8 @@ export class ScrapeService implements IScrapeService {
     //
     // Filtrar em vez de recusar o callback é deliberado: o erro é de quem
     // coletou, e perder 1 oferta é melhor que perder as 44 da mesma busca.
-    const usable = data.flights.filter((f) => f.currency != null && f.currency.length === 3)
-    const dropped = data.flights.length - usable.length
+    const comMoeda = data.flights.filter((f) => f.currency != null && f.currency.length === 3)
+    const dropped = data.flights.length - comMoeda.length
     if (dropped > 0) {
       log.warn({
         requestId:   data.requestId,
@@ -146,8 +146,35 @@ export class ScrapeService implements IScrapeService {
       }, 'scrape: ofertas sem moeda descartadas antes de persistir')
     }
 
+    // Volta com a MESMA rota da busca é a lista de idas lida como se fosse a de
+    // voltas — o par fecharia a ida com ela mesma e somaria dois trechos na
+    // mesma direção. O scraper já corta na origem; aqui é a rede, porque o dado
+    // errado é indistinguível do certo depois de gravado.
+    //
+    // O critério é rota IGUAL à da ida, não rota exatamente invertida: a BA
+    // devolve 21 voltas LCY→GRU numa busca GRU→LHR, e exigir o inverso exato
+    // descartaria volta legítima de qualquer companhia multi-aeroporto.
+    const usable = comMoeda.filter(
+      (f) => !(f.isReturn && f.origin === data.origin && f.destination === data.destination),
+    )
+    const mesmaDirecao = comMoeda.length - usable.length
+    if (mesmaDirecao > 0) {
+      log.warn({
+        requestId:   data.requestId,
+        airline:     data.airline,
+        origin:      data.origin,
+        destination: data.destination,
+        dropped:     mesmaDirecao,
+      }, 'scrape: voltas com a rota da ida descartadas antes de persistir')
+    }
+
     return usable.map((f) => ({
-      flight_number:  f.flightNumber ?? null,
+      // `|| null`, não `?? null`: o scraper usa string vazia para "não consegui
+      // ler o número do voo", e ela passava direto. O índice único de dedup só
+      // exclui NULL (`WHERE flight_number IS NOT NULL`), então duas leituras
+      // falhas na mesma coleta colidiam na chave e a segunda era silenciosamente
+      // descartada — perdendo uma tarifa real por não saber o número dela.
+      flight_number:  f.flightNumber || null,
       flight_date:    f.date,
       is_return:      f.isReturn,
       origin:         f.origin,
