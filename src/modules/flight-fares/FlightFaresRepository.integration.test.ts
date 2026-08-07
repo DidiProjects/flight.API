@@ -265,6 +265,126 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
     ).toBe(Number(current.best_cash))
   })
 
+  it('coleta só com as idas não apaga a melhor tarifa da coleta completa anterior', async () => {
+    // O laço 1-para-N tropeça na primeira ida e o job termina com `success`
+    // carregando só as idas. Antes, essa coleta ganhava o DISTINCT ON por ser a
+    // mais recente e todo total saía NULL — a rotina perdia a melhor tarifa que
+    // já tinha, sem dizer por quê.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+    await new Promise((r) => setTimeout(r, 15))
+    await repo.insertMany(JOB_ID, REQ_2, [
+      pairLeg({ flight: 'AD100', cash: 200.00, outDate: OUT, retDate: RET, isReturn: false }),
+    ])
+
+    const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    expect(Number(current.best_cash)).toBe(665.45)
+  })
+
+  it('coleta completa mais recente continua mandando na anterior', async () => {
+    // A contrapartida do teste acima: o filtro elege a mais recente que resolveu
+    // a volta, não a mais ANTIGA. Sem esta garantia o preço congelaria.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+    await new Promise((r) => setTimeout(r, 15))
+    await repo.insertMany(JOB_ID, REQ_2, [
+      pairLeg({ flight: 'AD100', cash: 100.00, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 150.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+
+    const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    expect(Number(current.best_cash)).toBe(250)
+  })
+
+  it('volta indefinida mais recente vence: o motivo conhecido não é coleta truncada', async () => {
+    // `inbound_unavailable` é limitação CONHECIDA (login do TudoAzul): a rotina
+    // exibe "—" com motivo. Mostrar no lugar um total antigo, como se fosse o de
+    // agora, seria pior que não mostrar nada.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+    await new Promise((r) => setTimeout(r, 15))
+    await repo.insertMany(JOB_ID, REQ_2, [
+      pairLeg({
+        flight: 'AD100', cash: 200.00, outDate: OUT, retDate: RET,
+        isReturn: false, inboundUnavailable: true,
+      }),
+    ])
+
+    const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    expect(current.best_cash).toBeNull()
+    expect(current.inbound_unavailable).toBe(true)
+  })
+
+  it('getLatestPairs também ignora a coleta que só trouxe as idas', async () => {
+    // É a query que alimenta o ciclo de avaliação e o e-mail. Sem o filtro, o
+    // alerta não saía: a coleta truncada vencia e não havia par para comparar.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+    ])
+    await new Promise((r) => setTimeout(r, 15))
+    await repo.insertMany(JOB_ID, REQ_2, [
+      pairLeg({ flight: 'AD100', cash: 200.00, outDate: OUT, retDate: RET, isReturn: false }),
+    ])
+
+    const rows = await repo.getLatestPairs('azul', 'CNF', 'VCP', OUT, OUT, RET, RET)
+
+    expect(rows.filter((r) => r.is_return)).toHaveLength(1)
+    expect(rows.every((r) => r.request_id === REQ_1)).toBe(true)
+  })
+
+  it('volta com a rota da IDA não fecha par, mesmo sendo a mais barata', async () => {
+    // Retrato do request 8be20a19: a tela de voltas da LATAM não avançou e os
+    // cards de IDA foram gravados com is_return. A linha fantasma é a mais
+    // barata do lote de propósito — se vazasse, ganharia o total.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
+      pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
+      fare('AD100', 100.00, {
+        flight_date: RET, is_return: true, origin: 'CNF', destination: 'VCP',
+        return_date: RET, paired_outbound_flight: 'AD100',
+      }),
+    ])
+
+    const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+    // 365.45 + 300 = 665.45 pela volta legítima. Com o fantasma seriam 465.45 —
+    // dois trechos CNF→VCP somados como se fossem uma viagem de ida e volta.
+    expect(Number(current.best_cash)).toBe(665.45)
+    expect(Number(current.best_cash_inbound)).toBe(300)
+  })
+
+  it('volta que pousa em outro aeroporto da cidade fecha par normalmente', async () => {
+    // A BA devolve voltas LCY→GRU numa busca GRU→LHR. O corte do fantasma é por
+    // rota IGUAL à da ida; exigir o inverso exato zeraria o par da BA.
+    await repo.insertMany(JOB_ID, REQ_1, [
+      fare('BA246', 3276.00, {
+        flight_date: OUT, is_return: false, origin: 'GRU', destination: 'LHR',
+        airline: 'britishairways', return_date: RET,
+      }),
+      fare('BA247', 1000.00, {
+        flight_date: RET, is_return: true, origin: 'LCY', destination: 'GRU',
+        airline: 'britishairways', return_date: RET, paired_outbound_flight: 'BA246',
+      }),
+    ])
+
+    const current = await repo.getCurrentBest(
+      ['britishairways'], 'GRU', 'LHR', OUT, OUT, { from: RET, to: RET },
+    )
+
+    expect(Number(current.best_cash)).toBe(4276)
+    expect(Number(current.best_cash_inbound)).toBe(1000)
+  })
+
   it('bundle da companhia: total sem parcelas, porque não há divisão publicada', async () => {
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),

@@ -11,6 +11,33 @@ const EMPTY_HISTORY: PriceHistory = {
   min_pts_30d: null,
 }
 
+/**
+ * Uma execução só descreve um par quando RESOLVEU a perna de volta: ou trouxe
+ * voltas, ou registrou que elas não estavam disponíveis (login do TudoAzul).
+ *
+ * Sem este filtro, o `DISTINCT ON ... ORDER BY scraped_at DESC` das três queries
+ * de par elegia simplesmente a coleta mais recente — inclusive uma em que o laço
+ * 1-para-N tropeçou na primeira ida e só as idas subiram. Aí todo total saía
+ * NULL: a rotina perdia a melhor tarifa que já tinha, o calendário esvaziava e o
+ * ciclo de avaliação não achava par nenhum para alertar. Uma coleta pior apagava
+ * o resultado de uma coleta boa, e o job ainda constava como `success`.
+ *
+ * Exige `o` como alias da perna de ida na query que interpola.
+ */
+const RESOLVEU_A_VOLTA = `(
+        o.inbound_unavailable
+        OR EXISTS (
+          SELECT 1 FROM flight_fares i
+          WHERE i.request_id  = o.request_id
+            AND i.is_return
+            AND i.return_date = o.return_date
+            AND i.airline     = o.airline
+            -- Volta com a rota da ida é lista de idas lida como volta; não conta
+            -- como volta resolvida (ver getCurrentBestPair).
+            AND NOT (i.origin = o.origin AND i.destination = o.destination)
+        )
+      )`
+
 export class FlightFaresRepository implements IFlightFaresRepository {
   constructor(private readonly db: Pool) {}
 
@@ -123,13 +150,14 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         -- volta. A perna de volta tem flight_date = data DELA.
         SELECT DISTINCT ON (flight_date, return_date)
           flight_date AS outbound_date, return_date, request_id
-        FROM flight_fares
+        FROM flight_fares o
         WHERE airline = $1
           AND return_date IS NOT NULL
           AND NOT is_return
           AND flight_date BETWEEN $4 AND $5
           AND return_date BETWEEN $6 AND $7
           AND origin = $2 AND destination = $3
+          AND ${RESOLVEU_A_VOLTA}
         ORDER BY flight_date, return_date, scraped_at DESC
       ) latest
         -- request_id é a identidade do par: as duas pernas saem da mesma busca.
@@ -391,7 +419,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         -- data dela. O par é identificado pelo request_id da busca.
         SELECT DISTINCT ON (flight_date, return_date)
           flight_date AS outbound_date, return_date, request_id, scraped_at
-        FROM flight_fares
+        FROM flight_fares o
         WHERE airline = ANY($1::text[])
           AND return_date IS NOT NULL
           AND NOT is_return
@@ -399,6 +427,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND return_date BETWEEN $6 AND $7
           AND origin = $2 AND destination = $3
           AND scraped_at >= NOW() - INTERVAL '30 days'
+          AND ${RESOLVEU_A_VOLTA}
         ORDER BY flight_date, return_date, scraped_at DESC
       ),
       -- Uma linha por COMBINAÇÃO (ida, volta-mais-barata-daquela-ida), não por
@@ -441,6 +470,12 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND i.return_date = lp.return_date
          AND i.is_return
          AND i.airline = o.airline
+         -- Volta com a MESMA rota da ida é a lista de idas lida como volta:
+         -- somaria dois trechos na mesma direção e chegou a parear o voo com
+         -- ele mesmo. Filtra aqui porque o banco ainda tem linhas assim, de
+         -- antes do corte na coleta. NÃO se exige a rota exatamente invertida:
+         -- a BA devolve voltas LCY→GRU numa busca GRU→LHR, e são legítimas.
+         AND NOT (i.origin = o.origin AND i.destination = o.destination)
          -- paired_outbound_flight NULL = coleta anterior ao vínculo 1-para-N.
          AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
          -- A soma só vale dentro de UMA moeda. As duas pernas da mesma busca RT
@@ -580,7 +615,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       WITH latest_pair AS (
         SELECT DISTINCT ON (flight_date, return_date)
           flight_date AS outbound_date, return_date, request_id
-        FROM flight_fares
+        FROM flight_fares o
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
           AND NOT is_return
@@ -588,6 +623,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND flight_date BETWEEN $4 AND $5
           AND return_date BETWEEN $6 AND $7
           AND scraped_at >= NOW() - INTERVAL '30 days'
+          AND ${RESOLVEU_A_VOLTA}
         ORDER BY flight_date, return_date, scraped_at DESC
       ),
       -- Uma linha por combinação (ida, volta-mais-barata-daquela-ida): a volta é
@@ -612,6 +648,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND i.return_date = lp.return_date
          AND i.is_return
          AND i.airline = o.airline
+         -- Mesma regra do getCurrentBestPair: volta com a rota da ida é leitura
+         -- errada da tela; volta em outro aeroporto da cidade é legítima.
+         AND NOT (i.origin = o.origin AND i.destination = o.destination)
          AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
         GROUP BY o.id, o.flight_date
       )
