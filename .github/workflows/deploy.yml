@@ -38,6 +38,12 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      # O teste da limpeza de alvo lê a migration direto do flight.DB (repo
+      # irmão) em vez de copiar o SQL. Clonado ao lado do workspace porque é
+      # onde o teste resolve o caminho: ../flight.DB a partir da raiz do repo.
+      - name: Checkout flight.DB (migrations)
+        run: git clone --depth 1 --branch main https://github.com/DidiProjects/flight.DB.git ../flight.DB
+
       - name: Install dependencies
         run: npm install
 
