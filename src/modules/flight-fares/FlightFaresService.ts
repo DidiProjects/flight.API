@@ -1,12 +1,15 @@
 import { FlightFaresCurrent, IFlightFaresService, Journey } from './interfaces/IFlightFaresService'
 import { CurrentBest, IFlightFaresRepository, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
-import { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 
+/**
+ * Leitura de tarifas SEM rede.
+ *
+ * O câmbio saiu daqui em 017: converter na leitura batia na API a cada abertura
+ * de histórico e fazia a régua de 30 dias se mexer com a cotação do dia. A
+ * conversão passou para a ingestão da análise, com a taxa gravada na linha.
+ */
 export class FlightFaresService implements IFlightFaresService {
-  constructor(
-    private readonly repo: IFlightFaresRepository,
-    private readonly fx: IFxRateService,
-  ) {}
+  constructor(private readonly repo: IFlightFaresRepository) {}
 
   getHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory> {
     return this.repo.getPriceHistory(airline, origin, destination, flightDate)
@@ -31,43 +34,21 @@ export class FlightFaresService implements IFlightFaresService {
       this.repo.getCurrentBest(airlines, origin, destination, dateFrom, dateTo, inbound),
       this.repo.getSummary(airlines, origin, destination, dateFrom, dateTo, inbound),
     ])
-    const journeys = this.toJourneys(current, origin, destination, inbound)
-    const total = await this.pairTotal(journeys)
-
-    // O total sobrescreve o que veio do SQL: lá ele só existe quando as duas
-    // pernas já estão na mesma moeda. Aqui ele existe sempre, na moeda da IDA.
+    // O total do par já vem somado em Real pelo SQL (017): a conversão acontece
+    // uma vez, na ingestão da análise, com a taxa gravada na linha. Antes era
+    // aqui, a cada abertura de tela, e o valor mudava com a cotação do dia.
+    //
+    // A coerção continua sendo necessária: NUMERIC volta do pg como STRING, e
+    // quem a fazia era o `pairTotal` que somava. Sem ela o total sai do JSON
+    // como "12548.00" e qualquer comparação no front vira lexicográfica.
     return {
       ...summary,
       ...current,
-      ...(total ? { best_cash: total.amount, currency: total.currency } : {}),
-      journeys,
-    }
-  }
-
-  /**
-   * Total do par, SEMPRE na moeda da tarifa de ida.
-   *
-   * A volta é convertida para a moeda de quem parte. Assim o total tem uma
-   * moeda previsível — a mesma da ida — em vez de existir só quando as duas
-   * pernas coincidem e sumir quando não.
-   *
-   * `null` quando não é par, quando falta a parcela de alguma perna (bundle da
-   * companhia é preço único, sem divisão publicada) ou quando não há cotação
-   * confiável. Nesses casos o card mostra as parcelas e omite o total — nunca
-   * um número inventado.
-   */
-  private async pairTotal(journeys: Journey[]): Promise<{ amount: number; currency: string } | null> {
-    if (journeys.length < 2) return null
-    const [out, inb] = journeys
-    if (!out?.currency || !inb?.currency) return null
-    if (out.cash == null || inb.cash == null) return null
-
-    const convertida = await this.fx.convert(inb.cash, inb.currency, out.currency)
-    if (convertida == null) return null
-
-    return {
-      amount: Math.round((out.cash + convertida.amount) * 100) / 100,
-      currency: out.currency,
+      best_cash:     this.num(current.best_cash),
+      best_pts:      this.num(current.best_pts),
+      best_hyb_pts:  this.num(current.best_hyb_pts),
+      best_hyb_cash: this.num(current.best_hyb_cash),
+      journeys: this.toJourneys(current, origin, destination, inbound),
     }
   }
 

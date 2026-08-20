@@ -71,7 +71,7 @@ const fxSvc  = new FxRateService(
   [new FrankfurterProvider(fxHttp), new CurrencyApiProvider(fxHttp)],
 )
 
-const flightFaresSvc = new FlightFaresService(flightFaresRepo, fxSvc)
+const flightFaresSvc = new FlightFaresService(flightFaresRepo)
 const emailSvc = new EmailService(env)
 
 const notifSvc = new NotificationsService(
@@ -92,7 +92,7 @@ const authSvc      = new AuthService(usersRepo, authRepo, refreshTokenRepo, emai
 const usersSvc     = new UsersService(usersRepo, emailSvc)
 const airlinesSvc  = new AirlinesService(airlinesRepo, routinesRepo)
 const routinesSvc  = new RoutinesService(routinesRepo, airlinesRepo, airportsRepo, flightFaresRepo)
-const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo)
+const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo, fxSvc)
 const unsubSvc     = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
 const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo, scraperClient, workerGateway, airportsRepo)
 const airportsSvc  = new AirportsService(airportsRepo, airlinesRepo)

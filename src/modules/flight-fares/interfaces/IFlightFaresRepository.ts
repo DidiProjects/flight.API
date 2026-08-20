@@ -17,6 +17,20 @@ export interface FlightFareRow {
   fare_pts: number | null
   fare_hyb_pts: number | null
   fare_hyb_cash: number | null
+  /**
+   * Valor em Real CONGELADO na coleta (017).
+   *
+   * Converter na leitura fazia a régua de 30 dias mudar com a cotação do dia e
+   * batia na API de câmbio a cada abertura de histórico. `null` quando não
+   * havia cotação confiável no momento — a linha existe, só não entra em soma
+   * de Real.
+   */
+  fare_cash_brl: number | null
+  fare_hyb_cash_brl: number | null
+  /** Quantos BRL valia 1 unidade de `currency` na coleta. 1 se já era Real. */
+  fx_rate: number | null
+  /** Data da COTAÇÃO usada, não a da coleta. */
+  fx_rate_date: string | null
   /** Par de origem da tarifa. NULL = colhida numa busca one-way avulsa. */
   return_date: string | null
   /**
