@@ -1,45 +1,45 @@
-# flight.API — Instruções para Claude
+# flight.API
 
-## Arquitetura
+REST API Fastify do monitoramento de voos. Arquitetura completa — scheduler,
+webhook, ciclo de avaliação, env vars — em `docs/architecture.md`.
 
-REST API Fastify que orquestra o monitoramento de voos. Visão completa (scheduler, webhook, avaliação, env vars) em `docs/architecture.md`.
+Regras gerais (autonomia, commits, testes, comentários) vivem em `~/.claude/`.
+Aqui só o que é armadilha **deste** repositório.
 
-- **Scheduler:** deriva `scraping_jobs` (1 por `airline × origin × destination × flight_date`) e registra cada despacho em `analysis_runs`. Não é "por rotina". Detalhes dos loops em `docs/architecture.md`.
-- **Deploy:** GitHub Actions → build Docker image local → push via Tailscale SSH → `docker run` no servidor Linux
-- **Banco:** gerenciado pelo projeto `flight.DB` (schema + seed via init-scripts do PostgreSQL); tabelas `flight_fares`, `flight_fares_daily`, `scraping_jobs`, `analysis_runs`
-- **Rede Docker:** `flight-network` conecta `flight-api` e `flight-db`
+## Padrão de módulo
 
-## Início de cada sessão
+Módulo novo segue exatamente esta forma, e é registrado no `container.ts` e no
+`app.ts`:
 
-1. Ler `memory/MEMORY.md`
-2. Ler os arquivos de memória relevantes ao trabalho da sessão
-
-## Final de cada sessão
-
-Atualizar memória com o que foi aprendido — preferências, decisões de arquitetura não óbvias, contexto de projeto.
-
-## Regras permanentes
-
-### Dados sensíveis na memória
-NUNCA armazenar na memória: credenciais, senhas, tokens, API keys, dados pessoais ou qualquer informação que identifique pessoas reais. A memória fica versionada no git.
-
-### Autonomia
-Operar com máxima autonomia. Não pedir confirmação a não ser em risco real de perda de dados irreversível.
-
-### Padrão de módulo
-Ao adicionar novos módulos seguir sempre:
 ```
 interfaces/I<Domain>Repository.ts
 interfaces/I<Domain>Service.ts
-<Domain>Repository.ts    ← implements interface, recebe Pool via construtor
-<Domain>Service.ts       ← implements interface, recebe repositórios via construtor
-route.ts                 ← factory function(service) → Fastify plugin
-schema.ts                ← Zod schemas
+<Domain>Repository.ts    ← implements a interface, recebe Pool no construtor
+<Domain>Service.ts       ← implements a interface, recebe repositórios no construtor
+route.ts                 ← factory(service) → plugin Fastify
+schema.ts                ← Zod
 ```
-Registrar no `container.ts` e no `app.ts`.
 
-### Senhas
-Usar sempre `bcryptjs` (12 rounds) via `src/utils/crypto.ts`. Nunca PBKDF2 — o banco usa pgcrypto/bcrypt e os hashes precisam ser compatíveis.
+Repositório não fala com a rede. Quem abre socket é service.
 
-### Variáveis de ambiente
-Toda nova variável deve ser adicionada ao `src/config/env.ts` (Zod), ao `.env`, e ao step `docker run` do `deploy.yml`.
+## Armadilhas medidas
+
+- **`NUMERIC` volta do pg como string.** `"4921.00" + "7627.00"` concatena, vira
+  `NaN` e some do JSON. Coagir com `Number()` antes de somar ou comparar.
+- **Senhas só com `bcryptjs` (12 rounds)** via `src/utils/crypto.ts`. Nunca
+  PBKDF2 — o banco usa pgcrypto/bcrypt e os hashes precisam bater.
+- **`tsconfig.json` exclui `**/*.test.ts`**: erro de tipo em teste não aparece
+  no `npm run typecheck`. Só rodando os testes.
+- **Zod 3 aqui, Zod 4 no flight.FRONT.** A forma de função no 2º argumento do
+  `.refine` vale aqui e **não** vale lá — portar validação sem ajustar devolve
+  "Invalid input".
+
+## Variável de ambiente nova
+
+Adicionar nos três lugares, senão quebra em produção: `src/config/env.ts` (Zod),
+`.env` e o step `docker run` do `deploy.yml`.
+
+## Banco
+
+O schema é do projeto `flight.DB`. Mudança de coluna ou índice se resolve lá
+primeiro — ver `~/.claude/` e o `CLAUDE.md` daquele repo.
