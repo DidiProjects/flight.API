@@ -3,7 +3,7 @@ import { IScrapingJobRepository } from '../scraping-jobs/interfaces/IScrapingJob
 import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import { ScrapeCallback } from './schema'
-import { calcNextRunAt, calcBackoffNextRunAt } from '../../services/scheduler/SchedulerService'
+import { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt } from '../../services/scheduler/SchedulerService'
 import { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import { logger } from '../../utils/logger'
 
@@ -13,8 +13,32 @@ const log = logger.child({ service: 'scrape' })
 // this long instead of retrying job-by-job (which only prolongs the block).
 const BLOCK_COOLDOWN_MS = 60 * 60 * 1000
 
+/**
+ * Retaguarda para callback sem `outcome` (scraper em versão anterior, ou falha
+ * sem tela para classificar).
+ *
+ * Era a fonte primária, e é uma armadilha: casava com a palavra "block" que o
+ * próprio scraper escrevia no texto do erro ao chutar bloqueio. A mensagem
+ * provava a si mesma, e a LATAM foi pausada por uma hora, três vezes em
+ * 2026-08-20, por uma página de erro do site dela.
+ */
 function isBlockError(error: string): boolean {
   return /bot|block|ip[\s/_-]?block|captcha|detection|acesso foi limitado|comportamento incomum/i.test(error)
+}
+
+/** Bloqueio pausa a companhia inteira: a evidência precisa ser do DOM, não do texto. */
+function isAirlineBlocked(data: ScrapeCallback): boolean {
+  if (data.outcome) return data.outcome.state === 'BLOCKED'
+  return isBlockError(data.error ?? '')
+}
+
+/**
+ * A companhia declarou falha própria (a busca dela não respondeu, ou ela
+ * mostrou a própria página de erro). Não é bloqueio — não pausa ninguém — e não
+ * é culpa do job, então não escala para 'dead'.
+ */
+function isSiteError(data: ScrapeCallback): boolean {
+  return data.outcome?.state === 'SITE_ERROR'
 }
 
 /** DATE do pg volta como string ou Date; normaliza para YYYY-MM-DD ou null. */
@@ -98,11 +122,22 @@ export class ScrapeService implements IScrapeService {
     if (data.error && data.flights.length === 0) {
       // IP/bot block: pause the whole airline for a cooldown. Do NOT escalate to
       // dead — the block is not the job's fault.
-      if (isBlockError(data.error)) {
+      if (isAirlineBlocked(data)) {
         const until = new Date(Date.now() + BLOCK_COOLDOWN_MS)
         const paused = await this.scrapingJobRepo.pauseAirlineForBlock(job.airline, until, data.error)
         await this.analysisRunsRepo.markFinished(data.requestId, { status: 'blocked', errorMessage: data.error })
-        log.warn({ jobId: job.id, airline: job.airline, paused, until }, 'scraping_airline_blocked: airline paused')
+        log.warn({ jobId: job.id, airline: job.airline, paused, until, evidence: data.outcome?.evidence }, 'scraping_airline_blocked: airline paused')
+        return
+      }
+
+      // Falha do site: só este job espera, e espera mais do que uma falha comum
+      // — insistir de minuto em minuto numa busca que não responde não a faz
+      // responder.
+      if (isSiteError(data)) {
+        const nextRunAt = calcSiteErrorNextRunAt(job.retry_count)
+        await this.scrapingJobRepo.markSiteError(job.id, data.error, nextRunAt)
+        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: data.error })
+        log.warn({ jobId: job.id, airline: job.airline, nextRunAt, reason: data.outcome?.reason }, 'scraping_job_site_error')
         return
       }
 
@@ -141,7 +176,7 @@ export class ScrapeService implements IScrapeService {
     // Erro sem voos: só fecha a run; não mexe no job (ele já seguiu adiante).
     if (data.error && data.flights.length === 0) {
       await this.analysisRunsRepo.markFinished(data.requestId, {
-        status:       isBlockError(data.error) ? 'blocked' : 'failed',
+        status:       isAirlineBlocked(data) ? 'blocked' : 'failed',
         errorMessage: data.error,
       })
       log.warn({ requestId: data.requestId, jobId: job?.id }, 'orphan callback (erro): run fechada, job intocado')

@@ -76,6 +76,7 @@ function makeMocks() {
     markFailed:          vi.fn(),
     markDead:            vi.fn(),
     markSuccess:         vi.fn(),
+    markSiteError:       vi.fn(),
     pauseAirlineForBlock: vi.fn(),
   } satisfies Partial<IScrapingJobRepository> as unknown as IScrapingJobRepository
 
@@ -155,6 +156,73 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledWith('azul', expect.any(Date), expect.stringContaining('bot/IP block'))
     expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
     expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+  })
+
+  it('o estado terminal manda, mesmo quando o texto do erro fala em bloqueio', async () => {
+    // O caso que originou a mudança: a LATAM foi pausada por uma hora, três
+    // vezes em 2026-08-20, porque o scraper escrevia "likely bot/IP block" no
+    // texto — e este serviço lia o texto. A página era a de erro da própria
+    // companhia, e o classificador, com o DOM na mão, diz SITE_ERROR.
+    const job = makeJob({ retry_count: 0, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      error: 'LATAM: zero cards and no empty-state marker — likely bot/IP block.',
+      flights: [],
+      outcome: { state: 'SITE_ERROR', reason: 'a companhia redirecionou para a própria página de erro' },
+    }))
+
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markSiteError).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+  })
+
+  it('falha do site não escala para dead, nem na última tentativa', async () => {
+    // A busca da companhia não responder não é culpa do job; matá-lo faria a
+    // rota sumir da coleta até a próxima derivação.
+    const job = makeJob({ retry_count: 2, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      error: 'LATAM: search failed on the airline side (site error page) — retry later.',
+      flights: [],
+      outcome: { state: 'SITE_ERROR', reason: 'falha declarada pelo site' },
+    }))
+
+    expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markSiteError).toHaveBeenCalledOnce()
+  })
+
+  it('bloqueio declarado pelo classificador pausa a companhia', async () => {
+    const job = makeJob({ retry_count: 0, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockScrapingJobRepo.pauseAirlineForBlock).mockResolvedValue(3)
+
+    await svc.processCallback(makeCallback({
+      error: 'Azul: sem ofertas',
+      flights: [],
+      outcome: { state: 'BLOCKED', reason: 'marcador de anti-bot na página', evidence: 'comportamento incomum vindo do seu IP' },
+    }))
+
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markSiteError).not.toHaveBeenCalled()
+  })
+
+  it('layout mudado é falha do job: backoff normal, sem pausar a companhia', async () => {
+    // O estado que pede mexer no código. Pausar a companhia aqui esconderia o
+    // problema por uma hora e não consertaria nada.
+    const job = makeJob({ retry_count: 0, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      error: 'LATAM: no cards and no empty-state marker — page ended in an unknown state.',
+      flights: [],
+      outcome: { state: 'LAYOUT_CHANGED', reason: 'sem marcador nenhum' },
+    }))
+
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markSiteError).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markFailed).toHaveBeenCalledOnce()
   })
 
   it('webhook de erro — retry_count >= max_retries — chama markDead', async () => {

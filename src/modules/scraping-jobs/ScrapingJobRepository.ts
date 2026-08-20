@@ -310,6 +310,26 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [id, error, nextRunAt])
   }
 
+  /**
+   * Falha declarada pelo próprio site da companhia.
+   *
+   * Não é culpa do job — é a busca da companhia que não respondeu — então não
+   * pode escalar para 'dead'. Mas também não pode ficar sem freio: o contador
+   * sobe para o backoff crescer, e para em `max_retries - 1` porque
+   * `claimNextJob` exige `retry_count < max_retries`; parar em `max_retries`
+   * deixaria o job preso para sempre, que é pior do que morto.
+   */
+  async markSiteError(id: string, error: string, nextRunAt: Date): Promise<void> {
+    await this.db.query(`
+      UPDATE scraping_jobs
+      SET status = 'failed', last_failure_at = NOW(), last_error = $2,
+          running_since = NULL, request_id = NULL,
+          retry_count = LEAST(retry_count + 1, GREATEST(max_retries - 1, 0)),
+          next_run_at = $3, updated_at = NOW()
+      WHERE id = $1
+    `, [id, error, nextRunAt])
+  }
+
   async markDead(id: string, error: string): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs

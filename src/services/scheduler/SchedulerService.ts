@@ -59,7 +59,23 @@ function calcBackoffNextRunAt(retryCount: number): Date {
   return new Date(Date.now() + delay)
 }
 
-export { calcNextRunAt, calcBackoffNextRunAt }
+/**
+ * Espera depois de uma falha declarada pelo site da companhia.
+ *
+ * Começa mais longe e cresce mais longe que o backoff comum: quando a busca da
+ * companhia não responde, tentar de minuto em minuto só repete a pergunta que
+ * ela já não conseguiu responder — e, do lado dela, é uma sessão automatizada
+ * insistindo.
+ */
+function calcSiteErrorNextRunAt(retryCount: number): Date {
+  const BASE_MS = 5 * 60_000
+  const CAP_MS = 60 * 60_000
+  const jitter = Math.random() * 60_000
+  const delay = Math.min(CAP_MS, BASE_MS * Math.pow(2, retryCount)) + jitter
+  return new Date(Date.now() + delay)
+}
+
+export { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt }
 
 export class SchedulerService implements ISchedulerService {
   private readonly circuitBreakers = new Map<string, CircuitBreakerState>()

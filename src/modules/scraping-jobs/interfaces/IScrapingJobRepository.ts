@@ -45,6 +45,7 @@ export interface IScrapingJobRepository {
   markSuccess(id: string, nextRunAt: Date): Promise<void>
   markFailed(id: string, error: string, nextRunAt: Date): Promise<void>
   markDead(id: string, error: string): Promise<void>
+  markSiteError(id: string, error: string, nextRunAt: Date): Promise<void>
   pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number>
   reclaimExpiredJobs(leaseTimeoutSec: number, graceSec: number, maxRunMin: number): Promise<{ lost: string[]; hung: string[] }>
   findByRequestId(requestId: string): Promise<ScrapingJobRow | null>
