@@ -37,6 +37,36 @@ const routineBaseSchema = z.object({
 
 const MAX_DATE_RANGE_DAYS = 30
 
+/**
+ * Teto de janela em ida-e-volta, bem menor que o de só-ida.
+ *
+ * A coleta RT é por PAR de datas: o número de buscas é o PRODUTO das duas
+ * janelas, não a soma. Com o teto de 30 dias valendo para as duas, uma rotina
+ * pediria 900 buscas por ciclo e por companhia — a ~2,5 min cada, mais de 37
+ * horas de scraping para fechar um único ciclo. Cinco dias limita o par a 25.
+ */
+const MAX_ROUNDTRIP_RANGE_DAYS = 5
+
+/** Só-ida mantém os 30 dias; ida-e-volta cai para 5. */
+function maxRangeFor(tripType: string | undefined): number {
+  return tripType === 'round_trip' ? MAX_ROUNDTRIP_RANGE_DAYS : MAX_DATE_RANGE_DAYS
+}
+
+/**
+ * O mesmo teto, para o PATCH — onde `tripType` pode não vir no corpo.
+ *
+ * Datas de volta no payload denunciam ida-e-volta mesmo sem o campo: quem
+ * edita a janela de volta está editando uma rotina que a tem.
+ */
+function maxRangeForPatch(d: {
+  tripType?: string
+  inboundStart?: string | null
+  inboundEnd?: string | null
+}): number {
+  const ehRoundTrip = d.tripType === 'round_trip' || d.inboundStart != null || d.inboundEnd != null
+  return ehRoundTrip ? MAX_ROUNDTRIP_RANGE_DAYS : MAX_DATE_RANGE_DAYS
+}
+
 function daysBetween(start: string, end: string): number {
   return (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 60 * 60 * 24)
 }
@@ -73,11 +103,11 @@ export const createRoutineSchema = routineBaseSchema
     },
   )
   .refine(
-    (d) => daysBetween(d.outboundStart, d.outboundEnd) <= MAX_DATE_RANGE_DAYS,
-    {
-      message: 'O range de datas de ida não pode exceder 30 dias',
+    (d) => daysBetween(d.outboundStart, d.outboundEnd) <= maxRangeFor(d.tripType),
+    (d) => ({
+      message: `O range de datas de ida não pode exceder ${maxRangeFor(d.tripType)} dias`,
       path: ['outboundEnd'],
-    },
+    }),
   )
   .refine(
     (d) => d.tripType !== 'round_trip' || (d.inboundStart != null && d.inboundEnd != null),
@@ -95,11 +125,11 @@ export const createRoutineSchema = routineBaseSchema
   )
   .refine(
     (d) => d.inboundStart == null || d.inboundEnd == null ||
-      daysBetween(d.inboundStart, d.inboundEnd) <= MAX_DATE_RANGE_DAYS,
-    {
-      message: 'O range de datas de volta não pode exceder 30 dias',
+      daysBetween(d.inboundStart, d.inboundEnd) <= maxRangeFor(d.tripType),
+    (d) => ({
+      message: `O range de datas de volta não pode exceder ${maxRangeFor(d.tripType)} dias`,
       path: ['inboundEnd'],
-    },
+    }),
   )
   .refine(
     (d) => d.inboundStart == null || d.inboundStart >= d.outboundStart,
@@ -137,10 +167,22 @@ export const updateRoutineSchema = routineBaseSchema
   .refine(
     (d) => {
       if (d.outboundStart == null || d.outboundEnd == null) return true
-      return daysBetween(d.outboundStart, d.outboundEnd) <= MAX_DATE_RANGE_DAYS
+      return daysBetween(d.outboundStart, d.outboundEnd) <= maxRangeForPatch(d)
     },
-    {
-      message: 'O range de datas de ida não pode exceder 30 dias',
+    (d) => ({
+      message: `O range de datas de ida não pode exceder ${maxRangeForPatch(d)} dias`,
       path: ['outboundEnd'],
+    }),
+  )
+  // A janela de volta não era validada no PATCH — só na criação. Sem isto o teto
+  // de ida-e-volta seria contornável editando a rotina depois de criada.
+  .refine(
+    (d) => {
+      if (d.inboundStart == null || d.inboundEnd == null) return true
+      return daysBetween(d.inboundStart, d.inboundEnd) <= maxRangeForPatch(d)
     },
+    (d) => ({
+      message: `O range de datas de volta não pode exceder ${maxRangeForPatch(d)} dias`,
+      path: ['inboundEnd'],
+    }),
   )
