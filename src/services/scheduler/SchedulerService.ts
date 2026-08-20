@@ -149,6 +149,7 @@ export class SchedulerService implements ISchedulerService {
     // admin, ignora o circuit breaker por companhia; a primeira falha real
     // (busy/error) interrompe o burst, evitando martelar uma companhia quebrada.
     const cap = this.env.SCRAPE_MAX_IN_FLIGHT
+    const perAirline = this.env.SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE
     let dispatched = 0
     while (await this.scrapingJobRepo.countInFlight() < cap) {
       const job = await this.scrapingJobRepo.claimNextJobForRoutine(routineId)
@@ -156,6 +157,15 @@ export class SchedulerService implements ISchedulerService {
       const result = await this.dispatchClaimedJob(job)
       if (result !== 'dispatched') break
       dispatched++
+
+      // O burst manual era o pior caso: em 2026-08-20 ele mandou os quatro jobs
+      // da rotina de uma vez, um segundo entre eles, e os quatro terminaram na
+      // página de erro da LATAM. As datas que sobram saem no tick seguinte —
+      // numa rotina com duas companhias, a segunda também espera esse tick.
+      if (await this.scrapingJobRepo.countInFlightByAirline(job.airline) >= perAirline) {
+        log.info({ routineId, airline: job.airline, dispatched }, 'dispatchOne: per-airline cap reached')
+        break
+      }
     }
     log.info({ routineId, dispatched }, 'dispatchOne: targeted dispatch done')
   }
@@ -211,6 +221,7 @@ export class SchedulerService implements ISchedulerService {
 
   private async dispatchForAirlines(budget: number): Promise<void> {
     const cap = this.env.SCRAPE_MAX_IN_FLIGHT
+    const perAirline = this.env.SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE
     let inFlight = await this.scrapingJobRepo.countInFlight()
     const airlines = await this.scrapingJobRepo.getActiveAirlines()
     for (const airline of airlines) {
@@ -221,6 +232,13 @@ export class SchedulerService implements ISchedulerService {
         }
         if (this.isCircuitOpen(airline)) {
           log.warn({ airline }, 'circuit_breaker_open: skipping airline')
+          break
+        }
+        // Antes do claim: reivindicar já marca o job como 'running', e devolvê-lo
+        // depois de descobrir que não cabe é caro e ainda mexe no next_run_at.
+        const naCompanhia = await this.scrapingJobRepo.countInFlightByAirline(airline)
+        if (naCompanhia >= perAirline) {
+          log.info({ airline, naCompanhia, perAirline }, 'dispatch skipped: per-airline cap reached')
           break
         }
         const result = await this.dispatchNextJob(airline)

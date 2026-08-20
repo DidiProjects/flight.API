@@ -51,6 +51,7 @@ function makeEnv(): Env {
     SCRAPE_INTERVAL_JITTER_MS: 300_000,
     SCRAPE_DISPATCH_BATCH:     5,
     SCRAPE_MAX_IN_FLIGHT:      6,
+    SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE: 1,
     EVALUATION_INTERVAL_MS:    300_000,
     SCRAPING_API_URL:          'http://scraping-api',
     SCRAPING_API_KEY:          'test-key',
@@ -77,6 +78,7 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     claimNextJob:        vi.fn().mockResolvedValue(job),
     claimNextJobForRoutine: vi.fn().mockResolvedValueOnce(job).mockResolvedValue(null),
     countInFlight:       vi.fn().mockResolvedValue(0),
+    countInFlightByAirline: vi.fn().mockResolvedValue(0),
     deferJob:            vi.fn().mockResolvedValue(undefined),
     markRunning:         vi.fn().mockResolvedValue(undefined),
     markStarted:         vi.fn().mockResolvedValue(undefined),
@@ -206,6 +208,35 @@ describe('SchedulerService — dispatch loop', () => {
     await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
 
     expect(scraperClient.dispatch).toHaveBeenCalledTimes(2)
+  })
+
+  it('não reivindica job de companhia que já está com uma sessão em voo', async () => {
+    // Duas sessões automatizadas no mesmo site, do mesmo IP, ao mesmo tempo: em
+    // 2026-08-20 todas as nove falhas da LATAM tiveram outra sessão da LATAM em
+    // paralelo. A checagem vem ANTES do claim porque reivindicar já marca o job
+    // como 'running'.
+    const scrapingJobRepo = makeScrapingJobRepoMock(makeJob())
+    vi.mocked(scrapingJobRepo.countInFlightByAirline).mockResolvedValue(1)
+    const { svc, scraperClient } = makeSvc(scrapingJobRepo)
+
+    await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
+
+    expect(scrapingJobRepo.claimNextJob).not.toHaveBeenCalled()
+    expect(scraperClient.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('o disparo manual para no teto por companhia, em vez de mandar a rotina inteira de uma vez', async () => {
+    // O pior caso medido: o dispatchOne mandou os quatro jobs da rotina com um
+    // segundo entre eles, e os quatro terminaram na página de erro da LATAM.
+    const job = makeJob()
+    const scrapingJobRepo = makeScrapingJobRepoMock(job)
+    vi.mocked(scrapingJobRepo.claimNextJobForRoutine).mockResolvedValue(job)
+    vi.mocked(scrapingJobRepo.countInFlightByAirline).mockResolvedValue(1)
+    const { svc, scraperClient } = makeSvc(scrapingJobRepo)
+
+    await svc.dispatchOne('routine-uuid-123')
+
+    expect(scraperClient.dispatch).toHaveBeenCalledTimes(1)
   })
 
   it('não despacha se não houver job elegível', async () => {

@@ -254,6 +254,20 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return Number(rows[0]?.count ?? 0)
   }
 
+  /**
+   * Jobs em voo de UMA companhia. É o que impede duas sessões automatizadas
+   * chegarem juntas no mesmo site a partir do mesmo IP: em 2026-08-20 todas as
+   * nove falhas da LATAM tiveram outra sessão da LATAM rodando em paralelo, e a
+   * única coleta que deu certo foi a que começou primeiro.
+   */
+  async countInFlightByAirline(airline: string): Promise<number> {
+    const { rows } = await this.db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM scraping_jobs WHERE status = 'running' AND airline = $1`,
+      [airline],
+    )
+    return Number(rows[0]?.count ?? 0)
+  }
+
   // Segura o job sem penalidade: scraper saturado (503) não é falha do job.
   async deferJob(id: string, nextRunAt: Date): Promise<void> {
     await this.db.query(`
