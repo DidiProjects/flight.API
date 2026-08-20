@@ -57,7 +57,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     for (const f of fares) {
       placeholders.push(
-        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
+        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
       )
       values.push(
         jobId,
@@ -77,6 +77,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         f.fare_pts,
         f.fare_hyb_pts,
         f.fare_hyb_cash,
+        f.fare_cash_brl,
+        f.fare_hyb_cash_brl,
+        f.fx_rate,
+        f.fx_rate_date,
         f.return_date,
         f.paired_outbound_flight,
         f.inbound_unavailable,
@@ -91,7 +95,8 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       `INSERT INTO flight_fares
          (scraping_job_id, request_id, flight_number, flight_date, is_return, origin, destination, airline,
           departure_time, arrival_time, duration_min, stops, currency,
-          fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash, return_date,
+          fare_cash, fare_pts, fare_hyb_pts, fare_hyb_cash,
+          fare_cash_brl, fare_hyb_cash_brl, fx_rate, fx_rate_date, return_date,
           paired_outbound_flight, inbound_unavailable, scraped_at)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (request_id, flight_date, is_return, flight_number, paired_outbound_flight)
@@ -300,8 +305,12 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     const { rows } = await this.db.query<PriceHistory>(`
       WITH per_combo AS (
         SELECT
-          o.currency,
-          COALESCE(o.bundle_cash, o.fare_cash + MIN(i.fare_cash)) AS total_cash,
+          -- Soma em Real, com a taxa congelada na coleta (017). Antes a soma era
+          -- na moeda original e exigia que as duas pernas coincidissem — o que
+          -- descartava todo par vindo de mercados diferentes (BA saindo de LHR:
+          -- ida GBP, volta BRL). Perna sem valor em Real vira NULL e sai da
+          -- régua sozinha, porque AVG e PERCENTILE ignoram NULL.
+          o.fare_cash_brl + MIN(i.fare_cash_brl)                  AS total_cash,
           COALESCE(o.bundle_pts,  o.fare_pts  + MIN(i.fare_pts))  AS total_pts
         FROM flight_fares o
         INNER JOIN flight_fares i
@@ -311,10 +320,6 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND i.airline = o.airline
          -- paired_outbound_flight NULL = coleta anterior ao vínculo 1-para-N.
          AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
-         -- A soma só faz sentido dentro de UMA moeda. Na prática as duas pernas
-         -- da mesma busca RT saem no mercado de quem parte e já batem; exigir
-         -- aqui é o que impede a soma sem significado se um dia não baterem.
-         AND i.currency = o.currency
         WHERE o.airline = ANY($1::text[])
           AND o.origin = $2 AND o.destination = $3
           AND NOT o.is_return
@@ -325,10 +330,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         GROUP BY o.id
       )
       SELECT
-        -- Uma moeda só na régua: a mais frequente entre os pares da janela.
-        -- "MAX(currency)" misturava BRL com GBP e rotulava com o vencedor
-        -- alfabético.
-        (SELECT currency FROM per_combo GROUP BY currency ORDER BY count(*) DESC, currency LIMIT 1) AS currency,
+        -- A régua de par é sempre em Real agora: a soma acontece depois da
+        -- conversão gravada na coleta, então não há mais moeda "vencedora" a
+        -- eleger entre as pernas.
+        'BRL'                                                    AS currency,
         AVG(total_cash)                                          AS avg_cash_30d,
         MIN(total_cash)                                          AS min_cash_30d,
         PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY total_cash)  AS p20_cash_30d,
@@ -439,22 +444,23 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           lp.scraped_at,
           o.currency,
           o.inbound_unavailable,
-          -- Bundle da companhia manda; sem ele, ida + a volta mais barata DELA.
-          COALESCE(o.bundle_cash,     o.fare_cash     + MIN(i.fare_cash))     AS total_cash,
+          -- Dinheiro em Real, com a taxa congelada na coleta (017): a soma não
+          -- depende mais de as duas pernas coincidirem de moeda.
+          o.fare_cash_brl     + MIN(i.fare_cash_brl)                          AS total_cash,
           COALESCE(o.bundle_pts,      o.fare_pts      + MIN(i.fare_pts))      AS total_pts,
           COALESCE(o.bundle_hyb_pts,  o.fare_hyb_pts  + MIN(i.fare_hyb_pts))  AS total_hyb_pts,
-          COALESCE(o.bundle_hyb_cash, o.fare_hyb_cash + MIN(i.fare_hyb_cash)) AS total_hyb_cash,
+          o.fare_hyb_cash_brl + MIN(i.fare_hyb_cash_brl)                      AS total_hyb_cash,
           -- Parcelas do total, para exibir o par segregado em ida e volta.
           -- NULL quando o total veio de bundle: aí a companhia cobrou um preço
           -- só, e inventar uma divisão mostraria um número que ela não ofereceu.
-          CASE WHEN o.bundle_cash     IS NULL THEN o.fare_cash          END AS out_cash,
-          CASE WHEN o.bundle_cash     IS NULL THEN MIN(i.fare_cash)     END AS in_cash,
+          o.fare_cash_brl                                                     AS out_cash,
+          MIN(i.fare_cash_brl)                                                AS in_cash,
           CASE WHEN o.bundle_pts      IS NULL THEN o.fare_pts           END AS out_pts,
           CASE WHEN o.bundle_pts      IS NULL THEN MIN(i.fare_pts)      END AS in_pts,
           CASE WHEN o.bundle_hyb_pts  IS NULL THEN o.fare_hyb_pts       END AS out_hyb_pts,
           CASE WHEN o.bundle_hyb_pts  IS NULL THEN MIN(i.fare_hyb_pts)  END AS in_hyb_pts,
-          CASE WHEN o.bundle_hyb_cash IS NULL THEN o.fare_hyb_cash      END AS out_hyb_cash,
-          CASE WHEN o.bundle_hyb_cash IS NULL THEN MIN(i.fare_hyb_cash) END AS in_hyb_cash
+          o.fare_hyb_cash_brl                                            AS out_hyb_cash,
+          MIN(i.fare_hyb_cash_brl)                                       AS in_hyb_cash
         FROM latest_pair lp
         INNER JOIN flight_fares o
           ON o.request_id  = lp.request_id
@@ -478,10 +484,6 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND NOT (i.origin = o.origin AND i.destination = o.destination)
          -- paired_outbound_flight NULL = coleta anterior ao vínculo 1-para-N.
          AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
-         -- A soma só vale dentro de UMA moeda. As duas pernas da mesma busca RT
-         -- saem no mercado de quem parte e batem; exigir aqui impede a soma sem
-         -- significado no dia em que não baterem.
-         AND i.currency = o.currency
         GROUP BY lp.scraped_at, o.id
       ),
       -- As parcelas têm de vir da MESMA combinação que ganhou cada dimensão.
@@ -492,9 +494,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       win_hyb_pts  AS (SELECT out_hyb_pts,  in_hyb_pts  FROM per_combo WHERE total_hyb_pts  IS NOT NULL ORDER BY total_hyb_pts  LIMIT 1),
       win_hyb_cash AS (SELECT out_hyb_cash, in_hyb_cash FROM per_combo WHERE total_hyb_cash IS NOT NULL ORDER BY total_hyb_cash LIMIT 1)
       SELECT
-        -- Uma moeda só: o MENOR total não é comparável entre moedas, e
-        -- "MAX(currency)" ainda rotulava com o vencedor do alfabeto.
-        (SELECT mode() WITHIN GROUP (ORDER BY currency) FROM per_combo) AS currency,
+        -- Total de par é sempre em Real (017): a conversão já aconteceu na
+        -- coleta, então não há moeda a eleger entre as pernas.
+        'BRL' AS currency,
         MIN(total_cash)     AS best_cash,
         MIN(total_pts)      AS best_pts,
         MIN(total_hyb_pts)  AS best_hyb_pts,
@@ -632,10 +634,14 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       per_combo AS (
         SELECT
           o.flight_date,
-          COALESCE(o.bundle_cash,     o.fare_cash     + MIN(i.fare_cash))     AS total_cash,
+          -- Em Real, pela taxa congelada na coleta (017). Esta query somava as
+          -- duas pernas na moeda de origem sem exigir que coincidissem — era ela
+          -- que exibia 725 GBP + 5761 BRL = 6486, número em unidade nenhuma, e a
+          -- única das três telas de par que não tinha a guarda de moeda.
+          o.fare_cash_brl     + MIN(i.fare_cash_brl)                          AS total_cash,
           COALESCE(o.bundle_pts,      o.fare_pts      + MIN(i.fare_pts))      AS total_pts,
           COALESCE(o.bundle_hyb_pts,  o.fare_hyb_pts  + MIN(i.fare_hyb_pts))  AS total_hyb_pts,
-          COALESCE(o.bundle_hyb_cash, o.fare_hyb_cash + MIN(i.fare_hyb_cash)) AS total_hyb_cash
+          o.fare_hyb_cash_brl + MIN(i.fare_hyb_cash_brl)                      AS total_hyb_cash
         FROM latest_pair lp
         INNER JOIN flight_fares o
           ON o.request_id  = lp.request_id

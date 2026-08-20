@@ -1,11 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { FlightFaresService } from './FlightFaresService'
 import type { CurrentBest, IFlightFaresRepository } from './interfaces/IFlightFaresRepository'
-import type { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 
-const GBP_BRL = 6.8
-const EUR_BRL = 6.0
-
+/**
+ * Desde a 017 a leitura NÃO converte moeda.
+ *
+ * A conversão acontece uma vez, na ingestão da análise, com a taxa gravada na
+ * linha — e o total de par chega aqui já somado em Real pelo SQL. O serviço não
+ * recebe mais `IFxRateService`: a ausência de rede nesta camada passou a ser
+ * garantida pelo construtor, não por disciplina.
+ */
 function makeSvc(current: Partial<CurrentBest>) {
   const repo = {
     getCurrentBest: vi.fn().mockResolvedValue({
@@ -18,25 +22,14 @@ function makeSvc(current: Partial<CurrentBest>) {
     }),
   } as unknown as IFlightFaresRepository
 
-  const emBrl = (v: number, c: string) => (c === 'BRL' ? v : c === 'GBP' ? v * GBP_BRL : v * EUR_BRL)
-  const fx = {
-    convert: vi.fn(async (amount: number, from: string, to: string) => {
-      if (from === to) return { amount, rate: 1, source: 'native' as const, rateDate: '2026-08-04', stale: false }
-      if (!['BRL', 'GBP', 'EUR'].includes(from) || !['BRL', 'GBP', 'EUR'].includes(to)) return null
-      const v = emBrl(amount, from) / emBrl(1, to)
-      return { amount: Math.round(v * 100) / 100, rate: v / amount, source: 'frankfurter' as const, rateDate: '2026-08-04', stale: false }
-    }),
-    toBrl: vi.fn(),
-  } as unknown as IFxRateService
-
-  return { svc: new FlightFaresService(repo, fx), fx }
+  return { svc: new FlightFaresService(repo), repo }
 }
 
 const RT = { from: '2026-09-25', to: '2026-09-25' }
 
 describe('FlightFaresService — total do par', () => {
-  it('soma direto quando as duas pernas já estão na mesma moeda', async () => {
-    const { svc } = makeSvc({ currency: 'BRL', best_cash_outbound: 4921, best_cash_inbound: 7627 })
+  it('o total vem pronto do SQL, em Real', async () => {
+    const { svc } = makeSvc({ currency: 'BRL', best_cash: 12548, best_cash_outbound: 4921, best_cash_inbound: 7627 })
 
     const out = await svc.getCurrent(['britishairways'], 'GRU', 'LHR', '2026-09-21', '2026-09-21', RT)
 
@@ -44,67 +37,46 @@ describe('FlightFaresService — total do par', () => {
     expect(out.currency).toBe('BRL')
   })
 
-  it('converte a volta para a moeda da IDA', async () => {
-    // £100 de ida + €60 de volta. €60 = R$360 = £52,94 ⇒ total £152,94.
-    const { svc } = makeSvc({ currency: 'GBP', best_cash_outbound: 100, best_cash_inbound: 60 })
-    const { svc: svcEur } = makeSvc({ currency: 'EUR', best_cash_outbound: 60, best_cash_inbound: 100 })
+  it('par com pernas de mercados diferentes tem total, e em Real', async () => {
+    // BA saindo de LHR cai em duas buscas só-ida: ida em GBP, volta em BRL. Era
+    // exatamente este par que a guarda `i.currency = o.currency` descartava,
+    // deixando histórico e melhor preço vazios. Com a conversão gravada na
+    // coleta, o SQL soma e o total existe.
+    const { svc } = makeSvc({ currency: 'BRL', best_cash: 10876, best_cash_outbound: 5115, best_cash_inbound: 5761 })
 
-    const emLibra = await svc.getCurrent(['ryanair'], 'STN', 'DUB', '2026-09-21', '2026-09-21', RT)
-    expect(emLibra.currency).toBe('GBP')
+    const out = await svc.getCurrent(['britishairways'], 'LHR', 'GRU', '2026-12-05', '2026-12-06', RT)
 
-    // A mesma viagem vista da outra ponta fecha na moeda da OUTRA ida — é o que
-    // "sempre a moeda da tarifa de origem" significa.
-    const emEuro = await svcEur.getCurrent(['ryanair'], 'DUB', 'STN', '2026-09-21', '2026-09-21', RT)
-    expect(emEuro.currency).toBe('EUR')
+    expect(out.best_cash).toBe(10876)
+    expect(out.currency).toBe('BRL')
+    expect(out.journeys).toHaveLength(2)
   })
 
-  it('a moeda do total é sempre a da ida, nunca a da volta', async () => {
-    const { svc } = makeSvc({ currency: 'GBP', best_cash_outbound: 100, best_cash_inbound: 60 })
-
-    const out = await svc.getCurrent(['ryanair'], 'STN', 'DUB', '2026-09-21', '2026-09-21', RT)
-
-    expect(out.currency).toBe('GBP')
-    expect(out.journeys[0]!.direction).toBe('outbound')
-    expect(out.journeys[0]!.currency).toBe('GBP')
-  })
-
-  it('sem cotação confiável, omite o total em vez de somar moedas', async () => {
-    const { svc, fx } = makeSvc({ currency: 'GBP', best_cash_outbound: 100, best_cash_inbound: 60 })
-    vi.mocked(fx.convert).mockResolvedValue(null)
-
-    const out = await svc.getCurrent(['ryanair'], 'STN', 'DUB', '2026-09-21', '2026-09-21', RT)
-
-    // O que veio do SQL permanece; o que não pode acontecer é somar £ com €.
-    expect(out.best_cash).toBeNull()
-  })
-
-  it('rotina só-ida não tem total de par', async () => {
-    const { svc, fx } = makeSvc({ currency: 'BRL', best_cash: 4921 })
+  it('rotina só-ida devolve uma jornada e o valor da perna', async () => {
+    const { svc } = makeSvc({ currency: 'BRL', best_cash: 4921 })
 
     const out = await svc.getCurrent(['azul'], 'GRU', 'CNF', '2026-09-21', '2026-09-21')
 
     expect(out.journeys).toHaveLength(1)
     expect(out.best_cash).toBe(4921)
-    expect(fx.convert).not.toHaveBeenCalled()
   })
 
-  it('bundle da companhia (sem parcelas) não vira total inventado', async () => {
-    // Preço único publicado pela companhia: as parcelas vêm nulas de propósito,
-    // e dividir o bundle mostraria um número que ela nunca ofereceu.
-    const { svc } = makeSvc({
-      currency: 'BRL', best_cash: 9000, best_cash_outbound: null, best_cash_inbound: null,
-    })
+  it('sem valor em Real o total é nulo, nunca uma soma de moedas', async () => {
+    // Perna sem cotação na coleta entra com fare_cash_brl NULL, e a soma do SQL
+    // vira NULL. O card mostra as parcelas e omite o total.
+    const { svc } = makeSvc({ currency: 'BRL', best_cash: null, best_cash_outbound: 5115, best_cash_inbound: null })
 
-    const out = await svc.getCurrent(['azul'], 'GRU', 'CNF', '2026-09-21', '2026-09-21', RT)
+    const out = await svc.getCurrent(['britishairways'], 'LHR', 'GRU', '2026-12-05', '2026-12-06', RT)
 
-    expect(out.best_cash).toBe(9000)
+    expect(out.best_cash).toBeNull()
   })
 
-  it('NUMERIC como string do pg não vira concatenação', async () => {
-    // "4921.00" + "7627.00" = "4921.007627.00" → NaN → null no JSON, e o total
-    // sumia do card. Foi assim que apareceu ao chamar a API de verdade.
+  it('NUMERIC como string do pg vira número', async () => {
+    // "12548.00" saindo no JSON faz qualquer comparação no front virar
+    // lexicográfica. Quem coagia era o pairTotal, que somava; com a soma no SQL
+    // a coerção passou a ser explícita.
     const { svc } = makeSvc({
       currency: 'BRL',
+      best_cash: '12548.00' as unknown as number,
       best_cash_outbound: '4921.00' as unknown as number,
       best_cash_inbound:  '7627.00' as unknown as number,
     })
@@ -112,5 +84,7 @@ describe('FlightFaresService — total do par', () => {
     const out = await svc.getCurrent(['britishairways'], 'GRU', 'LHR', '2026-09-21', '2026-09-21', RT)
 
     expect(out.best_cash).toBe(12548)
+    expect(out.journeys[0]!.cash).toBe(4921)
+    expect(out.journeys[1]!.cash).toBe(7627)
   })
 })

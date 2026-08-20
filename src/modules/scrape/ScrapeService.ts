@@ -4,6 +4,7 @@ import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresR
 import { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import { ScrapeCallback } from './schema'
 import { calcNextRunAt, calcBackoffNextRunAt } from '../../services/scheduler/SchedulerService'
+import { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import { logger } from '../../utils/logger'
 
 const log = logger.child({ service: 'scrape' })
@@ -27,7 +28,54 @@ export class ScrapeService implements IScrapeService {
     private readonly scrapingJobRepo: IScrapingJobRepository,
     private readonly flightFaresRepo: IFlightFaresRepository,
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
+    private readonly fx: IFxRateService,
   ) {}
+
+  /**
+   * Converte as tarifas para Real UMA vez, aqui, na ingestão da análise.
+   *
+   * A taxa fica gravada na linha: o histórico passa a refletir o câmbio de
+   * quando a rotina rodou, e não o de hoje. Antes a conversão era na leitura, e
+   * a régua de 30 dias se mexia sozinha — queda da libra virava "o voo
+   * baratear".
+   *
+   * Uma cotação por MOEDA, não por linha: o cache do FxRateService é por
+   * moeda-dia, então as 40 tarifas de uma coleta custam uma consulta.
+   *
+   * Sem cotação a linha entra com `null` em vez de ser recusada. Perder o preço
+   * porque o câmbio piscou seria pior que gravá-lo sem o valor em Real — a
+   * moeda original continua lá, e as somas em Real simplesmente ignoram a linha.
+   */
+  private async withBrl<T extends { currency: string | null; fare_cash: number | null; fare_hyb_cash: number | null }>(
+    rows: T[],
+    logCtx: Record<string, unknown>,
+  ): Promise<(T & { fare_cash_brl: number | null; fare_hyb_cash_brl: number | null; fx_rate: number | null; fx_rate_date: string | null })[]> {
+    const moedas = [...new Set(rows.map(r => r.currency).filter((c): c is string => c != null))]
+    const cotacoes = new Map<string, { rate: number; rateDate: string }>()
+
+    for (const moeda of moedas) {
+      const conv = await this.fx.toBrl(1, moeda)
+      if (conv == null) {
+        log.warn({ ...logCtx, currency: moeda }, 'scrape: sem cotação — tarifas gravadas sem valor em Real')
+        continue
+      }
+      cotacoes.set(moeda, { rate: conv.rate, rateDate: conv.rateDate })
+    }
+
+    const arredonda = (v: number) => Math.round(v * 100) / 100
+
+    return rows.map((r) => {
+      const cot = r.currency ? cotacoes.get(r.currency) : undefined
+      if (!cot) return { ...r, fare_cash_brl: null, fare_hyb_cash_brl: null, fx_rate: null, fx_rate_date: null }
+      return {
+        ...r,
+        fare_cash_brl:     r.fare_cash     == null ? null : arredonda(r.fare_cash * cot.rate),
+        fare_hyb_cash_brl: r.fare_hyb_cash == null ? null : arredonda(r.fare_hyb_cash * cot.rate),
+        fx_rate:           cot.rate,
+        fx_rate_date:      cot.rateDate,
+      }
+    })
+  }
 
   async processCallback(data: ScrapeCallback): Promise<void> {
     log.info({
@@ -71,7 +119,8 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
-    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data, toDateOrNull(job.return_date)))
+    const rows  = await this.withBrl(this.toFareRows(data, toDateOrNull(job.return_date)), { requestId: data.requestId, airline: data.airline })
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, rows)
 
     const nextRunAt = calcNextRunAt(job.flight_date)
     await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
@@ -107,7 +156,8 @@ export class ScrapeService implements IScrapeService {
     }
 
     // Persiste a coleta (ON CONFLICT protege contra duplicata na mesma execução).
-    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, this.toFareRows(data, toDateOrNull(job.return_date)))
+    const rows  = await this.withBrl(this.toFareRows(data, toDateOrNull(job.return_date)), { requestId: data.requestId, airline: data.airline })
+    const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, rows)
 
     // Só reagenda o job se ele NÃO estiver no meio de uma nova coleta (re-despacho
     // já em voo com outro request_id) — nesse caso evitamos sobrescrever o estado.

@@ -3,6 +3,7 @@ import { ScrapeService } from './ScrapeService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
+import type { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import type { ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -87,7 +88,19 @@ function makeMocks() {
     markFinished:  vi.fn(),
   } satisfies Partial<IAnalysisRunsRepository> as unknown as IAnalysisRunsRepository
 
-  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo }
+  // Câmbio fixo e determinístico: BRL não converte, GBP vale 7. Os testes deste
+  // arquivo verificam o mapeamento das fares, não a cotação — mas a conversão
+  // agora acontece na ingestão (017) e precisa de um provedor.
+  const mockFx = {
+    toBrl: vi.fn(async (amount: number, currency: string) =>
+      currency === 'BRL'
+        ? { amount, rate: 1, source: 'native' as const, rateDate: '2026-08-20', stale: false }
+        : { amount: amount * 7, rate: 7, source: 'frankfurter' as const, rateDate: '2026-08-20', stale: false },
+    ),
+    convert: vi.fn(),
+  } satisfies Partial<IFxRateService> as unknown as IFxRateService
+
+  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -103,7 +116,7 @@ describe('ScrapeService.processCallback', () => {
     mockScrapingJobRepo = mocks.mockScrapingJobRepo
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
     mockAnalysisRunsRepo = mocks.mockAnalysisRunsRepo
-    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo)
+    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx)
   })
 
   it('requestId desconhecido — retorna sem chamar insertMany', async () => {
