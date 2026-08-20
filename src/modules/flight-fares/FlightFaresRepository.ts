@@ -309,8 +309,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           -- na moeda original e exigia que as duas pernas coincidissem — o que
           -- descartava todo par vindo de mercados diferentes (BA saindo de LHR:
           -- ida GBP, volta BRL). Perna sem valor em Real vira NULL e sai da
-          -- régua sozinha, porque AVG e PERCENTILE ignoram NULL.
-          o.fare_cash_brl + MIN(i.fare_cash_brl)                  AS total_cash,
+          -- régua sozinha, porque AVG e PERCENTILE ignoram NULL. O bundle é
+          -- cobrado na moeda da IDA, então converte pela fx_rate dela.
+          COALESCE(o.bundle_cash * o.fx_rate, o.fare_cash_brl + MIN(i.fare_cash_brl)) AS total_cash,
           COALESCE(o.bundle_pts,  o.fare_pts  + MIN(i.fare_pts))  AS total_pts
         FROM flight_fares o
         INNER JOIN flight_fares i
@@ -444,23 +445,25 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           lp.scraped_at,
           o.currency,
           o.inbound_unavailable,
-          -- Dinheiro em Real, com a taxa congelada na coleta (017): a soma não
-          -- depende mais de as duas pernas coincidirem de moeda.
-          o.fare_cash_brl     + MIN(i.fare_cash_brl)                          AS total_cash,
+          -- Bundle da companhia manda; sem ele, ida + a volta mais barata DELA.
+          -- Em Real com a taxa congelada na coleta (017): a soma não depende
+          -- mais de as duas pernas coincidirem de moeda. O bundle é cobrado na
+          -- moeda da IDA, então converte pela fx_rate da própria linha de ida.
+          COALESCE(o.bundle_cash     * o.fx_rate, o.fare_cash_brl     + MIN(i.fare_cash_brl))     AS total_cash,
           COALESCE(o.bundle_pts,      o.fare_pts      + MIN(i.fare_pts))      AS total_pts,
           COALESCE(o.bundle_hyb_pts,  o.fare_hyb_pts  + MIN(i.fare_hyb_pts))  AS total_hyb_pts,
-          o.fare_hyb_cash_brl + MIN(i.fare_hyb_cash_brl)                      AS total_hyb_cash,
+          COALESCE(o.bundle_hyb_cash * o.fx_rate, o.fare_hyb_cash_brl + MIN(i.fare_hyb_cash_brl)) AS total_hyb_cash,
           -- Parcelas do total, para exibir o par segregado em ida e volta.
           -- NULL quando o total veio de bundle: aí a companhia cobrou um preço
           -- só, e inventar uma divisão mostraria um número que ela não ofereceu.
-          o.fare_cash_brl                                                     AS out_cash,
-          MIN(i.fare_cash_brl)                                                AS in_cash,
+          CASE WHEN o.bundle_cash IS NULL THEN o.fare_cash_brl          END AS out_cash,
+          CASE WHEN o.bundle_cash IS NULL THEN MIN(i.fare_cash_brl)     END AS in_cash,
           CASE WHEN o.bundle_pts      IS NULL THEN o.fare_pts           END AS out_pts,
           CASE WHEN o.bundle_pts      IS NULL THEN MIN(i.fare_pts)      END AS in_pts,
           CASE WHEN o.bundle_hyb_pts  IS NULL THEN o.fare_hyb_pts       END AS out_hyb_pts,
           CASE WHEN o.bundle_hyb_pts  IS NULL THEN MIN(i.fare_hyb_pts)  END AS in_hyb_pts,
-          o.fare_hyb_cash_brl                                            AS out_hyb_cash,
-          MIN(i.fare_hyb_cash_brl)                                       AS in_hyb_cash
+          CASE WHEN o.bundle_hyb_cash IS NULL THEN o.fare_hyb_cash_brl      END AS out_hyb_cash,
+          CASE WHEN o.bundle_hyb_cash IS NULL THEN MIN(i.fare_hyb_cash_brl) END AS in_hyb_cash
         FROM latest_pair lp
         INNER JOIN flight_fares o
           ON o.request_id  = lp.request_id
@@ -638,10 +641,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           -- duas pernas na moeda de origem sem exigir que coincidissem — era ela
           -- que exibia 725 GBP + 5761 BRL = 6486, número em unidade nenhuma, e a
           -- única das três telas de par que não tinha a guarda de moeda.
-          o.fare_cash_brl     + MIN(i.fare_cash_brl)                          AS total_cash,
+          COALESCE(o.bundle_cash     * o.fx_rate, o.fare_cash_brl     + MIN(i.fare_cash_brl))     AS total_cash,
           COALESCE(o.bundle_pts,      o.fare_pts      + MIN(i.fare_pts))      AS total_pts,
           COALESCE(o.bundle_hyb_pts,  o.fare_hyb_pts  + MIN(i.fare_hyb_pts))  AS total_hyb_pts,
-          o.fare_hyb_cash_brl + MIN(i.fare_hyb_cash_brl)                      AS total_hyb_cash
+          COALESCE(o.bundle_hyb_cash * o.fx_rate, o.fare_hyb_cash_brl + MIN(i.fare_hyb_cash_brl)) AS total_hyb_cash
         FROM latest_pair lp
         INNER JOIN flight_fares o
           ON o.request_id  = lp.request_id

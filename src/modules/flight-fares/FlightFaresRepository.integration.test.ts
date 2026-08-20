@@ -45,6 +45,12 @@ function fare(flightNumber: string, fareCash: number, over: Partial<FareInput> =
     fare_pts:       null,
     fare_hyb_pts:   null,
     fare_hyb_cash:  null,
+    // Tarifa em Real não precisa de cotação: o valor é ele mesmo e a taxa é 1.
+    // É o que a 017 grava na ingestão, e o que as somas de par leem.
+    fare_cash_brl:     fareCash,
+    fare_hyb_cash_brl: null,
+    fx_rate:           1,
+    fx_rate_date:      '2026-07-12',
     return_date:            null,
     paired_outbound_flight: null,
     inbound_unavailable:    false,
@@ -105,6 +111,10 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
         fare_pts         NUMERIC(10,0),
         fare_hyb_pts     NUMERIC(10,0),
         fare_hyb_cash    NUMERIC(10,2),
+        fare_cash_brl     NUMERIC(12,2),
+        fare_hyb_cash_brl NUMERIC(12,2),
+        fx_rate           NUMERIC(18,8),
+        fx_rate_date      DATE,
         return_date      DATE,
         paired_outbound_flight VARCHAR(20),
         inbound_unavailable    BOOLEAN NOT NULL DEFAULT FALSE,
