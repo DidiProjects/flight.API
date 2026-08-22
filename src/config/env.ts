@@ -28,6 +28,13 @@ const envSchema = z.object({
   // Teto de jobs em voo (≈ capacidade do scraper). A API não reivindica além disto
   // — backpressure para não inflar a fila do scraper.
   SCRAPE_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(6),
+  // Teto de jobs em voo POR COMPANHIA. Duas sessões automatizadas no mesmo site,
+  // do mesmo IP, ao mesmo tempo: em 2026-08-20 as nove falhas da LATAM tiveram
+  // outra sessão da LATAM em paralelo, e a única coleta que passou foi a que
+  // começou primeiro. Com o teto global em 6 e a fila do scraper em 2, limitar a
+  // 1 por companhia não reduz a vazão quando há rota de companhias diferentes —
+  // reduz só quando toda a fila é da mesma, que é exatamente o caso a evitar.
+  SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE: z.coerce.number().int().positive().default(1),
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
 
   // Câmbio. O timeout é curto de propósito: o ciclo de avaliação não pode ficar

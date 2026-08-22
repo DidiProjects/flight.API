@@ -254,6 +254,20 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return Number(rows[0]?.count ?? 0)
   }
 
+  /**
+   * Jobs em voo de UMA companhia. É o que impede duas sessões automatizadas
+   * chegarem juntas no mesmo site a partir do mesmo IP: em 2026-08-20 todas as
+   * nove falhas da LATAM tiveram outra sessão da LATAM rodando em paralelo, e a
+   * única coleta que deu certo foi a que começou primeiro.
+   */
+  async countInFlightByAirline(airline: string): Promise<number> {
+    const { rows } = await this.db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM scraping_jobs WHERE status = 'running' AND airline = $1`,
+      [airline],
+    )
+    return Number(rows[0]?.count ?? 0)
+  }
+
   // Segura o job sem penalidade: scraper saturado (503) não é falha do job.
   async deferJob(id: string, nextRunAt: Date): Promise<void> {
     await this.db.query(`
@@ -306,6 +320,26 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       SET status = 'failed', last_failure_at = NOW(), last_error = $2,
           running_since = NULL, request_id = NULL,
           retry_count = retry_count + 1, next_run_at = $3, updated_at = NOW()
+      WHERE id = $1
+    `, [id, error, nextRunAt])
+  }
+
+  /**
+   * Falha declarada pelo próprio site da companhia.
+   *
+   * Não é culpa do job — é a busca da companhia que não respondeu — então não
+   * pode escalar para 'dead'. Mas também não pode ficar sem freio: o contador
+   * sobe para o backoff crescer, e para em `max_retries - 1` porque
+   * `claimNextJob` exige `retry_count < max_retries`; parar em `max_retries`
+   * deixaria o job preso para sempre, que é pior do que morto.
+   */
+  async markSiteError(id: string, error: string, nextRunAt: Date): Promise<void> {
+    await this.db.query(`
+      UPDATE scraping_jobs
+      SET status = 'failed', last_failure_at = NOW(), last_error = $2,
+          running_since = NULL, request_id = NULL,
+          retry_count = LEAST(retry_count + 1, GREATEST(max_retries - 1, 0)),
+          next_run_at = $3, updated_at = NOW()
       WHERE id = $1
     `, [id, error, nextRunAt])
   }

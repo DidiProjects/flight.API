@@ -34,6 +34,26 @@ const flightOfferSchema = z.object({
 
 export type FlightOfferInput = z.infer<typeof flightOfferSchema>
 
+/**
+ * Como a busca terminou, na palavra de quem esteve na tela.
+ *
+ * Antes o estado era inferido aqui por regex sobre a mensagem de erro — e a
+ * mensagem era o palpite que o próprio scraper escrevia ("likely bot/IP
+ * block"), o que fez a LATAM ser pausada por uma hora, três vezes em
+ * 2026-08-20, por uma página de erro do site dela.
+ *
+ * Opcional: scraper em versão anterior, ou falha sem tela para classificar
+ * (watchdog), continuam chegando sem ele.
+ */
+const outcomeSchema = z.object({
+  state: z.enum(['OFFERS', 'EMPTY', 'BLOCKED', 'LOGIN_REQUIRED', 'SITE_ERROR', 'LAYOUT_CHANGED']),
+  reason: z.string().max(300).optional(),
+  /** O trecho de DOM (ou a URL) que sustenta o estado. Truncado: é prova, não arquivo. */
+  evidence: z.string().max(2000).optional(),
+})
+
+export type ScrapeOutcome = z.infer<typeof outcomeSchema>
+
 export const scrapeCallbackSchema = z.object({
   requestId: z.string().uuid(),
   routineId: z.string().uuid().optional(),
@@ -43,6 +63,7 @@ export const scrapeCallbackSchema = z.object({
   flights: z.array(flightOfferSchema).default([]),
   scrapedAt: z.string(),
   error: z.string().nullable().optional(),
+  outcome: outcomeSchema.nullable().optional(),
 })
 
 export type ScrapeCallback = z.infer<typeof scrapeCallbackSchema>
