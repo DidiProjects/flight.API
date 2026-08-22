@@ -8,10 +8,15 @@ export function unsubscribeRoute(unsubSvc: IUnsubscribeService) {
 
       try {
         const result = await unsubSvc.process(token)
-        const msg = result.isPrimary
-          ? `Rotina <strong>${result.routineName}</strong> desativada.`
-          : `Email <strong>${result.email}</strong> removido da rotina <strong>${result.routineName}</strong>.`
-        reply.type('text/html').send(buildPage('Desinscrito com sucesso', msg, true))
+        const msg = result.alreadyUnsubscribed
+          ? (result.isPrimary
+              ? `A rotina <strong>${result.routineName}</strong> já estava desativada.`
+              : `O email <strong>${result.email}</strong> já não recebia a rotina <strong>${result.routineName}</strong>.`)
+          : (result.isPrimary
+              ? `Rotina <strong>${result.routineName}</strong> desativada.`
+              : `Email <strong>${result.email}</strong> removido da rotina <strong>${result.routineName}</strong>.`)
+        const title = result.alreadyUnsubscribed ? 'Nada a fazer' : 'Desinscrito com sucesso'
+        reply.type('text/html').send(buildPage(title, msg, true))
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Erro ao processar a solicitação.'
         reply.type('text/html').send(buildPage('Erro', msg, false))
