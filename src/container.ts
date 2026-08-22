@@ -97,7 +97,10 @@ const unsubSvc     = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
 const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo, scraperClient, workerGateway, airportsRepo)
 const airportsSvc  = new AirportsService(airportsRepo, airlinesRepo)
 const analysisRunsSvc = new AnalysisRunsService(routinesRepo, analysisRunsRepo)
-const adminSvc        = new AdminService(scrapingJobRepo, analysisRunsRepo, workerGateway)
+const adminSvc        = new AdminService(
+  scrapingJobRepo, analysisRunsRepo, workerGateway,
+  routinesRepo, notifLogRepo, notifSvc, evaluationSvc, alertStateRepo,
+)
 
 export const container = {
   airlinesSvc,

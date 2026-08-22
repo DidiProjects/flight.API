@@ -4,6 +4,7 @@ import type { IAdminService } from './AdminService'
 
 const requestIdParam = z.object({ requestId: z.string().uuid() })
 const jobIdParam = z.object({ jobId: z.string().uuid() })
+const routineIdParam = z.object({ routineId: z.string().uuid() })
 
 export function adminRoute(adminSvc: IAdminService) {
   return async function handler(app: FastifyInstance): Promise<void> {
@@ -31,6 +32,20 @@ export function adminRoute(adminSvc: IAdminService) {
       const { requestId } = requestIdParam.parse(req.params)
       const result = await adminSvc.cancelJob(requestId, req.user.sub)
       reply.send(result)
+    })
+
+    // Reenvia o último e-mail da rotina — alerta de target ou resumo do dia, o
+    // que tiver saído por último. O conteúdo é remontado com os dados de agora.
+    app.post('/routines/:routineId/resend-last-notification', async (req, reply) => {
+      const { routineId } = routineIdParam.parse(req.params)
+      reply.send(await adminSvc.resendLastNotification(routineId))
+    })
+
+    // Zera o histórico de análises da rotina. Preserva o que outra rotina também
+    // enxerga e o que está em execução — a resposta diz o que ficou.
+    app.post('/routines/:routineId/reset-analyses', async (req, reply) => {
+      const { routineId } = routineIdParam.parse(req.params)
+      reply.send(await adminSvc.resetRoutineAnalyses(routineId))
     })
   }
 }
