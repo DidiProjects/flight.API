@@ -62,6 +62,16 @@ export interface RoutineMatchParams {
   limit?: number
 }
 
+/** Saldo do reset: o que saiu e o que ficou, e por quê. */
+export interface DeleteRunsResult {
+  runs: number
+  events: number
+  /** Execuções em andamento — o callback do scraper ainda vai cair nelas. */
+  running: number
+  /** Execuções que outra rotina também cobre. */
+  shared: number
+}
+
 export interface IAnalysisRunsRepository {
   insertRunning(data: InsertRunningData): Promise<void>
   markFinished(requestId: string, data: MarkFinishedData): Promise<void>
@@ -75,4 +85,6 @@ export interface IAnalysisRunsRepository {
   listEvents(requestId: string): Promise<AnalysisRunEventRow[]>
   listEventsByJobId(jobId: string): Promise<AnalysisRunEventRow[]>
   cleanupEventsOlderThan(days: number): Promise<number>
+  countForRoutine(routineId: string): Promise<number>
+  deleteExclusiveToRoutine(routineId: string): Promise<DeleteRunsResult>
 }

@@ -48,6 +48,15 @@ interface Comparable {
   rateDate: string | null
 }
 
+/** What steps 1-2 hand to the alert: one entry per outbound date within target. */
+interface TargetOffers {
+  bestByDate: Map<string, LatestFaresByDate>
+  inboundByDate: Map<string, LatestFaresByDate> | undefined
+  amountByDate: Map<string, number>
+  breakdownByDate: Map<string, PriceBreakdown[]>
+  totalsByDate: Map<string, AlertTotal> | undefined
+}
+
 function toDateStr(v: string | Date): string {
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
 }
@@ -91,10 +100,65 @@ export class EvaluationService implements IEvaluationService {
     return this.alertStateRepo.cleanupPastDates()
   }
 
-  private async evaluateRoutine(routine: RoutineRow): Promise<void> {
-    // Só alerta quem optou pelo modo 'target'.
-    if (!routine.notification_modes.includes('target')) return
+  /**
+   * Re-sends the routine's target alert with the data that is in the bank right
+   * now, skipping steps 3-6 — the whole point of asking for a resend is to
+   * repeat what the anti-repetition would suppress.
+   *
+   * It deliberately does NOT touch target_alert_state: a diagnostic resend that
+   * moved the watermark would change which alerts fire later, and the operator
+   * asking for a copy of an e-mail is not asking for that.
+   */
+  async resendAlert(routine: RoutineRow): Promise<boolean> {
+    const offers = await this.offersInTarget(routine)
+    if (!offers) return false
 
+    const { bestByDate, inboundByDate, amountByDate, totalsByDate } = offers
+
+    // Same ordering as the cycle: cheapest first, ties broken by the most
+    // recently scraped fare — so the headline here is the headline there.
+    const sorted = [...bestByDate.entries()]
+      .map(([flightDate, fare]) => ({ flightDate, fare, amount: amountByDate.get(flightDate)! }))
+      .sort((a, b) =>
+        a.amount - b.amount ||
+        new Date(b.fare.scraped_at).getTime() - new Date(a.fare.scraped_at).getTime(),
+      )
+    if (sorted.length === 0) return false
+
+    const headline = sorted[0]
+    const history = await this.flightFaresRepo.getPriceHistory(
+      headline.fare.airline,
+      routine.origin,
+      routine.destination,
+      headline.flightDate,
+    )
+
+    const fares = sorted.map((o) => o.fare)
+    if (inboundByDate) await this.notifSvc.dispatchAlert(routine, fares, history, inboundByDate, totalsByDate)
+    else await this.notifSvc.dispatchAlert(routine, fares, history)
+
+    log.info({
+      routineId:   routine.id,
+      routineName: routine.name,
+      dates:       sorted.map((o) => o.flightDate),
+      type:        'alert',
+      trigger:     'manual-resend',
+      status:      'success',
+    }, 'alert resent by admin')
+
+    return true
+  }
+
+  /**
+   * Steps 1-2 of the cycle: the best offer WITHIN TARGET per outbound date. On a
+   * round trip the date's offer is the pair (outbound + inbound) and the target
+   * is compared against the total. `null` when nothing is within target.
+   *
+   * It lives apart because the manual resend needs exactly this and nothing that
+   * follows: steps 3-6 are the anti-repetition, and a resend is precisely a
+   * request to repeat.
+   */
+  private async offersInTarget(routine: RoutineRow): Promise<TargetOffers | null> {
     // 1-2. Melhor oferta dentro do alvo por data de ida. Em round_trip a oferta
     //      da data é o PAR (ida + volta) e o alvo é comparado contra o total.
     let inboundByDate: Map<string, LatestFaresByDate> | undefined
@@ -109,7 +173,7 @@ export class EvaluationService implements IEvaluationService {
 
     if (routine.trip_type === 'round_trip') {
       const pairs = await this.bestPairsByOutboundDate(routine)
-      if (pairs.size === 0) return
+      if (pairs.size === 0) return null
       bestByDate      = new Map([...pairs].map(([date, p]) => [date, p.outbound]))
       inboundByDate   = new Map([...pairs].map(([date, p]) => [date, p.inbound]))
       amountByDate    = new Map([...pairs].map(([date, p]) => [date, p.total]))
@@ -138,14 +202,26 @@ export class EvaluationService implements IEvaluationService {
         )
         allOutbound.push(...outbound)
       }
-      if (allOutbound.length === 0) return
+      if (allOutbound.length === 0) return null
 
       const chosen = await this.bestInTargetByDate(allOutbound, routine)
       bestByDate     = new Map([...chosen].map(([date, c]) => [date, c.fare]))
       amountByDate   = new Map([...chosen].map(([date, c]) => [date, c.cmp.value]))
       breakdownByDate = new Map([...chosen].map(([date, c]) => [date, [c.cmp.breakdown]]))
     }
-    if (bestByDate.size === 0) return
+    if (bestByDate.size === 0) return null
+
+
+    return { bestByDate, inboundByDate, amountByDate, breakdownByDate, totalsByDate }
+  }
+
+  private async evaluateRoutine(routine: RoutineRow): Promise<void> {
+    // Só alerta quem optou pelo modo 'target'.
+    if (!routine.notification_modes.includes('target')) return
+
+    const offersFound = await this.offersInTarget(routine)
+    if (!offersFound) return
+    const { bestByDate, inboundByDate, amountByDate, breakdownByDate, totalsByDate } = offersFound
 
     // 3. Comparar cada data com seu watermark (melhor preço já alertado para ela).
     const fareType = routine.priority

@@ -30,6 +30,15 @@ export interface AdminJobRow extends ScrapingJobRow {
   run_finished_at: Date | null
 }
 
+/** Saldo do reset: o que voltou ao zero e o que foi preservado, e por quê. */
+export interface ResetJobsResult {
+  reset: number
+  /** Jobs em execução — o worker está no meio do scrape, não se mexe. */
+  running: number
+  /** Jobs que outra rotina também cobre — o dado não é só desta rotina. */
+  shared: number
+}
+
 export interface IScrapingJobRepository {
   upsertFromRoutines(): Promise<number>
   upsertFromRoutine(routineId: string): Promise<void>
@@ -59,4 +68,6 @@ export interface IScrapingJobRepository {
   findOwnerEmailsByRequestId(requestId: string): Promise<string[]>
   findRunningOrphans(): Promise<ScrapingJobRow[]>
   retireOrphans(): Promise<number>
+  countForRoutine(routineId: string): Promise<number>
+  resetExclusiveToRoutine(routineId: string): Promise<ResetJobsResult>
 }
