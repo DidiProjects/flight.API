@@ -1348,6 +1348,61 @@
           }
         }
       ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "POST /admin/routines/:routineId/resend-last-notification",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/admin/routines/:routineId/resend-last-notification",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "routines",
+                ":routineId",
+                "resend-last-notification"
+              ],
+              "variable": [
+                {
+                  "key": "routineId",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Reenvia o ÚLTIMO e-mail da rotina (admin). O tipo vem do notification_log: 'alert' reenvia o alerta de target, 'scheduled' (e o antigo 'best_of_day') reenvia o resumo do dia.\n\nO conteúdo é REMONTADO com as tarifas que estão no banco agora — nada guarda o HTML enviado, então os preços podem diferir dos do e-mail original.\n\nIgnora os anti-repetição: o dedup de 12h do resumo e o watermark do alerta. NÃO grava watermark, para não alterar quais alertas disparam depois.\n\n200 { type, sent, lastSentAt, reason? } — sent=false com reason quando não há oferta/tarifa para montar o e-mail.\n404 quando a rotina não existe ou nunca enviou e-mail.\n\nRequer JWT de admin."
+          }
+        },
+        {
+          "name": "POST /admin/routines/:routineId/reset-analyses",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/admin/routines/:routineId/reset-analyses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "routines",
+                ":routineId",
+                "reset-analyses"
+              ],
+              "variable": [
+                {
+                  "key": "routineId",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Zera o histórico de análises da rotina (admin): apaga analysis_runs + analysis_run_events, devolve os scraping_jobs ao estado inicial (status pending, retry_count 0, erro e timestamps limpos) e apaga o watermark de alerta (target_alert_state) — a rotina volta a poder alertar do zero.\n\nNÃO apaga flight_fares: o histórico de preços (sparkline, média de 30 dias) é preservado.\n\nExecuções e jobs são chaveados por ROTA, não por rotina. Só é tocado o que APENAS esta rotina alcança — linha que outra rotina também cobre fica onde está. Execução/job em andamento também fica: o worker ainda vai reportar contra ele.\n\n200 {\n  analysisRuns:    { deleted, events, keptRunning, keptShared },\n  scrapingJobs:    { reset, keptRunning, keptShared },\n  alertWatermarks: { deleted }\n}\n404 quando a rotina não existe.\n\nRequer JWT de admin."
+          }
+        }
+      ]
     }
   ]
 }

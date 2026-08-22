@@ -1,5 +1,5 @@
 import { Pool } from 'pg'
-import { AdminJobRow, IScrapingJobRepository, ScrapingJobRow } from './interfaces/IScrapingJobRepository'
+import { AdminJobRow, IScrapingJobRepository, ResetJobsResult, ScrapingJobRow } from './interfaces/IScrapingJobRepository'
 
 const ORPHAN_PREDICATE = `
   NOT EXISTS (
@@ -18,6 +18,28 @@ const ORPHAN_PREDICATE = `
         OR
         (j.return_date IS NOT NULL AND r.trip_type = 'round_trip'
          AND j.return_date BETWEEN r.inbound_start AND r.inbound_end)
+      )
+  )`
+
+// A row belongs to a routine by ROUTE, not by ownership: same airline, same
+// trip, date inside the window — and, for round-trip, the pair of dates inside
+// the pair of windows. `alias` is a parameter because the same condition serves
+// scraping_jobs and analysis_runs, which carry the same four columns plus
+// return_date. Mirrors ORPHAN_PREDICATE above, narrowed to one routine.
+export const belongsToRoutine = (alias: string, routineIdComparison: string) => `
+  EXISTS (
+    SELECT 1 FROM routines r
+    JOIN routine_airlines ra ON ra.routine_id = r.id
+    WHERE r.id ${routineIdComparison}
+      AND ra.airline    = ${alias}.airline
+      AND r.origin      = ${alias}.origin
+      AND r.destination = ${alias}.destination
+      AND ${alias}.flight_date BETWEEN r.outbound_start AND r.outbound_end
+      AND (
+        (${alias}.return_date IS NULL     AND r.trip_type = 'one_way')
+        OR
+        (${alias}.return_date IS NOT NULL AND r.trip_type = 'round_trip'
+         AND ${alias}.return_date BETWEEN r.inbound_start AND r.inbound_end)
       )
   )`
 
@@ -515,5 +537,52 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
         AND updated_at < NOW() - INTERVAL '30 days'
     `)
     return rowCount ?? 0
+  }
+
+  async countForRoutine(routineId: string): Promise<number> {
+    const { rows } = await this.db.query<{ count: string }>(
+      `SELECT count(*) AS count FROM scraping_jobs j WHERE ${belongsToRoutine('j', '= $1')}`,
+      [routineId],
+    )
+    return Number(rows[0]?.count ?? 0)
+  }
+
+  async resetExclusiveToRoutine(routineId: string): Promise<ResetJobsResult> {
+    // A job another routine also covers is left alone — the reset is scoped to
+    // what only this routine reaches. A RUNNING job is left alone too: its worker
+    // is mid-scrape and would report back against state we had just wiped.
+    const { rowCount } = await this.db.query(
+      `UPDATE scraping_jobs j
+          SET status          = 'pending',
+              retry_count     = 0,
+              next_run_at     = NOW() + random() * ${SPREAD_WINDOW},
+              last_success_at = NULL,
+              last_failure_at = NULL,
+              last_error      = NULL,
+              running_since   = NULL,
+              started_at      = NULL,
+              last_heartbeat_at = NULL,
+              request_id      = NULL,
+              orphaned_at     = NULL,
+              updated_at      = NOW()
+        WHERE j.status <> 'running'
+          AND ${belongsToRoutine('j', '= $1')}
+          AND NOT ${belongsToRoutine('j', '<> $1')}`,
+      [routineId],
+    )
+
+    const { rows } = await this.db.query<{ running: string; shared: string }>(
+      `SELECT
+         count(*) FILTER (WHERE j.status = 'running')                          AS running,
+         count(*) FILTER (WHERE ${belongsToRoutine('j', '<> $1')})             AS shared
+       FROM scraping_jobs j
+       WHERE ${belongsToRoutine('j', '= $1')}`,
+      [routineId],
+    )
+    return {
+      reset:   rowCount ?? 0,
+      running: Number(rows[0]?.running ?? 0),
+      shared:  Number(rows[0]?.shared ?? 0),
+    }
   }
 }

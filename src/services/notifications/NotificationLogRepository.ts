@@ -33,6 +33,18 @@ export class NotificationLogRepository implements INotificationLogRepository {
     return rows[0] ?? null
   }
 
+  async findLastForRoutine(routineId: string): Promise<NotificationLogRow | null> {
+    const { rows } = await this.db.query<NotificationLogRow>(
+      `SELECT id, routine_id, airline, type, fare_type, outbound_amount, return_amount,
+              email_to, email_cc, sent_at
+       FROM notification_log
+       WHERE routine_id = $1
+       ORDER BY sent_at DESC LIMIT 1`,
+      [routineId],
+    )
+    return rows[0] ?? null
+  }
+
   async hasAlertSince(routineId: string, fareType: string, since: Date): Promise<boolean> {
     const { rows } = await this.db.query<{ exists: boolean }>(
       `SELECT EXISTS (

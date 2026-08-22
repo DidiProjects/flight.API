@@ -39,4 +39,6 @@ export interface ITargetAlertStateRepository {
   recordNotified(routineId: string, fareType: string, entries: AlertWatermark[]): Promise<Set<string>>
   /** Remove células de datas já passadas. Retorna quantas linhas saíram. */
   cleanupPastDates(): Promise<number>
+  /** Zera o anti-repetição da rotina: ela volta a poder alertar do zero. */
+  deleteByRoutine(routineId: string): Promise<number>
 }

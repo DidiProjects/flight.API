@@ -1,4 +1,5 @@
 import { Pool } from 'pg'
+import { belongsToRoutine } from '../scraping-jobs/ScrapingJobRepository'
 import {
   AnalysisRunRow,
   AnalysisRunEventRow,
@@ -6,6 +7,7 @@ import {
   IAnalysisRunsRepository,
   InsertRunningData,
   MarkFinishedData,
+  DeleteRunsResult,
   RoutineMatchParams,
 } from './interfaces/IAnalysisRunsRepository'
 
@@ -144,5 +146,54 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
       [days],
     )
     return rowCount ?? 0
+  }
+
+  async countForRoutine(routineId: string): Promise<number> {
+    const { rows } = await this.db.query<{ count: string }>(
+      `SELECT count(*) AS count FROM analysis_runs ar WHERE ${belongsToRoutine('ar', '= $1')}`,
+      [routineId],
+    )
+    return Number(rows[0]?.count ?? 0)
+  }
+
+  async deleteExclusiveToRoutine(routineId: string): Promise<DeleteRunsResult> {
+    // A run another routine also covers stays: the reset only clears what this
+    // routine alone reaches. A RUNNING one stays too — the scraper is still going
+    // to call back on that request_id, and the callback needs the row to land on.
+    const { rows: deleted } = await this.db.query<{ request_id: string }>(
+      `DELETE FROM analysis_runs ar
+        WHERE ar.status <> 'running'
+          AND ${belongsToRoutine('ar', '= $1')}
+          AND NOT ${belongsToRoutine('ar', '<> $1')}
+        RETURNING ar.request_id`,
+      [routineId],
+    )
+
+    // analysis_run_events has no FK to analysis_runs — it is keyed by request_id
+    // alone, so nothing cascades and the events have to go explicitly.
+    let events = 0
+    if (deleted.length > 0) {
+      const { rowCount } = await this.db.query(
+        `DELETE FROM analysis_run_events WHERE request_id = ANY($1::uuid[])`,
+        [deleted.map((r) => r.request_id)],
+      )
+      events = rowCount ?? 0
+    }
+
+    const { rows } = await this.db.query<{ running: string; shared: string }>(
+      `SELECT
+         count(*) FILTER (WHERE ar.status = 'running')              AS running,
+         count(*) FILTER (WHERE ${belongsToRoutine('ar', '<> $1')}) AS shared
+       FROM analysis_runs ar
+       WHERE ${belongsToRoutine('ar', '= $1')}`,
+      [routineId],
+    )
+
+    return {
+      runs:    deleted.length,
+      events,
+      running: Number(rows[0]?.running ?? 0),
+      shared:  Number(rows[0]?.shared ?? 0),
+    }
   }
 }
