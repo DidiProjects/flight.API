@@ -46,7 +46,7 @@ O agendamento não é por rotina. O scheduler deriva `scraping_jobs` — um job 
 Loops (`start()`):
 
 - **Derivação** (a cada `SCRAPE_INTERVAL_MS`) — expira jobs antigos, faz upsert de jobs a partir das rotinas ativas (revivendo aposentados cuja rota voltou a ter rotina), recalcula prioridades e **aposenta órfãos** (`retireOrphans`: sem rotina ativa → `orphaned_at = NOW()`, preservando o status da última execução). `orphaned_at IS NULL` é o que mantém o job no pool de despacho (`claimNextJob`) — não vira mais `dead`.
-- **Dispatch** (a cada `SCRAPE_INTERVAL_MS`) — por companhia, reivindica até `SCRAPE_DISPATCH_BATCH` jobs, marca `running`, cria a `analysis_run` e faz `POST /scrape` na `scraping.API`. Circuit breaker por companhia (5 falhas → abre por 15min).
+- **Dispatch** (a cada `SCRAPE_INTERVAL_MS`) — por companhia, reivindica até `SCRAPE_DISPATCH_BATCH` jobs, respeitando `SCRAPE_MAX_IN_FLIGHT` (global) e `SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE` (por companhia, checado **antes** do claim), marca `running`, cria a `analysis_run` e faz `POST /scrape` na `scraping.API`. Circuit breaker por companhia (5 falhas → abre por 15min).
 - **Heartbeat** (2min) — recupera jobs travados e marca como falha `analysis_runs` paradas em `running` há mais de 15min.
 - **Evaluation** (5min) — `EvaluationService.runCycle()`.
 - **Daily** (tick de 1min) — a partir das 02:00, uma vez/dia: agrega `flight_fares` no bucket diário, limpa dados crus > 30d, `analysis_runs` > 60d e jobs `dead`.
@@ -60,7 +60,9 @@ O scrape é dedupado por **rota** (`scraping_jobs` único por `airline, origin, 
 Recebe o callback da `scraping.API` (autenticado por `X-API-Key`/`FLIGHT_API_KEY`). Responde 200 imediato e processa async (`ScrapeService.processCallback`):
 
 - Localiza o job por `request_id`. Sucesso → grava `flight_fares`, marca job/run `success` e reagenda.
-- Erro de bloqueio/bot → pausa toda a companhia por 1h (não escala para `dead`).
+- O estado terminal vem no campo `outcome` do callback (`BLOCKED`, `SITE_ERROR`, `EMPTY`, `LOGIN_REQUIRED`, `LAYOUT_CHANGED`, `OFFERS`), classificado pela `scraping.API` a partir do DOM, com a evidência junto. Callback sem `outcome` cai na retaguarda por texto do erro.
+- `BLOCKED` → pausa toda a companhia por 1h (não escala para `dead`).
+- `SITE_ERROR` (a companhia declarou que a busca dela falhou) → só este job espera, com backoff próprio (5min dobrando até 60min) e **nunca** vira `dead`.
 - Outros erros → `failed` com backoff, ou `dead` ao atingir `max_retries`.
 - Callback órfão (request_id sem job) → tenta reidratar o job pelo id em `routineId` e salva as fares (`ON CONFLICT` protege duplicatas), sem perder a coleta nem deixar a run presa em `running`.
 
@@ -95,6 +97,8 @@ Definidas e validadas em `src/config/env.ts` (Zod). Toda nova var deve ir també
 | `SCRAPE_INTERVAL_MS` | `300000` | Período dos loops de derivação/dispatch (5min) |
 | `SCRAPE_INTERVAL_JITTER_MS` | `60000` | Jitter aplicado ao intervalo |
 | `SCRAPE_DISPATCH_BATCH` | `1` | Jobs por companhia por tick = sessões simultâneas no mesmo IP. Manter baixo p/ evitar detecção de bot |
+| `SCRAPE_MAX_IN_FLIGHT` | `6` | Teto global de jobs em voo (backpressure sobre a fila do scraper) |
+| `SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE` | `1` | Teto de jobs em voo por companhia, checado antes de reivindicar. Vale também para o disparo manual |
 | `EVALUATION_INTERVAL_MS` | `300000` | Período do loop de avaliação |
 | `SCRAPING_API_URL` / `SCRAPING_API_KEY` | — | Endpoint e chave da `scraping.API` |
 | `FLIGHT_API_KEY` | — | Chave que o scraper usa no callback `/scrape/results` |

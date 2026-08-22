@@ -38,6 +38,7 @@ export interface IScrapingJobRepository {
   claimNextJob(airline: string): Promise<ScrapingJobRow | null>
   claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null>
   countInFlight(): Promise<number>
+  countInFlightByAirline(airline: string): Promise<number>
   deferJob(id: string, nextRunAt: Date): Promise<void>
   markRunning(id: string, requestId: string): Promise<void>
   markStarted(requestId: string): Promise<void>
@@ -45,6 +46,7 @@ export interface IScrapingJobRepository {
   markSuccess(id: string, nextRunAt: Date): Promise<void>
   markFailed(id: string, error: string, nextRunAt: Date): Promise<void>
   markDead(id: string, error: string): Promise<void>
+  markSiteError(id: string, error: string, nextRunAt: Date): Promise<void>
   pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number>
   reclaimExpiredJobs(leaseTimeoutSec: number, graceSec: number, maxRunMin: number): Promise<{ lost: string[]; hung: string[] }>
   findByRequestId(requestId: string): Promise<ScrapingJobRow | null>
