@@ -43,7 +43,7 @@ describe('airlineCapabilityError', () => {
 
   it('exige ida-e-volta de TODAS as companhias, não de uma', () => {
     // Different from the price dimension: a pair job on an airline with no RT search
-    // volta com as pernas avulsas e sem total — dado de par falso.
+    // comes back with loose legs and no total — false pair data.
     expect(airlineCapabilityError([azul, latam], { tripType: 'round_trip' })).toMatch(/latam/)
     expect(airlineCapabilityError([azul, ryanair], { tripType: 'round_trip' })).toBeNull()
   })

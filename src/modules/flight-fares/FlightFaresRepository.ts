@@ -118,7 +118,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
    * search share request_id. The return leg has `flight_date` equal to ITS date
    * (the return date), not the outbound date — matching legs by flight_date split
    * the pair into two groups and every real pair was discarded as incomplete.
-   * como incompleto.
+   * as incomplete.
    *
    * The outbound date of the pair comes from the outbound leg as `pair_outbound_date`.
    */
