@@ -46,7 +46,13 @@ declare module 'fastify' {
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: logger as FastifyBaseLogger, trustProxy: true })
+  // The unsubscribe token is 128 chars (64 bytes in hex) and Fastify's default
+  // param limit is 100 — without this the route never even matches.
+  const app = Fastify({
+    loggerInstance: logger as FastifyBaseLogger,
+    trustProxy: true,
+    maxParamLength: 256,
+  })
 
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
     if (!body) return done(null, undefined)
