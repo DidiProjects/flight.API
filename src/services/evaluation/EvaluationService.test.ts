@@ -318,6 +318,26 @@ describe('EvaluationService', () => {
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledWith(routine, [d25], expect.anything())
   })
 
+  it('empate de preço entre datas — histórico e headline são da tarifa coletada mais recentemente (alinha com o card)', async () => {
+    // Duas datas no mesmo preço; o e-mail renderiza a de scraped_at mais recente
+    // (desempate do dispatchAlert). O histórico tem que ser calculado para ESSA
+    // mesma data — senão o card mostra uma data e o "% abaixo da média" outra.
+    const routine = makeRoutine({ target_cash: 4000, margin: 0 })
+    const older = makeFare({ flight_date: '2027-02-22', fare_cash: 3100, scraped_at: new Date('2026-06-30T08:00:00Z') })
+    const newer = makeFare({ flight_date: '2027-02-25', fare_cash: 3100, scraped_at: new Date('2026-06-30T18:00:00Z') })
+
+    vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([routine])
+    vi.mocked(mockFlightFaresRepo.getLatestByRoute).mockResolvedValue([older, newer])
+
+    await svc.runCycle()
+
+    // histórico buscado para a data da headline (a mais recente em scraped_at)
+    expect(mockFlightFaresRepo.getPriceHistory).toHaveBeenCalledWith('azul', 'VCP', 'LIS', '2027-02-25')
+    // e offers[0] (o que o dispatchAlert renderiza) é a mesma tarifa
+    const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
+    expect(fares[0].flight_date).toBe('2027-02-25')
+  })
+
   it('corrida — recordNotified devolve vazio (banco cortou) — não dispara', async () => {
     const routine = makeRoutine({ target_cash: 4000, margin: 0 })
     const fare    = makeFare({ flight_date: '2026-08-15', fare_cash: 3100 })
