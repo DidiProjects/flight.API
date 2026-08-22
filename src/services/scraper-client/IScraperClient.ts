@@ -15,8 +15,8 @@ export interface IScraperClient {
   dispatch(payload: ScrapeDispatch): Promise<void>
 }
 
-// Scraper sinalizou fila cheia (503). Não é falha do job: a API deve segurar e
-// tentar de novo, sem incrementar retry nem escalar para dead.
+// The scraper signalled a full queue (503). Not a job failure: the API should hold
+// and try again, without incrementing retry or escalating to dead.
 export class ScraperBusyError extends Error {
   constructor(public readonly retryAfterMs: number) {
     super('scraping.API queue full (503)')

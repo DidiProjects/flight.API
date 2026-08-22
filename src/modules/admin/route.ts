@@ -8,11 +8,11 @@ const routineIdParam = z.object({ routineId: z.string().uuid() })
 
 export function adminRoute(adminSvc: IAdminService) {
   return async function handler(app: FastifyInstance): Promise<void> {
-    // Tudo aqui é admin-only.
+    // Everything here is admin-only.
     app.addHook('preHandler', app.authenticate)
     app.addHook('preHandler', app.requireAdmin)
 
-    // Snapshot de todos os jobs (estado + running_since p/ duração ao vivo no front).
+    // Snapshot of every job (state + running_since for live duration on the front).
     app.get('/jobs', async (_req, reply) => {
       reply.send({ jobs: await adminSvc.listJobs() })
     })
@@ -27,22 +27,22 @@ export function adminRoute(adminSvc: IAdminService) {
       reply.send({ events: await adminSvc.getJobTimeline(jobId) })
     })
 
-    // Interromper um job. A confirmação real chega depois via SSE (job.upsert).
+    // Interrupt a job. The real confirmation arrives later via SSE (job.upsert).
     app.post('/jobs/:requestId/cancel', async (req, reply) => {
       const { requestId } = requestIdParam.parse(req.params)
       const result = await adminSvc.cancelJob(requestId, req.user.sub)
       reply.send(result)
     })
 
-    // Reenvia o último e-mail da rotina — alerta de target ou resumo do dia, o
-    // que tiver saído por último. O conteúdo é remontado com os dados de agora.
+    // Resends the last e-mail of the routine — target alert or daily summary,
+    // whichever went out last. The content is rebuilt from current data.
     app.post('/routines/:routineId/resend-last-notification', async (req, reply) => {
       const { routineId } = routineIdParam.parse(req.params)
       reply.send(await adminSvc.resendLastNotification(routineId))
     })
 
-    // Zera o histórico de análises da rotina. Preserva o que outra rotina também
-    // enxerga e o que está em execução — a resposta diz o que ficou.
+    // Clears the analysis history of the routine. Preserves what another routine
+    // also sees and what is running — the response says what stayed.
     app.post('/routines/:routineId/reset-analyses', async (req, reply) => {
       const { routineId } = routineIdParam.parse(req.params)
       reply.send(await adminSvc.resetRoutineAnalyses(routineId))

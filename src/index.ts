@@ -17,9 +17,9 @@ async function main(): Promise<void> {
     if (shuttingDown) return
     shuttingDown = true
     app.log.info(`${signal} — encerrando`)
-    // Ordem importa: 1) para o scheduler (não reivindica/despacha mais nada),
-    // 2) fecha o WS do worker, 3) drena os requests HTTP em voo (callbacks),
-    // 4) pequena janela p/ o processamento async do callback escoar, 5) fecha o DB.
+    // Order matters: 1) stop the scheduler (claims and dispatches nothing more),
+    // 2) close the worker WS, 3) drain in-flight HTTP requests (callbacks),
+    // 4) a small window for async callback processing to flush, 5) close the DB.
     container.schedulerSvc.stop()
     container.workerGateway.close()
     await app.close()

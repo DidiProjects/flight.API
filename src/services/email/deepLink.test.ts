@@ -19,7 +19,7 @@ const leg = (over: Partial<OfferBlock> = {}): OfferBlock => ({
   durationMin: 690, stops: 0, fareCash: 3280, ...over,
 })
 
-/** Manda o alerta e devolve os href do botão de compra. */
+/** Sends the alert and returns the hrefs of the buy button. */
 async function linksDoEmail(airline: string, ret: OfferBlock | null): Promise<string[]> {
   sendMail.mockClear()
   const params: FlightAlertEmailParams = {
@@ -82,7 +82,7 @@ describe('deep link de compra no e-mail — ida-e-volta', () => {
   })
 
   it('as duas pernas do e-mail apontam para o MESMO link do par', async () => {
-    // O botão da VOLTA recebe o mesmo `link` que o da ida: um par, uma busca.
+    // The RETURN button gets the same `link` as the outbound: one pair, one search.
     const urls = await linksDoEmail('ryanair', volta)
     expect(urls.length).toBeGreaterThan(1)
     expect(new Set(urls).size).toBe(1)

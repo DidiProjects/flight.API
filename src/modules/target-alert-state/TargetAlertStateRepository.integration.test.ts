@@ -2,12 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { TargetAlertStateRepository } from './TargetAlertStateRepository'
 
-// Testa o coração do anti-repetição do alerta 'target': o upsert monotônico-
-// descendente com RETURNING (só as datas que de fato avançaram). Roda contra um
-// Postgres real porque a lógica vive no SQL (ON CONFLICT ... WHERE + RETURNING).
-// Pulado quando TEST_DATABASE_URL não está definido — o CI sobe o Postgres.
+// Tests the heart of the 'target' alert anti-repetition: the monotonic-descending
+// upsert with RETURNING (only the dates that actually advanced). Runs against a
+// real Postgres because the logic lives in the SQL (ON CONFLICT ... WHERE + RETURNING).
+// Skipped when TEST_DATABASE_URL is unset — CI starts the Postgres.
 //
-// Local:  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test
+// Locally:  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test
 
 const DB_URL = process.env.TEST_DATABASE_URL
 const SCHEMA = 'target_alert_state_it'
@@ -15,7 +15,7 @@ const SCHEMA = 'target_alert_state_it'
 const ROUTINE = '00000000-0000-0000-0000-0000000000aa'
 const OTHER   = '00000000-0000-0000-0000-0000000000bb'
 
-/** Composição de uma perna só — o suficiente para o teste do upsert. */
+/** Composition of a single leg — enough for the upsert test. */
 const bd = (amount: number) => [{ direction: 'outbound' as const, currency: 'BRL', amount }]
 
 const describeIt = DB_URL ? describe : describe.skip
@@ -27,7 +27,7 @@ describeIt('TargetAlertStateRepository (integração / Postgres real)', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: DB_URL, options: `-c search_path=${SCHEMA},public` })
     await pool.query(`CREATE SCHEMA IF NOT EXISTS ${SCHEMA}`)
-    // Espelha o schema real (sem a FK para routines, self-contained).
+    // Mirrors the real schema (no FK to routines, self-contained).
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ${SCHEMA}.target_alert_state (
         routine_id       UUID          NOT NULL,

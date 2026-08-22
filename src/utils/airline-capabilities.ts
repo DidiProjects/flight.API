@@ -1,16 +1,16 @@
 /**
- * O que a rotina pede × o que a companhia sabe precificar.
+ * What the routine asks for × what the airline can price.
  *
- * Existe porque a validação de companhia estava só na CRIAÇÃO, e só para
- * `has_roundtrip`. Toda a classe de campo que depende da companhia — prioridade,
- * alvos, tipo de viagem — ficava livre na edição: bastava criar a rotina numa
- * companhia que suporta e depois TROCAR a companhia. Foi assim que apareceram
- * rotinas com alvo híbrido (20.000 pts + R$400) em Ryanair, BA e LATAM, três
- * companhias com `has_hyb = false`, sem que nada reclamasse.
+ * It exists because airline validation lived only in CREATION, and only for
+ * `has_roundtrip`. Every other airline-dependent field — priority, targets, trip
+ * type — was free on edit: it was enough to create the routine on an airline that
+ * supports it and then SWAP the airline. That is how routines with a hybrid target
+ * (20,000 pts + R$400) appeared on Ryanair, BA and LATAM, three airlines with
+ * `has_hyb = false`, without anything complaining.
  *
- * Por isso a regra mora aqui, pura e sobre o estado FINAL: quem chama monta o
- * "como a rotina vai ficar" e pergunta. Assim create, update e adminUpdate fazem
- * a mesma pergunta, e um caminho novo não nasce sem a validação.
+ * So the rule lives here, pure and over the FINAL state: the caller assembles "how
+ * the routine will look" and asks. That way create, update and adminUpdate ask the
+ * same question, and a new path cannot be born without the validation.
  */
 
 export interface AirlineCapabilities {
@@ -21,7 +21,7 @@ export interface AirlineCapabilities {
   has_roundtrip: boolean
 }
 
-/** O estado FINAL da rotina — o que ela será depois da criação ou da edição. */
+/** The FINAL state of the routine — what it will be after creation or edit. */
 export interface RoutinePricingState {
   tripType?: string | null
   priority?: string | null
@@ -44,18 +44,18 @@ function supports(airline: AirlineCapabilities, dim: Dimension): boolean {
 }
 
 /**
- * Erro de compatibilidade entre a rotina e suas companhias, ou `null`.
+ * Compatibility error between the routine and its airlines, or `null`.
  *
- * Duas regras com exigências propositalmente diferentes:
+ * Two rules with deliberately different demands:
  *
- * - **ida-e-volta exige TODAS**. Um job de par despachado para companhia sem
- *   busca RT volta com as duas pernas avulsas e sem total — dado de par falso,
- *   pior que dado nenhum (é o motivo da migration 008 no flight.DB).
+ * - **round-trip requires ALL of them**. A pair job dispatched to an airline with
+ *   no RT search comes back with both legs loose and no total — false pair data,
+ *   worse than no data (the reason for migration 008 in flight.DB).
  *
- * - **dimensão de preço exige AO MENOS UMA**. Numa rotina [azul, latam] com
- *   prioridade em pontos, a Azul alerta e a LATAM simplesmente não contribui:
- *   nada corrompe. Só quando NENHUMA companhia precifica aquela dimensão é que
- *   a rotina vira promessa que nunca se cumpre — e aí barrar é o honesto.
+ * - **price dimension requires AT LEAST ONE**. On a [azul, latam] routine with
+ *   priority on points, Azul alerts and LATAM simply does not contribute: nothing
+ *   is corrupted. Only when NO airline prices that dimension does the routine
+ *   become a promise it never keeps — and then blocking is the honest move.
  */
 export function airlineCapabilityError(
   airlines: AirlineCapabilities[],

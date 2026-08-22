@@ -64,8 +64,8 @@ const realtimePersistence = new RealtimePersistence(hubBus, analysisRunsRepo, sc
 
 // ── Services ──────────────────────────────────────────────────────────────────
 const scraperClient = new HttpScraperClient(env)
-// Câmbio: a rede fica atrás do client, os provedores atrás da interface, e só
-// service consome. A ordem da lista É a ordem de fallback.
+// Exchange: the network sits behind the client, the providers behind the interface,
+// and only the service consumes them. The list order IS the fallback order.
 const fxHttp = new ExchangeRateHttpClient(env.FX_TIMEOUT_MS)
 const fxSvc  = new FxRateService(
   [new FrankfurterProvider(fxHttp), new CurrencyApiProvider(fxHttp)],

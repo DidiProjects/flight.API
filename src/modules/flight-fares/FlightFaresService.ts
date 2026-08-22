@@ -2,11 +2,11 @@ import { FlightFaresCurrent, IFlightFaresService, Journey } from './interfaces/I
 import { CurrentBest, IFlightFaresRepository, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
 /**
- * Leitura de tarifas SEM rede.
+ * Reading fares with NO network.
  *
- * O câmbio saiu daqui em 017: converter na leitura batia na API a cada abertura
- * de histórico e fazia a régua de 30 dias se mexer com a cotação do dia. A
- * conversão passou para a ingestão da análise, com a taxa gravada na linha.
+ * Exchange left this file in 017: converting on read hit the API on every history
+ * open and made the 30-day baseline move with the rate of the day. Conversion
+ * moved to analysis ingestion, with the rate stored on the row.
  */
 export class FlightFaresService implements IFlightFaresService {
   constructor(private readonly repo: IFlightFaresRepository) {}
@@ -17,8 +17,8 @@ export class FlightFaresService implements IFlightFaresService {
 
   getSummary(
     airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string,
-    // Rotina round_trip: a régua é a distribuição dos totais de PAR, senão o
-    // veredito compara duas pernas contra a média de uma.
+    // Round_trip routine: the baseline is the distribution of PAIR totals, else
+    // the verdict compares two legs against the average of one.
     inbound?: { from: string; to: string },
   ): Promise<PriceHistory> {
     return this.repo.getSummary(airlines, origin, destination, dateFrom, dateTo, inbound)
@@ -26,21 +26,21 @@ export class FlightFaresService implements IFlightFaresService {
 
   async getCurrent(
     airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string,
-    // Rotina round_trip: o preço atual é o TOTAL do par, não o da perna de ida.
+    // Round_trip routine: the current price is the pair TOTAL, not the outbound leg.
     inbound?: { from: string; to: string },
   ): Promise<FlightFaresCurrent> {
-    // A régua acompanha o valor: com `inbound`, os dois são de par.
+    // The baseline follows the value: with `inbound`, both are pair-level.
     const [current, summary] = await Promise.all([
       this.repo.getCurrentBest(airlines, origin, destination, dateFrom, dateTo, inbound),
       this.repo.getSummary(airlines, origin, destination, dateFrom, dateTo, inbound),
     ])
-    // O total do par já vem somado em Real pelo SQL (017): a conversão acontece
-    // uma vez, na ingestão da análise, com a taxa gravada na linha. Antes era
-    // aqui, a cada abertura de tela, e o valor mudava com a cotação do dia.
+    // The pair total already comes summed in Real from the SQL (017): conversion
+    // happens once, at analysis ingestion, with the rate stored on the row. It used
+    // to be here, on every screen open, and the value moved with the daily rate.
     //
-    // A coerção continua sendo necessária: NUMERIC volta do pg como STRING, e
-    // quem a fazia era o `pairTotal` que somava. Sem ela o total sai do JSON
-    // como "12548.00" e qualquer comparação no front vira lexicográfica.
+    // The coercion is still needed: NUMERIC comes back from pg as a STRING, and it
+    // was `pairTotal` that did it while summing. Without it the total leaves the
+    // JSON as "12548.00" and any comparison on the front turns lexicographic.
     return {
       ...summary,
       ...current,
@@ -53,21 +53,21 @@ export class FlightFaresService implements IFlightFaresService {
   }
 
   /**
-   * As jornadas do melhor par, a partir das parcelas que a query já devolve.
+   * The journeys of the best pair, from the parts the query already returns.
    *
-   * A moeda é a mesma nas duas: medido no banco, par nenhum mistura moeda — a
-   * busca RT é precificada no mercado de quem parte e as duas pernas saem
-   * juntas. O campo existe por jornada mesmo assim, para o front nunca ter de
-   * herdar moeda de um nível acima (foi assim que ida e volta apareciam
-   * rotuladas iguais).
+   * The currency is the same on both: measured in the bank, no pair mixes
+   * currencies — an RT search is priced in the market of departure and both legs
+   * come out together. The field exists per journey anyway, so the front never has
+   * to inherit a currency from a level above (that is how outbound and return came
+   * out labelled the same).
    */
   /**
-   * NUMERIC volta do pg como STRING.
+   * NUMERIC comes back from pg as a STRING.
    *
-   * Sem coagir, `out.cash + in.cash` vira concatenação ("4921.00" + "7627.00" =
-   * "4921.007627.00"), o Math.round disso é NaN e o JSON serializa NaN como
-   * null — o total simplesmente sumia do card. O projeto já tropeçou nisso na
-   * comparação de preços (que virava lexicográfica); aqui o sintoma era outro.
+   * Without coercing, `out.cash + in.cash` becomes concatenation ("4921.00" +
+   * "7627.00" = "4921.007627.00"), Math.round of that is NaN and JSON serialises
+   * NaN as null — the total simply vanished from the card. The project already
+   * tripped on this in price comparison, which turned lexicographic.
    */
   private num(v: unknown): number | null {
     if (v == null) return null
@@ -99,9 +99,9 @@ export class FlightFaresService implements IFlightFaresService {
       pts:       this.num(c.best_pts_inbound),
       hybPts:    this.num(c.best_hyb_pts_inbound),
       hybCash:   this.num(c.best_hyb_cash_inbound),
-      // A volta é a ROTA INVERTIDA. `inbound.from/to` são a janela de DATAS da
-      // volta, não aeroportos — usá-los aqui punha "2026-09-25" no lugar do
-      // IATA, e só apareceu ao chamar a API de verdade.
+      // The return is the INVERTED ROUTE. `inbound.from/to` are the DATE window of
+      // the return, not airports — using them here put "2026-09-25" in place of the
+      // IATA code, and it only showed up when calling the real API.
       segments:  [{ origin: destination, destination: origin }],
     }]
   }

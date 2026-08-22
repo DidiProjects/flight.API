@@ -68,10 +68,10 @@ describe('AdminService leitura', () => {
 })
 
 /**
- * O que estes testes fecham: o reenvio tem que sair NO MESMO formato do último
- * e-mail que a rotina mandou. Escolher pelo tipo errado manda resumo do dia para
- * quem esperava alerta de target — e o operador só descobre pelo que chega na
- * caixa de entrada.
+ * What these tests close: a resend has to go out IN THE SAME format as the last
+ * e-mail the routine sent. Picking the wrong kind sends the daily summary to
+ * someone expecting a target alert — and the operator only finds out from what
+ * lands in the inbox.
  */
 describe('AdminService.resendLastNotification', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -142,9 +142,9 @@ describe('AdminService.resetRoutineAnalyses', () => {
 
   it('devolve o saldo do que zerou e do que foi preservado', async () => {
     const { svc, analysisRunsRepo, scrapingJobRepo } = makeService()
-    // @ts-expect-error fake parcial
+    // @ts-expect-error partial fake
     analysisRunsRepo.deleteExclusiveToRoutine = vi.fn().mockResolvedValue({ runs: 12, events: 40, running: 1, shared: 2 })
-    // @ts-expect-error fake parcial
+    // @ts-expect-error partial fake
     scrapingJobRepo.resetExclusiveToRoutine = vi.fn().mockResolvedValue({ reset: 5, running: 1, shared: 2 })
 
     const res = await svc.resetRoutineAnalyses('r1')

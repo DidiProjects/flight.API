@@ -61,9 +61,9 @@ const OWNER_EMAILS_BY_ROUTE = `
     )
 `
 
-// Janela de espalhamento do next_run_at na criação/revival, casada com a cadência
-// por proximidade — distribui o grid de datas ao longo do ciclo em vez de todas
-// vencerem juntas.
+// Spread window for next_run_at on creation/revival, matched to the proximity
+// cadence — it distributes the date grid across the cycle instead of having them
+// all come due together.
 const spreadWindow = (col: string) => `(CASE
   WHEN ${col} - CURRENT_DATE <= 45 THEN interval '1 hour'
   WHEN ${col} - CURRENT_DATE <= 90 THEN interval '3 hours'
@@ -83,9 +83,9 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   }
 
   async retireOrphans(): Promise<number> {
-    // Aposenta jobs sem rotina ativa: marca orphaned_at e PRESERVA o status da
-    // última execução (ex.: success). orphaned_at IS NULL no claimNextJob é o que
-    // tira o job do pool de despacho — não precisa virar 'dead'.
+    // Retires jobs with no active routine: marks orphaned_at and PRESERVES the
+    // status of the last run (e.g. success). orphaned_at IS NULL in claimNextJob is
+    // what takes the job out of the dispatch pool — it need not become 'dead'.
     const { rowCount } = await this.db.query(
       `UPDATE scraping_jobs j
           SET orphaned_at = NOW(), updated_at = NOW()
@@ -277,10 +277,10 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   }
 
   /**
-   * Jobs em voo de UMA companhia. É o que impede duas sessões automatizadas
-   * chegarem juntas no mesmo site a partir do mesmo IP: em 2026-08-20 todas as
-   * nove falhas da LATAM tiveram outra sessão da LATAM rodando em paralelo, e a
-   * única coleta que deu certo foi a que começou primeiro.
+   * In-flight jobs of ONE airline. This is what keeps two automated sessions from
+   * reaching the same site together from the same IP: on 2026-08-20 all nine LATAM
+   * failures had another LATAM session running in parallel, and the only collection
+   * that worked was the one that started first.
    */
   async countInFlightByAirline(airline: string): Promise<number> {
     const { rows } = await this.db.query<{ count: string }>(
@@ -290,7 +290,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return Number(rows[0]?.count ?? 0)
   }
 
-  // Segura o job sem penalidade: scraper saturado (503) não é falha do job.
+  // Holds the job with no penalty: a saturated scraper (503) is not a job failure.
   async deferJob(id: string, nextRunAt: Date): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs
@@ -308,8 +308,8 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [id, requestId])
   }
 
-  // Início real do scrape (telemetria job.started). A partir daqui o job conta como
-  // "rodando de fato" — antes disso estava só na fila do scraper.
+  // Real start of the scrape (job.started telemetry). From here the job counts as
+  // "actually running" — before that it was only in the scraper queue.
   async markStarted(requestId: string): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs
@@ -318,7 +318,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [requestId])
   }
 
-  // Renova o lease dos jobs que o worker declarou deter (heartbeat/snapshot).
+  // Renews the lease of the jobs the worker declared it holds (heartbeat/snapshot).
   async markHeartbeat(requestIds: string[]): Promise<void> {
     if (requestIds.length === 0) return
     await this.db.query(`
@@ -347,13 +347,13 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   }
 
   /**
-   * Falha declarada pelo próprio site da companhia.
+   * Failure declared by the airline site itself.
    *
-   * Não é culpa do job — é a busca da companhia que não respondeu — então não
-   * pode escalar para 'dead'. Mas também não pode ficar sem freio: o contador
-   * sobe para o backoff crescer, e para em `max_retries - 1` porque
-   * `claimNextJob` exige `retry_count < max_retries`; parar em `max_retries`
-   * deixaria o job preso para sempre, que é pior do que morto.
+   * Not the job's fault — it is the airline search that did not respond — so it
+   * must not escalate to 'dead'. But it cannot go unchecked either: the counter
+   * rises so the backoff grows, and stops at `max_retries - 1` because
+   * `claimNextJob` requires `retry_count < max_retries`; stopping at `max_retries`
+   * would leave the job stuck forever, which is worse than dead.
    */
   async markSiteError(id: string, error: string, nextRunAt: Date): Promise<void> {
     await this.db.query(`
@@ -376,8 +376,8 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [id, error])
   }
 
-  // Marca a intenção de cancelamento (entregue ao worker na reconexão se estiver
-  // offline). Auditoria + base do replay de cancel no snapshot.
+  // Records the cancellation intent (delivered to the worker on reconnect if it is
+  // offline). Audit trail plus the basis for the cancel replay in the snapshot.
   async setCancelRequested(requestId: string): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs SET cancel_requested_at = NOW(), updated_at = NOW()
@@ -385,9 +385,9 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [requestId])
   }
 
-  // Confirmação do cancelamento: o job volta a 'pending' com cooldown normal
-  // (reagendável). 'cancelled' é terminal só da EXECUÇÃO (analysis_runs); o job
-  // não morre. Cancelar NÃO é falha — retry_count não muda nem escala p/ 'dead' (§15.6).
+  // Cancellation confirmed: the job goes back to 'pending' with the normal cooldown
+  // (reschedulable). 'cancelled' is terminal for the RUN only (analysis_runs); the
+  // job does not die. Cancelling is NOT a failure — retry_count and 'dead' are untouched (§15.6).
   async releaseCancelled(requestId: string, nextRunAt: Date): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs
@@ -397,8 +397,8 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `, [requestId, nextRunAt])
   }
 
-  // Snapshot de todos os jobs relevantes para a visão Admin (estado + tempo de
-  // execução via running_since). Running primeiro, depois mais recentes.
+  // Snapshot of every job relevant to the Admin view (state + running time via
+  // running_since). Running first, then the most recent.
   async listForAdmin(limit = 200): Promise<AdminJobRow[]> {
     const { rows } = await this.db.query<AdminJobRow>(`
       SELECT j.*,
@@ -447,13 +447,13 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rowCount ?? 0
   }
 
-  // Reclama jobs 'running' por LEASE, não por relógio cego:
-  // - lost: o lease expirou (heartbeat parou, ou nunca chegou após a graça) →
-  //   worker morto/indisponível. NÃO é falha do job → volta a 'pending' sem
-  //   penalidade. Job ainda vivo na fila do worker continua heartbeatando e NÃO
-  //   é reclamado.
-  // - hung: ainda com lease, mas rodando além do teto absoluto (watchdog deveria
-  //   ter matado) → falha real: incrementa retry / vira 'dead' no limite.
+  // Reclaims 'running' jobs by LEASE, not by a blind clock:
+  // - lost: the lease expired (heartbeat stopped, or never arrived after the grace)
+  //   → worker dead/unavailable. NOT a job failure → back to 'pending' with no
+  //   penalty. A job still alive in the worker queue keeps heartbeating and is NOT
+  //   reclaimed.
+  // - hung: lease still held, but running past the absolute ceiling (the watchdog
+  //   should have killed it) → a real failure: increments retry / becomes 'dead' at the limit.
   async reclaimExpiredJobs(
     leaseTimeoutSec: number,
     graceSec: number,

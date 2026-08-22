@@ -18,29 +18,29 @@ export interface FlightFareRow {
   fare_hyb_pts: number | null
   fare_hyb_cash: number | null
   /**
-   * Valor em Real CONGELADO na coleta (017).
+   * Value in Real FROZEN at collection time (017).
    *
-   * Converter na leitura fazia a régua de 30 dias mudar com a cotação do dia e
-   * batia na API de câmbio a cada abertura de histórico. `null` quando não
-   * havia cotação confiável no momento — a linha existe, só não entra em soma
-   * de Real.
+   * Converting on read made the 30-day baseline move with the rate of the day and
+   * hit the exchange API on every history open. `null` when there was no
+   * trustworthy quote at the time — the row exists, it just does not enter
+   * sums in Real.
    */
   fare_cash_brl: number | null
   fare_hyb_cash_brl: number | null
-  /** Quantos BRL valia 1 unidade de `currency` na coleta. 1 se já era Real. */
+  /** How many BRL 1 unit of `currency` was worth at collection. 1 if already Real. */
   fx_rate: number | null
-  /** Data da COTAÇÃO usada, não a da coleta. */
+  /** Date of the QUOTE used, not of the collection. */
   fx_rate_date: string | null
-  /** Par de origem da tarifa. NULL = colhida numa busca one-way avulsa. */
+  /** Pair the fare came from. NULL = collected in a loose one-way search. */
   return_date: string | null
   /**
-   * Voo de IDA em cujo contexto esta volta foi precificada. NULL na ida e em
-   * qualquer tarifa one-way. É o vínculo 1-para-N.
+   * OUTBOUND flight in whose context this return was priced. NULL on the outbound
+   * and on any one-way fare. It is the 1-to-N link.
    */
   paired_outbound_flight: string | null
   /**
-   * Só na ida: as voltas dela existem mas uma limitação conhecida impede vê-las
-   * (login do TudoAzul em pontos). Par exibido sem total, sem alerta.
+   * Outbound only: its returns exist but a known limitation hides them (TudoAzul
+   * login on points). Pair displayed without a total, and no alert.
    */
   inbound_unavailable: boolean
   scraped_at: Date
@@ -79,19 +79,19 @@ export interface CurrentBest {
   best_hyb_cash: number | null
   scraped_at: Date | null
   /**
-   * Round-trip sem total porque a volta é indefinida (limitação conhecida da
-   * companhia). Distingue "a viagem não tem total" de "nada foi coletado" — a
-   * ida existe, ela só não é o preço da viagem.
+   * Round-trip with no total because the return is undefined (a known airline
+   * limitation). Tells "the trip has no total" from "nothing was collected" — the
+   * outbound exists, it is just not the price of the trip.
    */
   inbound_unavailable?: boolean
   /**
-   * Parcelas do melhor par, para exibir o total segregado em ida e volta.
+   * Parts of the best pair, to display the total split into outbound and return.
    *
-   * Cada dimensão traz as parcelas da SUA combinação vencedora — o par mais
-   * barato em dinheiro não é necessariamente o mais barato em pontos.
+   * Each dimension brings the parts of ITS winning combination — the cheapest pair
+   * in cash is not necessarily the cheapest in points.
    *
-   * Ficam nulas quando o total veio do bundle da companhia (preço único, sem
-   * divisão publicada) e em rotina one-way, que não tem par.
+   * They are null when the total came from the airline bundle (single price, no
+   * published split) and on a one-way routine, which has no pair.
    */
   best_cash_outbound?: number | null
   best_cash_inbound?: number | null
@@ -116,33 +116,33 @@ export interface IFlightFaresRepository {
   getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string, returnDate: string | null, maxAgeHours?: number): Promise<LatestFaresByDate[]>
   getLatestPairs(airline: string, origin: string, destination: string, outFrom: string, outTo: string, inFrom: string, inTo: string, maxAgeHours?: number): Promise<PairFareRow[]>
   getPriceHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
-  /** Com `inbound`, a régua é a distribuição dos TOTAIS de par; sem, a de tarifa avulsa. */
+  /** With `inbound`, the baseline is the distribution of pair TOTALS; without, of loose fares. */
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceHistory>
   getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<CurrentBest>
-  /** Com `inbound`, cada data de IDA traz o menor total de par daquele dia. */
+  /** With `inbound`, each OUTBOUND date carries the lowest pair total of that day. */
   getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceByDate[]>
-  /** Moeda já observada em tarifas coletadas para o trajeto/companhias (fonte primária da rotina). */
+  /** Currency already seen on fares collected for the route/airlines (primary source for the routine). */
   getKnownCurrency(airlines: string[], origin: string, destination: string): Promise<string | null>
   aggregateToDailyBucket(bucketDate: string): Promise<number>
   cleanupOlderThan(days: number): Promise<number>
 }
 
-/** Linha de tarifa colhida numa busca de PAR (ida-e-volta). */
+/** A fare row collected in a PAIR (round-trip) search. */
 export interface PairFareRow extends LatestFaresByDate {
   return_date: string
   origin: string
   destination: string
-  /** Execução que colheu o par. É a identidade do par: as duas pernas a compartilham. */
+  /** Run that collected the pair. It is the pair identity: both legs share it. */
   request_id: string
   /**
-   * Data de IDA do par. Vem da perna de ida — a de volta tem `flight_date`
-   * igual à data dela, então `flight_date` não serve para agrupar o par.
+   * OUTBOUND date of the pair. Comes from the outbound leg — the return has
+   * `flight_date` equal to its own date, so `flight_date` cannot group the pair.
    */
   pair_outbound_date: string
   flight_number: string | null
-  /** Ida que precificou esta volta. NULL na ida (e em volta de coleta antiga). */
+  /** Outbound that priced this return. NULL on the outbound (and on older collections). */
   paired_outbound_flight: string | null
-  /** Só na ida: volta indefinida por limitação conhecida (não é par corrompido). */
+  /** Outbound only: return undefined by a known limitation (not a corrupted pair). */
   inbound_unavailable: boolean
   bundle_cash: string | number | null
   bundle_pts: string | number | null

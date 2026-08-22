@@ -20,28 +20,28 @@ const envSchema = z.object({
 
   SCRAPE_INTERVAL_MS: z.coerce.number().default(300_000),
   SCRAPE_INTERVAL_JITTER_MS: z.coerce.number().default(60_000),
-  // Quantos jobs por companhia despachar a cada tick. ATENÇÃO: na prática isto é
-  // o nº de sessões Playwright SIMULTÂNEAS contra o mesmo site, do mesmo IP —
-  // valores altos = forte sinal de bot. Default conservador (1) para stealth;
-  // só aumente com concorrência por companhia/rotação de IP no scraper.
+  // How many jobs per airline to dispatch each tick. NOTE: in practice this is the
+  // number of SIMULTANEOUS Playwright sessions against the same site, from the same
+  // IP — high values are a strong bot signal. Conservative default (1) for stealth;
+  // only raise it with per-airline concurrency/IP rotation in the scraper.
   SCRAPE_DISPATCH_BATCH: z.coerce.number().int().positive().default(1),
-  // Teto de jobs em voo (≈ capacidade do scraper). A API não reivindica além disto
-  // — backpressure para não inflar a fila do scraper.
+  // Ceiling of in-flight jobs (≈ scraper capacity). The API claims no more than this
+  // — backpressure, so the scraper queue is not inflated.
   SCRAPE_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(6),
-  // Teto de jobs em voo POR COMPANHIA. Duas sessões automatizadas no mesmo site,
-  // do mesmo IP, ao mesmo tempo: em 2026-08-20 as nove falhas da LATAM tiveram
-  // outra sessão da LATAM em paralelo, e a única coleta que passou foi a que
-  // começou primeiro. Com o teto global em 6 e a fila do scraper em 2, limitar a
-  // 1 por companhia não reduz a vazão quando há rota de companhias diferentes —
-  // reduz só quando toda a fila é da mesma, que é exatamente o caso a evitar.
+  // Ceiling of in-flight jobs PER AIRLINE. Two automated sessions on the same site,
+  // from the same IP, at the same time: on 2026-08-20 all nine LATAM failures had
+  // another LATAM session in parallel, and the only collection that passed was the
+  // one that started first. With the global ceiling at 6 and the scraper queue at 2,
+  // limiting to 1 per airline does not cut throughput when routes span airlines — it
+  // cuts only when the whole queue is one airline, which is exactly the case to avoid.
   SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE: z.coerce.number().int().positive().default(1),
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
 
-  // Câmbio. O timeout é curto de propósito: o ciclo de avaliação não pode ficar
-  // preso num terceiro, e a mediana medida das duas APIs é ~120ms.
+  // Exchange. The timeout is short on purpose: the evaluation cycle cannot hang on a
+  // third party, and the measured median of both APIs is ~120ms.
   FX_TIMEOUT_MS: z.coerce.number().int().positive().default(3_000),
-  // Melhora mínima em Real para alertar quando a composição do preço mudou.
-  // Absorve ruído de câmbio; a composição idêntica já barra o caso comum.
+  // Minimum improvement in Real to alert when the price composition changed.
+  // Absorbs exchange noise; an identical composition already blocks the common case.
   FX_NOISE_MARGIN: z.coerce.number().min(0).max(0.5).default(0.01),
   SCRAPING_API_URL: z.string().url(),
   SCRAPING_API_KEY: z.string(),
@@ -67,7 +67,7 @@ const envSchema = z.object({
   GRAFANA_LOKI_USER:  z.string().optional(),
   GRAFANA_LOKI_TOKEN: z.string().optional(),
 
-  // Tempo real (WS hub ← workers, SSE → admin)
+  // Realtime (WS hub ← workers, SSE → admin)
   REALTIME_ENABLED: z.string().default('true'),
 })
 

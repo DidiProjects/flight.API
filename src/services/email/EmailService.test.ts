@@ -32,16 +32,16 @@ function params(offers: AirlineOfferPair[], fareType = 'cash'): FlightAlertEmail
   } as unknown as FlightAlertEmailParams
 }
 
-/** O HTML do primeiro e-mail enviado. */
+/** The HTML of the first e-mail sent. */
 const htmlEnviado = () => (sendMail.mock.calls[0]![0] as { html: string }).html
 
 describe('EmailService — moeda por perna', () => {
   beforeEach(() => sendMail.mockClear())
 
   it('cada perna aparece na moeda DELA', async () => {
-    // O caso Ryanair: a busca RT parte de Stansted e as duas pernas saem em
-    // libra, mas a rotina avulsa da volta sai em euro. Antes o e-mail usava uma
-    // moeda só para o par e rotulava uma das duas errado.
+    // The Ryanair case: the RT search leaves from Stansted and both legs come out in
+    // pounds, but the loose routine of the return comes out in euros. The e-mail used
+    // to use a single currency for the pair and labelled one of the two wrongly.
     await new EmailService(env).sendFlightAlert(params([{
       airline: 'ryanair',
       outbound: block({ currency: 'GBP', fareCash: 17.99, origin: 'STN', destination: 'DUB' }),
@@ -55,8 +55,8 @@ describe('EmailService — moeda por perna', () => {
   })
 
   it('o total do par é o CONVERTIDO, não a soma das pernas', async () => {
-    // £17,99 + €17,99 não é número. Quem soma é a avaliação, depois de
-    // converter — aqui só se exibe.
+    // £17.99 + €17.99 is not a number. Evaluation sums, after converting — here it
+    // is only displayed.
     await new EmailService(env).sendFlightAlert(params([{
       airline: 'ryanair',
       outbound: block({ currency: 'GBP', fareCash: 17.99 }),
@@ -66,7 +66,7 @@ describe('EmailService — moeda por perna', () => {
 
     const html = htmlEnviado()
     expect(html).toContain('245,50')
-    // 35,98 seria a soma crua das duas pernas — o número que não existe.
+    // 35.98 would be the raw sum of both legs — the number that does not exist.
     expect(html).not.toContain('35,98')
   })
 
@@ -93,8 +93,8 @@ describe('EmailService — moeda por perna', () => {
   })
 
   it('sem total, o par não inventa linha de total', async () => {
-    // É o caso do resumo agendado, que não passa pela avaliação e portanto não
-    // tem número convertido. Melhor omitir do que somar moedas.
+    // This is the scheduled summary, which does not go through evaluation and so has
+    // no converted number. Better to omit than to add currencies.
     await new EmailService(env).sendFlightAlert(params([{
       airline: 'ryanair',
       outbound: block({ currency: 'GBP', fareCash: 17.99 }),

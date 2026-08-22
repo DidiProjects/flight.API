@@ -13,7 +13,7 @@ vi.mock('../../utils/logger', () => ({
   logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) },
 }))
 
-/** Cotação fixa da libra, para os números do teste serem conferíveis à mão. */
+/** Fixed pound quote, so the test numbers can be checked by hand. */
 const GBP = 6.8
 const DATA = '2026-08-15'
 
@@ -91,23 +91,23 @@ describe('EvaluationService — alvo em Real', () => {
   const gravado = () => vi.mocked(alertRepo.recordNotified).mock.calls[0]![2]
 
   it('tarifa em libra é convertida antes de bater no alvo', async () => {
-    // £700 × 6,8 = R$4.760, dentro do alvo de R$5.000. Sem converter, 700 < 5000
-    // passaria como pechincha e o alerta sairia errado por quase 7x.
+    // £700 × 6.8 = R$4,760, inside the R$5,000 target. Unconverted, 700 < 5000
+    // would pass as a bargain and the alert would be wrong by almost 7x.
     await rodar(makeRoutine({ target_cash: 5000 }), [makeFare({ currency: 'GBP', fare_cash: 700 })])
 
     expect(gravado()[0]!.amount).toBe(4760)
   })
 
   it('tarifa em libra ACIMA do alvo depois de convertida não alerta', async () => {
-    // £800 × 6,8 = R$5.440 > R$5.000. No número cru, 800 < 5000 alertaria.
+    // £800 × 6.8 = R$5,440 > R$5,000. On the raw number, 800 < 5000 would alert.
     await rodar(makeRoutine({ target_cash: 5000 }), [makeFare({ currency: 'GBP', fare_cash: 800 })])
 
     expect(notifSvc.dispatchAlert).not.toHaveBeenCalled()
   })
 
   it('o mínimo entre companhias é escolhido em Real, não no número cru', async () => {
-    // £700 = R$4.760 é mais barato que R$4.900 — mas 700 < 4900 na comparação
-    // ingênua, e a rotina escolheria a libra pelo motivo errado.
+    // £700 = R$4,760 is cheaper than R$4,900 — but 700 < 4900 on the naive
+    // comparison, and the routine would pick the pound for the wrong reason.
     await rodar(makeRoutine({ target_cash: 6000, airlines: ['britishairways', 'latam'] }), [
       makeFare({ airline: 'britishairways', currency: 'GBP', fare_cash: 700 }),
       makeFare({ airline: 'latam', currency: 'BRL', fare_cash: 4900 }),
@@ -157,7 +157,7 @@ describe('EvaluationService — câmbio não é queda de preço', () => {
     fx = {
       toBrl: vi.fn(async (amount: number, currency: string) => {
         if (currency === 'BRL') return { amount, rate: 1, source: 'native' as const, rateDate: '2026-08-04', stale: false }
-        // Hoje a libra vale 6,8; quando o watermark foi gravado valia 6,83.
+        // The pound is worth 6.8 today; when the watermark was written it was 6.83.
         if (currency === 'GBP') return { amount: Math.round(amount * GBP * 100) / 100, rate: GBP, source: 'frankfurter' as const, rateDate: '2026-08-04', stale: false }
         return null
       }),
@@ -174,10 +174,10 @@ describe('EvaluationService — câmbio não é queda de preço', () => {
   }
 
   it('câmbio andou mas a companhia não mexeu no preço: NÃO alerta', async () => {
-    // O caso que motivou a mudança. A marca foi gravada em R$4.986 (£730 a
-    // 6,83); hoje os MESMOS £730 dão R$4.760. Sem a composição isso viraria
-    // "novo melhor preço" — e ainda derrubaria a marca, escondendo a queda real
-    // que viesse depois.
+    // The case that drove the change. The mark was written at R$4,986 (£730 at
+    // 6.83); today the SAME £730 gives R$4,760. Without the composition that would
+    // become a "new best price" — and would lower the mark too, hiding the real
+    // drop that came later.
     await rodar(
       [makeFare({ currency: 'GBP', fare_cash: 730 })],
       watermark(4986, [leg('GBP', 730)]),
@@ -188,8 +188,8 @@ describe('EvaluationService — câmbio não é queda de preço', () => {
   })
 
   it('a companhia baixou o preço de verdade: alerta', async () => {
-    // Mesma situação, £700 em vez de £730 — a composição mudou porque o PREÇO
-    // mudou, e é exatamente isso que deve alertar.
+    // Same situation, £700 instead of £730 — the composition changed because the
+    // PRICE changed, and that is exactly what should alert.
     await rodar(
       [makeFare({ currency: 'GBP', fare_cash: 700 })],
       watermark(4986, [leg('GBP', 730)]),
@@ -199,7 +199,7 @@ describe('EvaluationService — câmbio não é queda de preço', () => {
   })
 
   it('melhora abaixo da margem de ruído não alerta', async () => {
-    // R$4.960 contra marca de R$5.000 é 0,8%, dentro da margem de 1%.
+    // R$4,960 against a mark of R$5,000 is 0.8%, inside the 1% margin.
     await rodar(
       [makeFare({ currency: 'BRL', fare_cash: 4960 })],
       watermark(5000, [leg('BRL', 5000)]),
@@ -218,8 +218,8 @@ describe('EvaluationService — câmbio não é queda de preço', () => {
   })
 
   it('linha antiga sem composição mantém o comportamento por valor', async () => {
-    // Watermark gravado antes desta mudança tem `breakdown` null. Ele não pode
-    // parar de avaliar da noite para o dia.
+    // A watermark written before this change has `breakdown` null. It must not stop
+    // being evaluated overnight.
     await rodar(
       [makeFare({ currency: 'BRL', fare_cash: 4000 })],
       watermark(5000, null),

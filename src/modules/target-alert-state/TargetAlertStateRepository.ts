@@ -25,7 +25,7 @@ export class TargetAlertStateRepository implements ITargetAlertStateRepository {
       [routineId, fareType],
     )
     const map = new Map<string, WatermarkState>()
-    // NUMERIC volta do pg como string — coagir para Number.
+    // NUMERIC comes back from pg as a string — coerce to Number.
     for (const r of rows) {
       map.set(toDateStr(r.flight_date), {
         amount: Number(r.notified_amount),
@@ -43,9 +43,9 @@ export class TargetAlertStateRepository implements ITargetAlertStateRepository {
     const airlines   = entries.map((e) => e.airline)
     const breakdowns = entries.map((e) => JSON.stringify(e.breakdown))
 
-    // ON CONFLICT ... WHERE só atualiza (e só retorna) quando o preço novo é menor;
-    // linhas inseridas pela primeira vez também voltam no RETURNING. Assim o e-mail
-    // é montado a partir das datas que o banco confirmou como avançadas.
+    // ON CONFLICT ... WHERE only updates (and only returns) when the new price is
+    // lower; rows inserted for the first time also come back in RETURNING. That way
+    // the e-mail is built from the dates the database confirmed as advanced.
     const { rows } = await this.db.query<{ flight_date: string | Date }>(
       `INSERT INTO target_alert_state (routine_id, flight_date, fare_type, notified_amount, notified_airline, notified_breakdown)
        SELECT $1, d::date, $2, a::numeric, ai, bd::jsonb

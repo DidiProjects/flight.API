@@ -5,20 +5,20 @@ import { IExchangeRateProvider } from './providers/IExchangeRateProvider'
 const log = logger.child({ service: 'fx' })
 
 /**
- * Faixa de plausibilidade de uma taxa para BRL.
+ * Plausibility range of a rate against BRL.
  *
- * É a única proteção desta camada contra uma falha SILENCIOSA. As outras
- * estouram barulhento — timeout, schema inválido, host recusado. Uma cotação
- * absurda passa e vira e-mail de "preço caiu" sem ninguém perceber.
+ * It is the only protection this layer has against a SILENT failure. The others
+ * fail loudly — timeout, invalid schema, refused host. An absurd quote passes
+ * through and becomes a "price dropped" e-mail with nobody noticing.
  *
- * Os limites são folgados de propósito: não é para acertar o câmbio, é para
- * barrar 0, negativo, infinito e ordem de grandeza claramente errada (a libra a
- * 0,0068 em vez de 6,8, por exemplo, que é o erro clássico de escala).
+ * The bounds are deliberately loose: this is not about getting the rate right,
+ * it is about blocking 0, negatives, infinity and a clearly wrong order of
+ * magnitude (the pound at 0.0068 instead of 6.8, the classic scale error).
  */
 const MIN_RATE = 0.0001
 const MAX_RATE = 10_000
 
-/** Falhas seguidas antes de tirar um provedor de circulação. */
+/** Consecutive failures before a provider is taken out of rotation. */
 const BREAKER_THRESHOLD = 3
 const BREAKER_COOLDOWN_MS = 5 * 60_000
 
@@ -26,7 +26,7 @@ interface CacheEntry {
   rate: number
   rateDate: string
   source: ConvertedAmount['source']
-  /** O dia (YYYY-MM-DD) em que esta entrada foi buscada. */
+  /** The day (YYYY-MM-DD) on which this entry was fetched. */
   fetchedOn: string
 }
 
@@ -36,10 +36,10 @@ interface BreakerState {
 }
 
 /**
- * Conversão para Real, com cache de um dia e fallback entre provedores.
+ * Conversion to Real, with a one-day cache and fallback between providers.
  *
- * Não persiste nada: por decisão do plano da moeda, nenhum valor convertido vai
- * para o banco. O que sobrevive é a taxa em memória, válida pelo dia corrente.
+ * Persists nothing: by decision of the currency plan, no converted value goes to
+ * the bank. What survives is the in-memory rate, valid for the current day.
  */
 export class FxRateService implements IFxRateService {
   private readonly cache = new Map<string, CacheEntry>()
@@ -51,10 +51,10 @@ export class FxRateService implements IFxRateService {
   ) {}
 
   /**
-   * Conversão entre duas moedas, com o Real como pivô.
+   * Conversion between two currencies, with Real as the pivot.
    *
-   * Existe para o TOTAL do par sair na moeda da ida: a volta é trazida para a
-   * moeda de quem parte, e o total nunca some por as pernas divergirem.
+   * It exists so the pair TOTAL comes out in the outbound currency: the return is
+   * brought to the departure currency, and the total never vanishes on divergence.
    */
   async convert(amount: number, from: string, to: string): Promise<ConvertedAmount | null> {
     const origem  = from?.toUpperCase()
@@ -67,7 +67,7 @@ export class FxRateService implements IFxRateService {
     if (emBrl == null) return null
     if (destino === 'BRL') return emBrl
 
-    // Quanto vale 1 unidade do destino em Real — a razão dá a taxa direta.
+    // What 1 unit of the destination is worth in Real — the ratio gives the direct rate.
     const destinoEmBrl = await this.toBrl(1, destino)
     if (destinoEmBrl == null || destinoEmBrl.amount <= 0) return null
 
@@ -90,8 +90,8 @@ export class FxRateService implements IFxRateService {
       return null
     }
 
-    // Real não converte, e principalmente não vai à rede: o caminho mais comum
-    // do sistema não pode depender de um terceiro estar de pé.
+    // Real does not convert, and above all does not hit the network: the most
+    // common path of the system cannot depend on a third party being up.
     if (code === 'BRL') {
       return { amount, rate: 1, source: 'native', rateDate: this.today(), stale: false }
     }
@@ -108,8 +108,8 @@ export class FxRateService implements IFxRateService {
         const { rate, rateDate } = await provider.fetchToBrl(code)
 
         if (!Number.isFinite(rate) || rate < MIN_RATE || rate > MAX_RATE) {
-          // Taxa fora da faixa é tratada como FALHA do provedor, não como
-          // resposta: conta para o disjuntor e cai para o próximo.
+          // A rate outside the range is treated as a provider FAILURE, not as an
+          // answer: it counts towards the breaker and falls through to the next.
           this.recordFailure(provider.source)
           log.error({ provider: provider.source, currency: code, rate }, 'fx: cotação fora da faixa de sanidade, recusada')
           continue
@@ -126,8 +126,8 @@ export class FxRateService implements IFxRateService {
       }
     }
 
-    // Todos falharam. Cache velho é melhor que nada, mas quem chama precisa
-    // SABER que é velho — daí `stale`, e não um número que se passa por fresco.
+    // All failed. An old cache beats nothing, but the caller has to KNOW it is old
+    // — hence `stale`, and not a number passing itself off as fresh.
     if (cached) {
       log.warn({ currency: code, rateDate: cached.rateDate }, 'fx: todos os provedores falharam, usando cotação anterior')
       return this.applyRate(amount, cached, true)
@@ -137,10 +137,10 @@ export class FxRateService implements IFxRateService {
     return null
   }
 
-  /** Aplica uma taxa em cache ao valor. Nome distinto do `convert` público de propósito. */
+  /** Applies a cached rate to the value. Named apart from the public `convert` on purpose. */
   private applyRate(amount: number, entry: CacheEntry, stale: boolean): ConvertedAmount {
     return {
-      // Duas casas: é dinheiro, e comparar centavo fantasma com alvo seria ruído.
+    // Two decimals: it is money, and comparing a phantom cent with a target is noise.
       amount: Math.round(amount * entry.rate * 100) / 100,
       rate: entry.rate,
       source: entry.source,
@@ -157,7 +157,7 @@ export class FxRateService implements IFxRateService {
     const b = this.breakers.get(source)
     if (!b) return false
     if (b.openUntil > this.now().getTime()) return true
-    // Passou o descanso: zera e deixa tentar de novo.
+    // Rest is over: reset and let it try again.
     if (b.openUntil !== 0) this.breakers.set(source, { failures: 0, openUntil: 0 })
     return false
   }

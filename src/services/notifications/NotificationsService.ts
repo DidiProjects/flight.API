@@ -50,8 +50,8 @@ export class NotificationsService implements INotificationsService {
       const logEntries: Array<{ routine: RoutineRow; bestFare: LatestFaresByDate }> = []
 
       for (const routine of userRoutines) {
-        // Catch-up usa match `<=` no horário, então deduplicamos aqui: se já houve
-        // um envio 'scheduled' nas últimas 12h, não reenvia (frequência é diária).
+        // Catch-up matches `<=` on the time, so we de-duplicate here: if a
+        // 'scheduled' send already happened in the last 12h, do not resend (daily).
         if (await this.notifLogRepo.hasNotificationSinceHours(routine.id, 'scheduled', 12)) {
           continue
         }
@@ -147,9 +147,9 @@ export class NotificationsService implements INotificationsService {
     routine: RoutineRow,
     ownerEmail: string,
   ): Promise<{ section: DailyBestRoutineSection; bestFare: LatestFaresByDate } | null> {
-      // Round-trip lê PARES; one-way lê tarifa avulsa. Os dois mundos não se
-      // misturam: mostrar o preço de uma perna como se fosse o da viagem (ou
-      // o preço de par como se fosse avulso) seria mentira em ambos os casos.
+      // Round-trip reads PAIRS; one-way reads loose fares. The two worlds do not
+      // mix: showing the price of one leg as if it were the trip (or a pair price
+      // as if it were loose) would be a lie in either case.
       const isRoundTrip = routine.trip_type === 'round_trip'
       const allOutbound: LatestFaresByDate[] = []
       let bestPairInbound: LatestFaresByDate | null = null
@@ -226,13 +226,13 @@ export class NotificationsService implements INotificationsService {
         airlineOffers: [{
           airline:  bestOutbound.airline,
           outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
-          // A volta é a rota invertida.
+          // The return is the inverted route.
           return:   bestPairInbound
             ? this.fareToBlock(bestPairInbound, routine.destination, routine.origin)
             : null,
-          // O resumo agendado não passa pela avaliação, então não tem total
-          // convertido. Sem ele o e-mail mostra as pernas e omite a soma —
-          // que é o certo quando as moedas podem ser diferentes.
+          // The scheduled summary does not go through evaluation, so it has no
+          // converted total. Without it the e-mail shows the legs and omits the sum
+          // — which is right when the currencies may differ.
           total: null,
         }],
         unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
@@ -246,8 +246,8 @@ export class NotificationsService implements INotificationsService {
     routine: RoutineRow,
     outboundFares: LatestFaresByDate[],
     history: PriceHistory,
-    // Round-trip: perna de volta que fecha o par de cada data de ida. O e-mail
-    // exibe o par da headline; one-way não passa nada e o card segue igual.
+    // Round-trip: the return leg that closes the pair of each outbound date. The
+    // e-mail shows the headline pair; one-way passes nothing and the card is unchanged.
     inboundByOutboundDate?: Map<string, LatestFaresByDate>,
     totalsByDate?: Map<string, AlertTotal>,
   ): Promise<void> {
@@ -268,8 +268,8 @@ export class NotificationsService implements INotificationsService {
       })),
     )
 
-    // Headline = oferta mais barata; empate de preço → tarifa coletada mais
-    // recentemente (scraped_at). O histórico (% abaixo da média) é dela.
+    // Headline = cheapest offer; a price tie breaks by the most recently scraped
+    // fare (scraped_at). The history (% below average) belongs to it.
     const headline = outboundFares.reduce((best, f) => {
       const fv = this.fareAmount(f, routine.priority) ?? Infinity
       const bv = this.fareAmount(best, routine.priority) ?? Infinity
@@ -279,20 +279,20 @@ export class NotificationsService implements INotificationsService {
     })
     const historyNote = this.buildHistoryNote(headline, history, routine.priority)
 
-    // Apenas UMA tarifa por rotina no email: a headline. As demais datas que
-    // avançaram já foram gravadas no watermark (target_alert_state) pelo
-    // EvaluationService — só não são exibidas aqui.
+    // Only ONE fare per routine in the e-mail: the headline. The other dates that
+    // advanced were already written to the watermark (target_alert_state) by
+    // EvaluationService — they are simply not displayed here.
     const inboundOfHeadline = inboundByOutboundDate?.get(toDateStr(headline.flight_date)) ?? null
 
     const airlineOffers: AirlineOfferPair[] = [{
       airline:  headline.airline,
       outbound: this.fareToBlock(headline, routine.origin, routine.destination),
-      // A volta é a rota invertida.
+      // The return is the inverted route.
       return:   inboundOfHeadline
         ? this.fareToBlock(inboundOfHeadline, routine.destination, routine.origin)
         : null,
-      // O total vem PRONTO da avaliação — é o número que disparou o alerta.
-      // Recalcular aqui somando as pernas somaria libra com euro.
+      // The total comes READY from evaluation — it is the number that fired the
+      // alert. Recomputing it here by summing the legs would add pounds to euros.
       total: inboundOfHeadline ? (totalsByDate?.get(toDateStr(headline.flight_date)) ?? null) : null,
     }]
 
@@ -352,8 +352,8 @@ export class NotificationsService implements INotificationsService {
     return {
       flightNumber:  '',
       date:          toDateStr(fare.flight_date),
-      // A moeda é DA PERNA. Herdar do par era o que fazia a volta em real
-      // aparecer rotulada em libra.
+      // The currency belongs to the LEG. Inheriting it from the pair is what made a
+      // return in Real show up labelled in pounds.
       currency:      fare.currency ?? '',
       origin,
       departureTime: fare.departure_time ?? '',
@@ -369,8 +369,8 @@ export class NotificationsService implements INotificationsService {
   }
 
   private fareAmount(fare: LatestFaresByDate, priority: string): number | null {
-    // NUMERIC volta do pg como string — coagir para Number, senão a comparação
-    // do bestFare vira lexicográfica ("1076.00" < "652.00" === true).
+    // NUMERIC comes back from pg as a string — coerce to Number, otherwise the
+    // bestFare comparison turns lexicographic ("1076.00" < "652.00" === true).
     const raw =
       priority === 'cash' ? fare.fare_cash :
       priority === 'pts'  ? fare.fare_pts :
