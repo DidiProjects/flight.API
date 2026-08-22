@@ -15,35 +15,35 @@ import { IncompleteRoundTripError } from '../../utils/errors'
 
 const log = logger.child({ service: 'evaluation' })
 
-// Tarifas mais velhas que isso são consideradas obsoletas e não geram alerta.
-// Bem acima do maior intervalo de re-scraping (12h) para não suprimir alertas legítimos.
+// Fares older than this are stale and raise no alert. Well above the longest
+// re-scraping interval (12h) so legitimate alerts are never suppressed.
 const MAX_FARE_AGE_HOURS = 48
 
-/** O par vencedor de uma data de ida, com a composição original das duas pernas. */
+/** The winning pair of an outbound date, with the original composition of both legs. */
 interface PairChoice {
   outbound: LatestFaresByDate
   inbound: LatestFaresByDate
   total: number
   breakdown: PriceBreakdown[]
-  /** Alguma das duas pernas foi convertida, e com que cotação. */
+  /** Was either leg converted, and at what rate. */
   converted: boolean
   rateDate: string | null
 }
 
 /**
- * Uma tarifa pronta para comparar.
+ * A fare ready to compare.
  *
- * `value` está na unidade do alvo: BRL em rotina `cash` (convertido quando a
- * companhia cobrou noutra moeda), pontos em `pts` e `hyb`. `breakdown` guarda o
- * que a companhia REALMENTE cobrou, na moeda dela — é o que o watermark usa
- * para saber se o preço mudou ou se foi só o câmbio.
+ * `value` is in the target unit: BRL on a `cash` routine (converted when the
+ * airline charged in another currency), points on `pts` and `hyb`. `breakdown`
+ * holds what the airline REALLY charged, in its own currency — that is what the
+ * watermark uses to tell a price change from an exchange rate change.
  */
 interface Comparable {
   value: number
-  /** Só em `hyb`: a parte em dinheiro, já em BRL. */
+  /** Only on `hyb`: the cash part, already in BRL. */
   hybCashBrl: number | null
   breakdown: PriceBreakdown
-  /** Houve conversão? E com que cotação? É o que o e-mail precisa dizer. */
+  /** Was there a conversion, and at what rate? The e-mail has to say so. */
   converted: boolean
   rateDate: string | null
 }
@@ -71,9 +71,9 @@ export class EvaluationService implements IEvaluationService {
     private readonly notifSvc: INotificationsService,
     private readonly fx: IFxRateService,
     /**
-     * Margem que absorve ruído de câmbio quando a composição do preço muda por
-     * pouco. A composição idêntica já barra o caso comum (§5.6 do plano); esta
-     * é a rede para variação de centavo.
+     * Margin that absorbs exchange noise when the price composition shifts by a
+     * hair. An identical composition already blocks the common case (§5.6 of the
+     * plan); this is the net for cent-level drift.
      */
     private readonly fxNoiseMargin = 0.01,
   ) {}
@@ -159,16 +159,16 @@ export class EvaluationService implements IEvaluationService {
    * request to repeat.
    */
   private async offersInTarget(routine: RoutineRow): Promise<TargetOffers | null> {
-    // 1-2. Melhor oferta dentro do alvo por data de ida. Em round_trip a oferta
-    //      da data é o PAR (ida + volta) e o alvo é comparado contra o total.
+    // 1-2. Best offer within target per outbound date. On round_trip the offer of
+    //      the date is the PAIR (outbound + inbound) and target compares to the total.
     let inboundByDate: Map<string, LatestFaresByDate> | undefined
     let bestByDate: Map<string, LatestFaresByDate>
-    // A composição original do preço de cada data — o que a companhia cobrou,
-    // sem conversão. É ela que diz se houve queda ou se foi só o câmbio.
+    // Original composition of each date price — what the airline charged, with no
+    // conversion. It is what tells a real drop from a moved exchange rate.
     let breakdownByDate: Map<string, PriceBreakdown[]>
-    // Valor que a data vale para o alerta: a perna (one-way) ou o total do par (RT).
+    // What the date is worth to the alert: the leg (one-way) or the pair total (RT).
     let amountByDate: Map<string, number>
-    // Só em round_trip: o total já convertido, para o e-mail não somar moedas.
+    // Round_trip only: the total already converted, so the e-mail adds no currencies.
     let totalsByDate: Map<string, AlertTotal> | undefined
 
     if (routine.trip_type === 'round_trip') {
@@ -178,8 +178,8 @@ export class EvaluationService implements IEvaluationService {
       inboundByDate   = new Map([...pairs].map(([date, p]) => [date, p.inbound]))
       amountByDate    = new Map([...pairs].map(([date, p]) => [date, p.total]))
       breakdownByDate = new Map([...pairs].map(([date, p]) => [date, p.breakdown]))
-      // O total do par, pronto para o e-mail: quem soma é aqui, depois de
-      // converter. Somar as pernas lá na frente somaria libra com euro.
+      // The pair total, ready for the e-mail: summing happens here, after
+      // converting. Summing further down would add pounds to euros.
       totalsByDate = new Map([...pairs].map(([date, p]) => [date, {
         amount: p.total,
         currency: routine.priority === 'cash' ? 'BRL' : 'PTS',
@@ -195,8 +195,8 @@ export class EvaluationService implements IEvaluationService {
           routine.destination,
           toDateStr(routine.outbound_start),
           toDateStr(routine.outbound_end),
-          // Rotina one-way só enxerga tarifa avulsa. Tarifa colhida numa busca
-          // ida-e-volta é preço de par e não vale como one-way.
+          // A one-way routine only sees loose fares. A fare collected in a
+          // round-trip search is a pair price and does not count as one-way.
           null,
           MAX_FARE_AGE_HOURS,
         )
@@ -216,21 +216,21 @@ export class EvaluationService implements IEvaluationService {
   }
 
   private async evaluateRoutine(routine: RoutineRow): Promise<void> {
-    // Só alerta quem optou pelo modo 'target'.
+    // Only routines on 'target' mode alert.
     if (!routine.notification_modes.includes('target')) return
 
     const offersFound = await this.offersInTarget(routine)
     if (!offersFound) return
     const { bestByDate, inboundByDate, amountByDate, breakdownByDate, totalsByDate } = offersFound
 
-    // 3. Comparar cada data com seu watermark (melhor preço já alertado para ela).
+    // 3. Compare each date with its watermark (best price already alerted for it).
     const fareType = routine.priority
     const watermarks = await this.alertStateRepo.getWatermarks(routine.id, fareType)
 
-    // Piso de preço da rotina: o menor valor já alertado em QUALQUER data. Datas
-    // novas que entram no alvo com preço igual/pior que esse piso seguem sendo
-    // gravadas (watermark por data intacto), mas NÃO disparam e-mail — só
-    // notificamos quando a rotina bate um novo recorde de preço.
+    // Price floor of the routine: the lowest value ever alerted on ANY date. New
+    // dates entering target at or above that floor are still recorded (per-date
+    // watermark intact) but send NO e-mail — we only notify when the routine
+    // breaks its own record.
     const routineFloor = watermarks.size
       ? Math.min(...[...watermarks.values()].map((w) => w.amount))
       : Infinity
@@ -241,26 +241,26 @@ export class EvaluationService implements IEvaluationService {
       const breakdown = breakdownByDate.get(date)!
       const prev = watermarks.get(date)
 
-      // Primeira oferta no alvo para a data: sempre candidata.
+      // First offer within target for the date: always a candidate.
       if (prev == null) {
         candidates.push({ flightDate: date, amount, fare, breakdown })
         continue
       }
 
-      // A companhia cobra exatamente o mesmo, nas mesmas moedas: o que mudou foi
-      // a cotação. Não é queda de preço e não pode derrubar o watermark.
+      // The airline charges exactly the same, in the same currencies: what moved
+      // was the rate. That is not a price drop and cannot lower the watermark.
       if (this.sameBreakdown(prev.breakdown, breakdown)) continue
 
-      // Composição diferente: compara em Real, com a margem que absorve o
-      // centavo de ruído.
+      // Different composition: compare in Real, with the margin that absorbs the
+      // cent of noise.
       if (amount < prev.amount * (1 - this.fxNoiseMargin)) {
         candidates.push({ flightDate: date, amount, fare, breakdown })
       }
     }
     if (candidates.length === 0) return
 
-    // 4. Upsert monotônico atômico → só as datas que o banco confirmou como avançadas
-    //    (à prova de corrida entre ciclos sobrepostos, sem cooldown por tempo).
+    // 4. Atomic monotonic upsert → only the dates the database confirmed as
+    //    advanced (race-proof across overlapping cycles, no time-based cooldown).
     const advanced = await this.alertStateRepo.recordNotified(
       routine.id,
       fareType,
@@ -270,11 +270,11 @@ export class EvaluationService implements IEvaluationService {
     )
     if (advanced.size === 0) return
 
-    // 5. Ofertas das datas que avançaram, da mais barata para a mais cara.
-    //    Empate de preço → tarifa coletada mais recentemente (scraped_at). Esse é
-    //    o MESMO critério que o dispatchAlert usa para escolher a headline, então
-    //    offers[0] é provadamente a tarifa que o e-mail renderiza — e o histórico
-    //    (passo 7) é calculado para ela, sem divergência entre card e nota.
+    // 5. Offers of the dates that advanced, cheapest first. Price ties break by
+    //    the most recently scraped fare (scraped_at). That is the SAME criterion
+    //    dispatchAlert uses to pick the headline, so offers[0] is provably the
+    //    fare the e-mail renders — and history (step 7) is computed for it, with
+    //    no divergence between card and note.
     const offers = candidates
       .filter((c) => advanced.has(c.flightDate))
       .sort((a, b) =>
@@ -283,10 +283,10 @@ export class EvaluationService implements IEvaluationService {
       )
     if (offers.length === 0) return
 
-    // 6. Gate de recorde por rotina. As datas que avançaram já foram gravadas no
-    //    watermark por data (passo 4, histórico intacto), mas só mandamos e-mail
-    //    se a oferta mais barata bater o piso da rotina. Assim datas novas no
-    //    mesmo preço deixam de empilhar um e-mail por ciclo.
+    // 6. Per-routine record gate. The dates that advanced are already written to
+    //    the per-date watermark (step 4, history intact), but the e-mail only
+    //    goes out if the cheapest offer beats the routine floor. That stops new
+    //    dates at the same price from stacking one e-mail per cycle.
     const headline = offers[0]
     if (headline.amount >= routineFloor) {
       log.info({
@@ -301,7 +301,7 @@ export class EvaluationService implements IEvaluationService {
       return
     }
 
-    // 7. Histórico (% abaixo da média 30d) para a oferta-headline (a mais barata).
+    // 7. History (% below the 30d average) for the headline offer (the cheapest).
     const history = await this.flightFaresRepo.getPriceHistory(
       headline.fare.airline,
       routine.origin,
@@ -309,25 +309,25 @@ export class EvaluationService implements IEvaluationService {
       headline.flightDate,
     )
 
-    // One-way chama com a assinatura original (sem o 4º argumento) para não
-    // mudar nada no caminho que já existia.
+    // One-way calls with the original signature (no 4th argument) so nothing
+    // changes on the path that already existed.
     const fares = offers.map((o) => o.fare)
     if (inboundByDate) await this.notifSvc.dispatchAlert(routine, fares, history, inboundByDate, totalsByDate)
     else await this.notifSvc.dispatchAlert(routine, fares, history)
   }
 
   /**
-   * Melhor par (ida, volta) por data de ida, para rotinas round_trip.
+   * Best (outbound, inbound) pair per outbound date, for round_trip routines.
    *
-   * Decisões de produto (2026-07-24):
-   *  · as duas pernas na MESMA companhia — só assim o desconto RT é identificável;
-   *  · par só vale com a MESMA moeda nas duas pernas — sem conversão de câmbio;
-   *  · volta no máximo 3 meses depois da ida (`isValidRoundTripPair`);
-   *  · companhia que voltou com só uma das pernas é descartada e reportada.
+   * Product decisions (2026-07-24):
+   *  · both legs on the SAME airline — only then is the RT discount identifiable;
+   *  · a pair only counts with the SAME currency on both legs — no conversion;
+   *  · inbound at most 3 months after the outbound (`isValidRoundTripPair`);
+   *  · an airline that returned only one leg is discarded and reported.
    *
-   * A célula do watermark continua sendo a data de IDA: cada data de ida carrega
-   * o melhor total válido que ela consegue fechar. Assim o alerta segue com uma
-   * linha por data e o `routineFloor` continua valendo sem mudança de schema.
+   * The watermark cell stays the OUTBOUND date: each outbound date carries the
+   * best valid total it can close. The alert keeps one line per date and
+   * `routineFloor` still holds with no schema change.
    */
   private async bestPairsByOutboundDate(
     routine: RoutineRow,
@@ -343,10 +343,10 @@ export class EvaluationService implements IEvaluationService {
       )
       if (rows.length === 0) continue
 
-      // Agrupa pela EXECUÇÃO: as duas pernas do par saem da mesma busca RT e
-      // compartilham request_id. Agrupar por flight_date separava as pernas em
-      // grupos diferentes (a volta carrega a data DELA) e todo par real caía
-      // como incompleto.
+      // Group by RUN: both legs of the pair come from the same RT search and
+      // share request_id. Grouping by flight_date split the legs into different
+      // groups (the inbound carries ITS date) and every real pair fell through
+      // as incomplete.
       const byPair = new Map<string, PairFareRow[]>()
       for (const r of rows) {
         const list = byPair.get(r.request_id)
@@ -356,15 +356,15 @@ export class EvaluationService implements IEvaluationService {
 
       for (const legs of byPair.values()) {
         const outDate = toDateStr(legs[0].pair_outbound_date)
-        // Só para log: identifica o par nas mensagens de par incompleto.
+        // Log only: identifies the pair in incomplete-pair messages.
         const key = `${outDate}|${toDateStr(legs[0].return_date)}`
         const outbound = legs.filter((l) => !l.is_return)
         const inbound = legs.filter((l) => l.is_return)
 
-        // Volta indefinida por limitação conhecida: a volta EXISTE, a companhia
-        // só não deixa vê-la (em pontos a Azul exige login do TudoAzul). Não é
-        // dado corrompido, então não reporta — mas também não vira total: se a
-        // volta é desconhecida, o preço da ida não é o preço da viagem.
+        // Inbound undefined by a known limitation: the return EXISTS, the airline
+        // just will not show it (on points Azul requires a TudoAzul login). Not
+        // corrupted data, so nothing is reported — but no total either: if the
+        // return is unknown, the outbound price is not the trip price.
         if (inbound.length === 0 && outbound.length > 0 && outbound.every((o) => o.inbound_unavailable)) {
           log.info(
             { routineId: routine.id, airline, pair: key },
@@ -373,7 +373,7 @@ export class EvaluationService implements IEvaluationService {
           continue
         }
 
-        // Par que voltou com uma perna só é dado corrompido, não oferta barata.
+        // A pair that came back with one leg is corrupted data, not a cheap offer.
         if (outbound.length === 0 || inbound.length === 0) {
           const missingLeg = outbound.length === 0 ? 'outbound' : 'inbound'
           log.error(
@@ -383,23 +383,23 @@ export class EvaluationService implements IEvaluationService {
           continue
         }
 
-        // A guarda de "moedas diferentes entre as pernas" saiu daqui: ela existia
-        // porque não havia conversão, e descartava justamente o par legítimo em
-        // que a companhia cobra cada perna no mercado dela. Com as duas pernas
-        // em Real, a soma passa a valer.
+        // The "different currencies between legs" guard was removed: it existed
+        // because there was no conversion, and it discarded exactly the legitimate
+        // pair where the airline charges each leg in its own market. With both
+        // legs in Real, the sum holds.
 
         for (const out of outbound) {
           const outCmp = await this.comparable(out, routine, 'outbound')
           if (outCmp == null) continue
           const outValue = outCmp.value
 
-          // As voltas desta ida — e só elas. Uma volta foi precificada NO
-          // CONTEXTO de uma ida: cruzar com outra inventaria um par que a
-          // companhia nunca ofereceu (e é justamente onde o desconto vive).
+          // The inbounds of THIS outbound, and only those. An inbound was priced
+          // IN THE CONTEXT of one outbound: crossing it with another would invent
+          // a pair the airline never offered (and that is where the discount lives).
           const mine = this.inboundsFor(out, inbound)
           if (mine.length === 0) {
-            // O par tem voltas, mas nenhuma é desta ida. Se a limitação é
-            // conhecida, tolera em silêncio; senão é dado corrompido.
+            // The pair has inbounds, but none for this outbound. If the limitation
+            // is known, tolerate silently; otherwise it is corrupted data.
             if (out.inbound_unavailable) {
               log.info(
                 { routineId: routine.id, airline, pair: key, outboundFlight: out.flight_number },
@@ -419,15 +419,15 @@ export class EvaluationService implements IEvaluationService {
             if (inCmp == null) continue
             const inValue = inCmp.value
 
-            // Preço do par: o bundle da cia quando veio, senão a soma das pernas
-            // daquela mesma busca RT. Nunca mistura com tarifa avulsa.
+            // Pair price: the airline bundle when it came, else the sum of the legs
+            // from that same RT search. Never mixed with a loose fare.
             const bundle = this.bundleValue(out, routine)
             const total = bundle ?? outValue + inValue
             if (!this.totalInTarget(total, routine, outCmp, inCmp)) continue
 
             const cur = best.get(outDate)
             if (cur == null || total < cur.total) {
-              // A composição do PAR: as duas pernas como a companhia cobrou.
+              // Composition of the PAIR: both legs as the airline charged them.
               best.set(outDate, {
                 outbound: out, inbound: inb, total,
                 breakdown: [outCmp.breakdown, inCmp.breakdown],
@@ -444,12 +444,12 @@ export class EvaluationService implements IEvaluationService {
   }
 
   /**
-   * Voltas que pertencem a esta ida.
+   * Inbounds that belong to this outbound.
    *
-   * O scraper carimba `paired_outbound_flight` em cada volta com o número do voo
-   * de ida que a precificou. Coleta anterior a esse carimbo não tem o vínculo:
-   * nesse caso cai no comportamento antigo (todas as voltas do par), senão as
-   * tarifas já no banco parariam de ser avaliadas da noite para o dia.
+   * The scraper stamps `paired_outbound_flight` on each inbound with the outbound
+   * flight number that priced it. Collection older than that stamp has no link:
+   * it falls back to the old behaviour (every inbound of the pair), otherwise the
+   * fares already in the bank would stop being evaluated overnight.
    */
   private inboundsFor(out: PairFareRow, inbound: PairFareRow[]): PairFareRow[] {
     const linked = inbound.filter((i) => i.paired_outbound_flight != null)
@@ -457,7 +457,7 @@ export class EvaluationService implements IEvaluationService {
     return linked.filter((i) => i.paired_outbound_flight === out.flight_number)
   }
 
-  /** Total do par cobrado pela companhia (bundle), na dimensão de preço da rotina. */
+  /** Pair total charged by the airline (bundle), in the price dimension of the routine. */
   private bundleValue(fare: PairFareRow, routine: RoutineRow): number | null {
     const raw =
       routine.priority === 'cash' ? fare.bundle_cash :
@@ -468,9 +468,9 @@ export class EvaluationService implements IEvaluationService {
   }
 
   /**
-   * Alvo do par: em round_trip o usuário mira o preço da VIAGEM, então o total
-   * das duas pernas é comparado com o target (com a mesma margem do one-way).
-   * No modo híbrido as duas dimensões precisam caber somadas.
+   * Pair target: on round_trip the user aims at the TRIP price, so the total of
+   * both legs is compared against the target (with the same margin as one-way).
+   * On hybrid both dimensions must fit once summed.
    */
   private totalInTarget(
     total: number,
@@ -483,8 +483,8 @@ export class EvaluationService implements IEvaluationService {
     if (routine.priority === 'pts')  return routine.target_pts != null && total <= routine.target_pts * t
     if (routine.priority === 'hyb') {
       if (routine.target_hyb_pts == null || routine.target_hyb_cash == null) return false
-      // As partes em dinheiro já vêm em Real: somar libra com euro daria número
-      // sem significado.
+      // The cash parts already arrive in Real: adding pounds to euros would give
+      // a number with no meaning.
       if (out.hybCashBrl == null || inb.hybCashBrl == null) return false
       const cashTotal = out.hybCashBrl + inb.hybCashBrl
       return total <= routine.target_hyb_pts * t && cashTotal <= routine.target_hyb_cash * t
@@ -493,12 +493,12 @@ export class EvaluationService implements IEvaluationService {
   }
 
   /**
-   * Melhor tarifa dentro do alvo por data.
+   * Best fare within target per date.
    *
-   * Colapsa companhias — o usuário quer o melhor preço da data, a companhia é
-   * detalhe do e-mail. E como as companhias de uma mesma rotina podem cobrar em
-   * moedas diferentes, o mínimo só faz sentido depois da conversão: comparar
-   * £730 com R$4.900 escolheria a libra por ser "menor".
+   * Collapses airlines — the user wants the best price of the date, the airline
+   * is a detail of the e-mail. And since airlines on the same routine may charge
+   * in different currencies, the minimum only makes sense after conversion:
+   * comparing £730 with R$4,900 would pick the pound for being "smaller".
    */
   private async bestInTargetByDate(
     fares: LatestFaresByDate[],
@@ -516,7 +516,7 @@ export class EvaluationService implements IEvaluationService {
     return best
   }
 
-  /** O valor (já em Real, quando é dinheiro) cabe no alvo da rotina? */
+  /** Does the value (already in Real, when cash) fit the routine target? */
   private meetsTarget(cmp: Comparable, routine: RoutineRow): boolean {
     const t = 1 + routine.margin
     if (routine.priority === 'cash') return routine.target_cash != null && cmp.value <= routine.target_cash * t
@@ -530,8 +530,8 @@ export class EvaluationService implements IEvaluationService {
   }
 
   private fareValue(fare: LatestFaresByDate, routine: RoutineRow): number | null {
-    // NUMERIC volta do pg como string — coagir para Number, senão a comparação
-    // vira lexicográfica ("1076.00" < "652.00" === true).
+    // NUMERIC comes back from pg as a string — coerce to Number, otherwise the
+    // comparison turns lexicographic ("1076.00" < "652.00" === true).
     const raw =
       routine.priority === 'cash' ? fare.fare_cash :
       routine.priority === 'pts'  ? fare.fare_pts :
@@ -541,16 +541,16 @@ export class EvaluationService implements IEvaluationService {
   }
 
   /**
-   * A tarifa pronta para comparar, com dinheiro já em Real.
+   * The fare ready to compare, with cash already in Real.
    *
-   * O alvo da rotina é sempre em Real; a companhia cobra na moeda do mercado
-   * dela. Sem esta conversão, £730 seria comparado com um alvo de R$5.000 e
-   * passaria como pechincha.
+   * The routine target is always in Real; the airline charges in the currency of
+   * its market. Without this conversion, £730 would be compared against a target
+   * of R$5,000 and pass as a bargain.
    *
-   * Pontos NÃO convertem: `PTS` é unidade do programa de fidelidade, não moeda.
+   * Points do NOT convert: `PTS` is a loyalty programme unit, not a currency.
    *
-   * `null` quando não há cotação confiável — o par sai do ciclo e volta no
-   * próximo. Alertar com número duvidoso é o único desfecho inaceitável.
+   * `null` when there is no trustworthy rate — the pair leaves the cycle and
+   * returns next time. Alerting on a doubtful number is the one unacceptable outcome.
    */
   private async comparable(
     fare: LatestFaresByDate,
@@ -561,8 +561,8 @@ export class EvaluationService implements IEvaluationService {
     if (raw == null) return null
 
     const currency = fare.currency ?? null
-    // A composição guarda o que a companhia cobrou, sem conversão: é a
-    // impressão digital do preço entre um ciclo e outro.
+    // The composition holds what the airline charged, unconverted: it is the
+    // fingerprint of the price from one cycle to the next.
     const breakdown: PriceBreakdown = { direction, currency: currency ?? 'PTS', amount: raw }
 
     if (routine.priority === 'pts') {
@@ -582,7 +582,7 @@ export class EvaluationService implements IEvaluationService {
       }
     }
 
-    // hyb: a dimensão comparada é pontos; a parte em dinheiro também vira Real.
+    // hyb: the compared dimension is points; the cash part also becomes Real.
     if (fare.fare_hyb_cash == null || currency == null) return null
     const conv = await this.fx.toBrl(Number(fare.fare_hyb_cash), currency)
     if (conv == null) {
@@ -596,12 +596,12 @@ export class EvaluationService implements IEvaluationService {
   }
 
   /**
-   * O preço mudou de verdade, ou só o câmbio andou?
+   * Did the price really change, or did the exchange rate just move?
    *
-   * Composição idêntica = a companhia cobra exatamente o mesmo, nas mesmas
-   * moedas. Qualquer diferença no valor convertido veio da cotação, e anunciar
-   * isso como "novo melhor preço" seria mentira — além de derrubar o watermark
-   * e esconder a queda real que viesse depois.
+   * Identical composition = the airline charges exactly the same, in the same
+   * currencies. Any difference in the converted value came from the rate, and
+   * announcing that as a "new best price" would be a lie — besides lowering the
+   * watermark and hiding the real drop that came later.
    */
   private sameBreakdown(a: PriceBreakdown[] | null, b: PriceBreakdown[]): boolean {
     if (a == null || a.length !== b.length) return false

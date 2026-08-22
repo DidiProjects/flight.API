@@ -83,9 +83,9 @@ export class RoutinesRepository implements IRoutinesRepository {
 
   async findActiveForScheduled(currentTime: string): Promise<RoutineRow[]> {
     const { rows } = await this.db.query<RoutineRow>(
-      // <= (e não =) para dar catch-up: se o tick do minuto exato foi perdido,
-      // a rotina ainda é pega num tick posterior do mesmo dia. A deduplicação
-      // (já enviado hoje) fica a cargo do NotificationsService.
+      // <= (and not =) to allow catch-up: if the tick of the exact minute was missed,
+      // the routine is still picked up on a later tick of the same day. De-duplication
+      // (already sent today) is left to NotificationsService.
       `${selectWithAirlines(`WHERE r.is_active = true
          AND 'scheduled' = ANY(r.notification_modes)
          AND to_char(r.scheduled_time, 'HH24:MI') <= $1`)}`,
@@ -154,9 +154,9 @@ export class RoutinesRepository implements IRoutinesRepository {
     const values: unknown[] = []
     let i = 1
     for (const [key, col] of Object.entries(colMap)) {
-      // `undefined` = campo ausente do PATCH → não tocar. `null` explícito =
-      // limpar. Sem essa distinção um PATCH parcial gravava NULL em tudo que
-      // não foi enviado e estourava as colunas NOT NULL.
+      // `undefined` = field absent from the PATCH → do not touch. Explicit `null` =
+      // clear. Without that distinction a partial PATCH wrote NULL over everything
+      // that was not sent and blew up the NOT NULL columns.
       const value = (fields as Record<string, unknown>)[key]
       if (key in fields && value !== undefined) { updates.push(`${col} = $${i++}`); values.push(value) }
     }
@@ -236,9 +236,9 @@ export class RoutinesRepository implements IRoutinesRepository {
     const values: unknown[] = []
     let i = 1
     for (const [key, col] of Object.entries(colMap)) {
-      // `undefined` = campo ausente do PATCH → não tocar. `null` explícito =
-      // limpar. Sem essa distinção um PATCH parcial gravava NULL em tudo que
-      // não foi enviado e estourava as colunas NOT NULL.
+      // `undefined` = field absent from the PATCH → do not touch. Explicit `null` =
+      // clear. Without that distinction a partial PATCH wrote NULL over everything
+      // that was not sent and blew up the NOT NULL columns.
       const value = (fields as Record<string, unknown>)[key]
       if (key in fields && value !== undefined) { updates.push(`${col} = $${i++}`); values.push(value) }
     }
@@ -352,8 +352,8 @@ export class RoutinesRepository implements IRoutinesRepository {
 
   async deactivateExpired(): Promise<number> {
     const { rowCount } = await this.db.query(
-      // Numa rotina round_trip a viagem só termina na volta: expirar pela ida
-      // desativaria a rotina com a perna de volta ainda por acontecer.
+      // On a round_trip routine the journey only ends on the return: expiring by the
+      // outbound would deactivate the routine with the return leg still to happen.
       `UPDATE routines SET is_active = false, updated_at = now()
        WHERE is_active = true
          AND COALESCE(inbound_end, outbound_end) < CURRENT_DATE`,

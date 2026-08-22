@@ -5,11 +5,11 @@ import { IAirlinesRepository } from './interfaces/IAirlinesRepository'
 export class AirlinesRepository implements IAirlinesRepository {
   constructor(private readonly db: Pool) {}
 
-  // `has_roundtrip` faz parte da lista porque RoutinesService.create decide com
-  // ele se aceita rotina round_trip. Fora daqui a coluna volta como undefined, o
-  // `!airline.has_roundtrip` dá verdadeiro para TODA companhia, e a criação de
-  // rotina ida-e-volta passa a ser rejeitada até para quem tem a flag ligada no
-  // banco — inclusive a Azul.
+  // `has_roundtrip` is on the list because RoutinesService.create uses it to decide
+  // whether to accept a round_trip routine. Outside here the column comes back as
+  // undefined, `!airline.has_roundtrip` is true for EVERY airline, and round-trip
+  // routine creation gets rejected even for those with the flag on in the bank —
+  // Azul included.
   private readonly cols = `code, name, active, has_cash, has_pts, has_hyb, has_roundtrip`
 
   async findAll(): Promise<AirlineRow[]> {

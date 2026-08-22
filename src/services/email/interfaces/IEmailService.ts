@@ -1,6 +1,6 @@
 export interface OfferBlock {
   flightNumber: string
-  /** Moeda DESTA perna, como a companhia cobrou. Nunca herdada do par. */
+  /** Currency of THIS leg, as the airline charged it. Never inherited from the pair. */
   currency: string
   date: string
   origin: string
@@ -16,15 +16,15 @@ export interface OfferBlock {
 }
 
 /**
- * O total do par, já na unidade do alvo (Real em rotina `cash`).
+ * The pair total, already in the target unit (Real on a `cash` routine).
  *
- * Vem pronto da avaliação: é o número que de fato disparou o alerta. O e-mail
- * não soma perna com perna — somar £ com € daria número sem significado.
+ * It comes ready from evaluation: it is the number that actually fired the alert.
+ * The e-mail does not add leg to leg — summing £ with € gives a meaningless number.
  */
 export interface AlertTotal {
   amount: number
   currency: string
-  /** Alguma perna foi convertida? Então o e-mail diz a cotação usada. */
+  /** Was any leg converted? Then the e-mail states the rate used. */
   converted: boolean
   rateDate: string | null
 }
@@ -33,7 +33,7 @@ export interface AirlineOfferPair {
   airline: string
   outbound: OfferBlock
   return: OfferBlock | null
-  /** Só em ida-e-volta. `null` em rotina só-ida, que não tem total de par. */
+  /** Round-trip only. `null` on a one-way routine, which has no pair total. */
   total: AlertTotal | null
 }
 

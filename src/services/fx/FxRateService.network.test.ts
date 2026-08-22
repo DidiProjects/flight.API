@@ -4,27 +4,27 @@ import { FrankfurterProvider } from './providers/FrankfurterProvider'
 import { CurrencyApiProvider } from './providers/CurrencyApiProvider'
 import { FxRateService } from './FxRateService'
 
-// Bate nas APIs de câmbio DE VERDADE. Os testes unitários provam a política
-// (cache, disjuntor, faixa de sanidade); este prova a única coisa que eles não
-// podem provar — que o contrato externo continua sendo o que assumimos.
+// Hits the exchange APIs FOR REAL. The unit tests prove the policy (cache, circuit
+// breaker, sanity range); this one proves the only thing they cannot — that the
+// external contract is still what we assume.
 //
-// Pulado por padrão: rede em suíte de unidade deixa o CI refém de terceiro.
+// Skipped by default: network in a unit suite holds CI hostage to a third party.
 //
-// Rodar:  FX_NETWORK_TEST=1 npx vitest run src/services/fx/FxRateService.network.test.ts
+// To run:  FX_NETWORK_TEST=1 npx vitest run src/services/fx/FxRateService.network.test.ts
 
 const describeIt = process.env['FX_NETWORK_TEST'] === '1' ? describe : describe.skip
 
 const http = new ExchangeRateHttpClient(10_000)
 
-// O default do vitest é 5s, e aqui há duas chamadas de rede em série num mesmo
-// teste. Timeout curto transformaria oscilação de rede em "o contrato mudou".
+// The vitest default is 5s, and there are two serial network calls in one test
+// here. A short timeout would turn network jitter into "the contract changed".
 describeIt('câmbio contra as APIs reais', { timeout: 30_000 }, () => {
   it('Frankfurter devolve GBP→BRL numa faixa plausível', async () => {
     const { rate, rateDate } = await new FrankfurterProvider(http).fetchToBrl('GBP')
 
-    // Faixa larga de propósito: o teste é do CONTRATO, não do câmbio. Ele falha
-    // quando o formato muda ou a escala vira (6,8 → 0,0068), não quando a libra
-    // oscila.
+    // The range is wide on purpose: the test is of the CONTRACT, not of the rate. It
+    // fails when the format changes or the scale flips (6.8 → 0.0068), not when the
+    // pound moves.
     expect(rate).toBeGreaterThan(3)
     expect(rate).toBeLessThan(15)
     expect(rateDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
@@ -39,8 +39,8 @@ describeIt('câmbio contra as APIs reais', { timeout: 30_000 }, () => {
   })
 
   it('os dois provedores concordam dentro de 5%', async () => {
-    // Divergência grande entre fontes independentes é o sinal de que uma delas
-    // quebrou de um jeito que o schema não pega.
+    // A large divergence between independent sources is the signal that one of them
+    // broke in a way the schema does not catch.
     const [a, b] = await Promise.all([
       new FrankfurterProvider(http).fetchToBrl('GBP'),
       new CurrencyApiProvider(http).fetchToBrl('GBP'),

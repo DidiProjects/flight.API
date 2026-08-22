@@ -17,17 +17,17 @@ const flightOfferSchema = z.object({
   fareHybPts: z.number().int().positive().nullable().optional(),
   fareHybCash: z.number().positive().nullable().optional(),
   /**
-   * Número do voo de IDA em cujo contexto esta volta foi precificada (busca
-   * ida-e-volta). Só vem nas voltas; ausente na ida e no one-way. É o vínculo
-   * 1-para-N: sem ele a avaliação soma mínimos de pernas que a companhia nunca
-   * ofereceu juntas.
+   * OUTBOUND flight number in whose context this return was priced (round-trip
+   * search). Only on returns; absent on the outbound and on one-way. It is the
+   * 1-to-N link: without it, evaluation sums leg minimums the airline never
+   * offered together.
    */
   pairedOutboundFlight: z.string().max(20).nullable().optional(),
   /**
-   * Só na IDA: as voltas desta ida existem, mas uma limitação conhecida impede
-   * vê-las (em pontos a Azul exige login do TudoAzul). Volta indefinida — o par
-   * é exibido sem total e não alerta. Volta que sumiu sem motivo não vem
-   * marcada e segue tratada como dado corrompido.
+   * Outbound only: the returns of this outbound exist, but a known limitation hides
+   * them (on points Azul requires a TudoAzul login). Return undefined — the pair is
+   * displayed without a total and does not alert. A return that vanished for no
+   * reason is not marked and stays treated as corrupted data.
    */
   inboundUnavailable: z.boolean().optional().default(false),
 })
@@ -35,20 +35,20 @@ const flightOfferSchema = z.object({
 export type FlightOfferInput = z.infer<typeof flightOfferSchema>
 
 /**
- * Como a busca terminou, na palavra de quem esteve na tela.
+ * How the search ended, in the words of whoever was on the screen.
  *
- * Antes o estado era inferido aqui por regex sobre a mensagem de erro — e a
- * mensagem era o palpite que o próprio scraper escrevia ("likely bot/IP
- * block"), o que fez a LATAM ser pausada por uma hora, três vezes em
- * 2026-08-20, por uma página de erro do site dela.
+ * The state used to be inferred here by regex over the error message — and the
+ * message was the guess the scraper itself wrote ("likely bot/IP block"), which got
+ * LATAM paused for an hour, three times on 2026-08-20, over an error page of its
+ * own site.
  *
- * Opcional: scraper em versão anterior, ou falha sem tela para classificar
- * (watchdog), continuam chegando sem ele.
+ * Optional: an older scraper, or a failure with no screen to classify (watchdog),
+ * still arrive without it.
  */
 const outcomeSchema = z.object({
   state: z.enum(['OFFERS', 'EMPTY', 'BLOCKED', 'LOGIN_REQUIRED', 'SITE_ERROR', 'LAYOUT_CHANGED']),
   reason: z.string().max(300).optional(),
-  /** O trecho de DOM (ou a URL) que sustenta o estado. Truncado: é prova, não arquivo. */
+  /** The DOM excerpt (or the URL) backing the state. Truncated: it is proof, not a file. */
   evidence: z.string().max(2000).optional(),
 })
 

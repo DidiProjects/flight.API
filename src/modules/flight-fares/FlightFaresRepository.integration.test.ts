@@ -3,25 +3,25 @@ import { Pool } from 'pg'
 import { FlightFaresRepository } from './FlightFaresRepository'
 import type { FlightFareRow } from './interfaces/IFlightFaresRepository'
 
-// Teste de regressão do CONGELAMENTO de tarifas (preço/scraped_at parados na
-// primeira coleta). Roda contra um Postgres real porque o bug vivia no SQL
-// (chave do ON CONFLICT + join de "snapshot mais recente"). É pulado quando
-// TEST_DATABASE_URL não está definido — o CI sobe um Postgres e define a var.
+// Regression test for fare FREEZING (price/scraped_at stuck at the first
+// collection). Runs against a real Postgres because the bug lived in the SQL
+// (ON CONFLICT key + the "most recent snapshot" join). Skipped when
+// TEST_DATABASE_URL is unset — CI starts a Postgres and sets the var.
 //
-// Para rodar local:  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test
+// To run locally:  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test
 
 const DB_URL = process.env.TEST_DATABASE_URL
 const SCHEMA = 'flight_fares_it'
 
-/** Coluna DATE volta do pg como Date; normaliza para YYYY-MM-DD. */
+/** A DATE column comes back from pg as Date; normalise to YYYY-MM-DD. */
 function toDateStr(v: string | Date): string {
   return v instanceof Date
     ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`
     : String(v).slice(0, 10)
 }
 
-// Mesmo job (rota), execuções diferentes — exatamente o cenário de produção:
-// scraping_jobs é por rota (permanente), cada coleta tem seu próprio request_id.
+// Same job (route), different runs — exactly the production scenario:
+// scraping_jobs is per route (permanent), each collection has its own request_id.
 const JOB_ID = '00000000-0000-0000-0000-0000000000aa'
 const REQ_1  = '11111111-1111-1111-1111-111111111111'
 const REQ_2  = '22222222-2222-2222-2222-222222222222'
@@ -45,8 +45,8 @@ function fare(flightNumber: string, fareCash: number, over: Partial<FareInput> =
     fare_pts:       null,
     fare_hyb_pts:   null,
     fare_hyb_cash:  null,
-    // Tarifa em Real não precisa de cotação: o valor é ele mesmo e a taxa é 1.
-    // É o que a 017 grava na ingestão, e o que as somas de par leem.
+    // A fare in Real needs no quote: the value is itself and the rate is 1.
+    // That is what 017 writes on ingestion, and what the pair sums read.
     fare_cash_brl:     fareCash,
     fare_hyb_cash_brl: null,
     fx_rate:           1,
@@ -59,11 +59,11 @@ function fare(flightNumber: string, fareCash: number, over: Partial<FareInput> =
 }
 
 /**
- * Perna de um par ida-e-volta.
+ * Leg of a round-trip pair.
  *
- * A volta tem `flight_date` igual à data DELA (a data de volta) e não à da ida —
- * é o formato que o scraper realmente grava, e o que o SQL do par tem de casar
- * pelo request_id.
+ * The return has `flight_date` equal to ITS date (the return date) and not the
+ * outbound's — that is the shape the scraper really writes, and what the pair
+ * SQL has to match by request_id.
  */
 function pairLeg(o: {
   flight: string; cash: number; outDate: string; retDate: string;
@@ -89,8 +89,8 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: DB_URL, options: `-c search_path=${SCHEMA},public` })
     await pool.query(`CREATE SCHEMA IF NOT EXISTS ${SCHEMA}`)
-    // Espelha o schema real relevante (sem FKs, para ser self-contained) +
-    // o índice único corrigido (request_id como discriminador de execução).
+    // Mirrors the relevant real schema (no FKs, to stay self-contained) plus
+    // the corrected unique index (request_id as the run discriminator).
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ${SCHEMA}.flight_fares (
         id               UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -151,20 +151,20 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   }
 
   it('REGRESSÃO: re-coleta da MESMA rota (mesmo scraping_job_id) grava um snapshot NOVO', async () => {
-    // 1ª coleta da rota.
+    // First collection of the route.
     const inserted1 = await repo.insertMany(JOB_ID, REQ_1, [fare('AD4188', 702.05), fare('AD4096', 1178.91)])
     expect(inserted1).toBe(2)
 
-    // garante scraped_at estritamente maior na 2ª coleta
+    // guarantees a strictly greater scraped_at on the second collection
     await new Promise((r) => setTimeout(r, 15))
 
-    // 2ª coleta — MESMO job, MESMOS voos, preços novos. Antes da correção
-    // (ON CONFLICT em scraping_job_id) isto retornava 0 e o snapshot era
-    // descartado, congelando preço/scraped_at na 1ª coleta. Agora insere.
+    // Second collection — SAME job, SAME flights, new prices. Before the fix
+    // (ON CONFLICT on scraping_job_id) this returned 0 and the snapshot was
+    // discarded, freezing price/scraped_at at the first collection. Now it inserts.
     const inserted2 = await repo.insertMany(JOB_ID, REQ_2, [fare('AD4188', 500.00), fare('AD4096', 600.00)])
     expect(inserted2).toBe(2)
 
-    // Histórico preservado: 4 linhas (2 snapshots), não 2.
+    // History preserved: 4 rows (2 snapshots), not 2.
     expect(await countRows()).toBe(4)
   })
 
@@ -175,9 +175,9 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
 
     const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-12', '2026-07-12')
 
-    // Menor preço da ÚLTIMA execução (500), não o mínimo histórico de tudo.
+    // Lowest price of the LAST run (500), not the all-time historical minimum.
     expect(Number(current.best_cash)).toBe(500)
-    // scraped_at é o da 2ª coleta (não o congelado da 1ª).
+    // scraped_at is the second collection (not the frozen first).
     expect(current.scraped_at).not.toBeNull()
     const { rows } = await pool.query<{ max: Date; min: Date }>(
       `SELECT max(scraped_at) AS max, min(scraped_at) AS min FROM ${SCHEMA}.flight_fares`,
@@ -201,21 +201,21 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
     const first = await repo.insertMany(JOB_ID, REQ_1, [fare('AD4188', 702.05)])
     expect(first).toBe(1)
 
-    // Mesma execução reentregue: ON CONFLICT (request_id, ...) protege.
+    // Same run delivered again: ON CONFLICT (request_id, ...) protects.
     const replay = await repo.insertMany(JOB_ID, REQ_1, [fare('AD4188', 702.05)])
     expect(replay).toBe(0)
     expect(await countRows()).toBe(1)
   })
 
-  // ── par ida-e-volta (1-para-N) ──────────────────────────────────────────────
+  // ── round-trip pair (1-to-N) ────────────────────────────────────────────────
 
   const OUT = '2026-07-12'
   const RET = '2026-07-20'
 
   it('REGRESSÃO: as duas pernas do par caem no MESMO grupo', async () => {
-    // O bug: o par era casado por flight_date, mas a volta carrega a data DELA.
-    // As pernas iam para grupos diferentes e TODO par real era descartado como
-    // incompleto — a avaliação RT nunca produzia um total.
+    // The bug: the pair was matched by flight_date, but the return carries ITS date.
+    // The legs went to different groups and EVERY real pair was discarded as
+    // incomplete — RT evaluation never produced a total.
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 566.28, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
@@ -224,19 +224,19 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
     const rows = await repo.getLatestPairs('azul', 'CNF', 'VCP', OUT, OUT, RET, RET)
 
     expect(rows).toHaveLength(2)
-    // As duas pernas compartilham a identidade do par e a data de ida.
+    // Both legs share the pair identity and the outbound date.
     expect(new Set(rows.map((r) => r.request_id)).size).toBe(1)
     expect(rows.map((r) => toDateStr(r.pair_outbound_date))).toEqual([OUT, OUT])
-    // A volta continua carregando a data DELA — é justamente por isso que
-    // flight_date não serve para agrupar o par.
+    // The return still carries ITS date — which is exactly why flight_date does
+    // not work for grouping the pair.
     const inbound = rows.find((r) => r.is_return)!
     expect(toDateStr(inbound.flight_date)).toBe(RET)
   })
 
   it('a mesma volta sob idas diferentes sobrevive ao dedup', async () => {
-    // É o mecanismo do desconto RT: a volta AD900 custa diferente dependendo da
-    // ida escolhida. Sem paired_outbound_flight na chave única, o ON CONFLICT
-    // guardaria só a primeira e o 1-para-N ficaria sem dado.
+    // This is the mechanism of the RT discount: the AD900 return costs differently
+    // depending on the chosen outbound. Without paired_outbound_flight in the
+    // unique key, ON CONFLICT would keep only the first and 1-to-N would have no data.
     const inserted = await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD200', cash: 500.00, outDate: OUT, retDate: RET, isReturn: false }),
@@ -261,13 +261,13 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
 
     const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
 
-    // 500 + 300 = 800 vence 365.45 + 566.28 = 931.73. O cruzamento proibido
-    // (365.45 + 300) daria 665.45 — um par que a companhia nunca ofereceu.
+    // 500 + 300 = 800 beats 365.45 + 566.28 = 931.73. The forbidden crossing
+    // (365.45 + 300) would give 665.45 — a pair the airline never offered.
     expect(Number(current.best_cash)).toBe(800)
     expect(current.inbound_unavailable).toBe(false)
 
-    // As parcelas exibidas têm de ser as do par VENCEDOR. Pegar o menor out e o
-    // menor in isoladamente devolveria 365.45 / 300 — o tal par inexistente.
+    // The displayed parts must be those of the WINNING pair. Taking the lowest out
+    // and the lowest in separately would return 365.45 / 300 — that inexistent pair.
     expect(Number(current.best_cash_outbound)).toBe(500)
     expect(Number(current.best_cash_inbound)).toBe(300)
     expect(
@@ -276,10 +276,10 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   })
 
   it('coleta só com as idas não apaga a melhor tarifa da coleta completa anterior', async () => {
-    // O laço 1-para-N tropeça na primeira ida e o job termina com `success`
-    // carregando só as idas. Antes, essa coleta ganhava o DISTINCT ON por ser a
-    // mais recente e todo total saía NULL — a rotina perdia a melhor tarifa que
-    // já tinha, sem dizer por quê.
+    // The 1-to-N loop trips on the first outbound and the job ends as `success`
+    // carrying outbounds only. Before, that collection won the DISTINCT ON for
+    // being the most recent and every total came out NULL — the routine lost the
+    // best fare it had, without saying why.
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
@@ -295,8 +295,8 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   })
 
   it('coleta completa mais recente continua mandando na anterior', async () => {
-    // A contrapartida do teste acima: o filtro elege a mais recente que resolveu
-    // a volta, não a mais ANTIGA. Sem esta garantia o preço congelaria.
+    // The counterpart of the test above: the filter elects the most recent run
+    // that resolved the return, not the OLDEST. Without it the price would freeze.
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
@@ -313,9 +313,9 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   })
 
   it('volta indefinida mais recente vence: o motivo conhecido não é coleta truncada', async () => {
-    // `inbound_unavailable` é limitação CONHECIDA (login do TudoAzul): a rotina
-    // exibe "—" com motivo. Mostrar no lugar um total antigo, como se fosse o de
-    // agora, seria pior que não mostrar nada.
+    // `inbound_unavailable` is a KNOWN limitation (TudoAzul login): the routine
+    // shows "—" with a reason. Showing an old total in its place, as if it were
+    // current, would be worse than showing nothing.
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
@@ -335,8 +335,8 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   })
 
   it('getLatestPairs também ignora a coleta que só trouxe as idas', async () => {
-    // É a query que alimenta o ciclo de avaliação e o e-mail. Sem o filtro, o
-    // alerta não saía: a coleta truncada vencia e não havia par para comparar.
+    // This is the query feeding the evaluation cycle and the e-mail. Without the
+    // filter no alert went out: the truncated collection won and there was no pair.
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
@@ -353,9 +353,9 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   })
 
   it('volta com a rota da IDA não fecha par, mesmo sendo a mais barata', async () => {
-    // Retrato do request 8be20a19: a tela de voltas da LATAM não avançou e os
-    // cards de IDA foram gravados com is_return. A linha fantasma é a mais
-    // barata do lote de propósito — se vazasse, ganharia o total.
+    // Portrait of request 8be20a19: the LATAM returns screen did not advance and
+    // the OUTBOUND cards were written with is_return. The ghost row is the cheapest
+    // of the batch on purpose — if it leaked, it would win the total.
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 300.00, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
@@ -367,15 +367,15 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
 
     const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
 
-    // 365.45 + 300 = 665.45 pela volta legítima. Com o fantasma seriam 465.45 —
-    // dois trechos CNF→VCP somados como se fossem uma viagem de ida e volta.
+    // 365.45 + 300 = 665.45 through the legitimate return. With the ghost it would
+    // be 465.45 — two CNF→VCP legs summed as if they were a round trip.
     expect(Number(current.best_cash)).toBe(665.45)
     expect(Number(current.best_cash_inbound)).toBe(300)
   })
 
   it('volta que pousa em outro aeroporto da cidade fecha par normalmente', async () => {
-    // A BA devolve voltas LCY→GRU numa busca GRU→LHR. O corte do fantasma é por
-    // rota IGUAL à da ida; exigir o inverso exato zeraria o par da BA.
+    // BA returns LCY→GRU inbounds on a GRU→LHR search. The ghost cut is by a route
+    // EQUAL to the outbound; demanding the exact inverse would zero out the BA pair.
     await repo.insertMany(JOB_ID, REQ_1, [
       fare('BA246', 3276.00, {
         flight_date: OUT, is_return: false, origin: 'GRU', destination: 'LHR',
@@ -400,16 +400,16 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
       pairLeg({ flight: 'AD100', cash: 365.45, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 566.28, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),
     ])
-    // `insertMany` ainda não grava bundle_* (Fase 2 do round-trip); o UPDATE
-    // simula a coleta que vai preencher, para a exibição já estar correta.
+    // `insertMany` does not write bundle_* yet (round-trip phase 2); the UPDATE
+    // simulates the collection that will, so the display is already correct.
     await pool.query(
       `UPDATE ${SCHEMA}.flight_fares SET bundle_cash = 700 WHERE flight_number = 'AD100'`,
     )
 
     const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
 
-    // O bundle é um preço único; dividi-lo em ida e volta mostraria um número
-    // que a companhia não ofereceu.
+    // The bundle is a single price; splitting it into outbound and return would
+    // show a number the airline never offered.
     expect(Number(current.best_cash)).toBe(700)
     expect(current.best_cash_outbound).toBeNull()
     expect(current.best_cash_inbound).toBeNull()
@@ -422,18 +422,18 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
 
     const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
 
-    // O preço da ida NÃO é o preço da viagem: nada de 365.45 aqui.
+    // The outbound price is NOT the trip price: no 365.45 here.
     expect(current.best_cash).toBeNull()
     expect(current.inbound_unavailable).toBe(true)
   })
 
   /**
-   * REGRESSÃO — o veredito do card comparava grandezas diferentes.
+   * REGRESSION — the card verdict compared different quantities.
    *
-   * `best_cash` de uma rotina RT é o TOTAL do par (duas pernas), mas a régua
-   * saía de tarifas com origin→destination, que exclui a volta (rota invertida).
-   * Total contra média de UMA perna faz todo round-trip parecer caro para
-   * sempre — inclusive na melhor oferta que a rota já teve.
+   * `best_cash` of an RT routine is the pair TOTAL (two legs), but the baseline
+   * came from fares with origin→destination, which excludes the return (inverted
+   * route). A total against the average of ONE leg makes every round trip look
+   * expensive forever — including on the best offer the route ever had.
    */
   it('a régua do round-trip é de TOTAIS de par, não de pernas', async () => {
     await repo.insertMany(JOB_ID, REQ_1, [
@@ -444,11 +444,11 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
     const pair = await repo.getSummary(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
     const oneWay = await repo.getSummary(['azul'], 'CNF', 'VCP', OUT, OUT)
 
-    // 400 + 300: a régua fala na mesma grandeza do valor exibido no card.
+    // 400 + 300: the baseline speaks in the same quantity as the card value.
     expect(Number(pair.avg_cash_30d)).toBe(700)
     expect(Number(pair.min_cash_30d)).toBe(700)
 
-    // E a rotina one-way não enxerga a perna de par: contexto de preço diferente.
+    // And a one-way routine does not see a pair leg: a different price context.
     expect(oneWay.avg_cash_30d).toBeNull()
   })
 
@@ -462,15 +462,15 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
 
     const dates = await repo.getPriceByDate(['azul'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
 
-    // 500 + 150 = 650 vence 400 + 300 = 700. O cruzamento proibido (400 + 150)
-    // daria 550 — par que a companhia nunca ofereceu.
+    // 500 + 150 = 650 beats 400 + 300 = 700. The forbidden crossing (400 + 150)
+    // would give 550 — a pair the airline never offered.
     expect(dates).toHaveLength(1)
     expect(Number(dates[0].best_cash)).toBe(650)
   })
 
   it('sem a janela de volta o calendário ignora tarifas de par', async () => {
-    // Era o motivo de o calendário vir VAZIO em rotina RT: a coleta de par grava
-    // as duas pernas com return_date, e o ramo one-way filtra return_date IS NULL.
+    // This was why the calendar came back EMPTY on an RT routine: pair collection
+    // writes both legs with return_date, and the one-way branch filters IS NULL.
     await repo.insertMany(JOB_ID, REQ_1, [
       pairLeg({ flight: 'AD100', cash: 400, outDate: OUT, retDate: RET, isReturn: false }),
       pairLeg({ flight: 'AD900', cash: 300, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD100' }),

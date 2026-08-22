@@ -25,8 +25,8 @@ export class RealtimePersistence {
 
   start(): void {
     this.hubBus.onTelemetry((ev) => { void this.persist(ev) })
-    // Lease: heartbeat e snapshot do worker renovam last_heartbeat_at dos jobs que
-    // ele ainda detém (na fila ou rodando) — job vivo não é reclamado.
+    // Lease: the worker heartbeat and snapshot renew last_heartbeat_at of the jobs
+    // it still holds (queued or running) — a live job is not reclaimed.
     this.hubBus.onHeartbeat((ev) => { void this.renewLease(ev.activeRequestIds) })
     this.hubBus.onSnapshot((ev) => { void this.renewLease(ev.jobs.map((j) => j.requestId)) })
   }
@@ -55,8 +55,8 @@ export class RealtimePersistence {
       })
 
       if (type === 'started') {
-        // Início real do scrape: o relógio do timeout passa a contar daqui, não do
-        // dispatch — job que esperou na fila não conta como "rodando".
+        // Real start of the scrape: the timeout clock counts from here, not from
+        // dispatch — a job that waited in the queue does not count as "running".
         await this.scrapingJobRepo.markStarted(msg.requestId)
         await this.analysisRunsRepo.resetStartedAt(msg.requestId)
       }

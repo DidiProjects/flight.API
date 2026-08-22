@@ -11,16 +11,16 @@ import { airlineCapabilityError, AirlineCapabilities, RoutinePricingState } from
 const MAX_ROUTINES = 10
 
 /**
- * Como a rotina FICA depois da edição.
+ * How the routine LOOKS after the edit.
  *
- * O corpo do update é parcial e vem em camelCase; a rotina no banco é completa e
- * vem em snake_case. Validar só o que veio no corpo é o furo que deixou passar
- * "troca a companhia e mantém o alvo híbrido".
+ * The update body is partial and comes in camelCase; the routine in the bank is
+ * complete and comes in snake_case. Validating only what arrived in the body is
+ * the hole that let "swap the airline and keep the hybrid target" through.
  *
- * ⚠ `??` não serve aqui: num update parcial, campo AUSENTE é `undefined` e campo
- * LIMPO é `null`, e `??` trata os dois igual. Com ele, trocar a companhia e zerar
- * o alvo híbrido na MESMA chamada era recusado — a validação continuava vendo o
- * alvo antigo que o request estava justamente apagando.
+ * ⚠ `??` does not work here: on a partial update an ABSENT field is `undefined`
+ * and a CLEARED one is `null`, and `??` treats both alike. With it, swapping the
+ * airline and clearing the hybrid target in the SAME call was refused — the
+ * validation still saw the old target the request was erasing.
  */
 function pick<T>(field: T | undefined, current: T): T {
   return field === undefined ? current : field
@@ -49,22 +49,22 @@ export class RoutinesService implements IRoutinesService {
   ) {}
 
   /**
-   * Moeda da rotina: SEMPRE Real.
+   * Currency of the routine: ALWAYS Real.
    *
-   * Antes era deduzida do cadastro (airlines.currency → tarifas já coletadas →
-   * airports.currency), e o cadastro está errado: a BA tem GBP nos 1192
-   * aeroportos, inclusive os 46 no Brasil. Rotina GRU→LHR ficava marcada em
-   * libra recebendo tarifa em real.
+   * It used to be deduced from registration (airlines.currency → fares already
+   * collected → airports.currency), and the registration is wrong: BA has GBP on
+   * all 1192 airports, the 46 in Brazil included. A GRU→LHR routine ended up
+   * marked in pounds while receiving fares in Real.
    *
-   * Agora o alvo é sempre em Real e a moeda da COLETA vem do scraping, por
-   * tarifa. Este campo passa a ser só a unidade do alvo — fixa, e não mais um
-   * palpite sobre o mercado.
+   * The target is now always in Real and the COLLECTION currency comes from
+   * scraping, per fare. This field is only the target unit — fixed, and no longer
+   * a guess about the market.
    */
   private readonly targetCurrency = 'BRL'
 
   /**
-   * Não permite companhia que não cubra ambos os pontos (origem e destino) do trajeto:
-   * sem cobertura não há scraping possível para aquela perna.
+   * Rejects an airline that does not cover both ends (origin and destination) of
+   * the trip: with no coverage there is no scraping possible for that leg.
    */
   private async assertCoverage(airlines: string[], origin: string, destination: string): Promise<void> {
     for (const code of airlines) {
@@ -82,11 +82,11 @@ export class RoutinesService implements IRoutinesService {
   }
 
   /**
-   * Carrega as companhias e verifica se elas atendem ao estado FINAL da rotina.
+   * Loads the airlines and checks them against the FINAL state of the routine.
    *
-   * Sobre o estado final, e não sobre o que veio no corpo do request: numa
-   * edição parcial, trocar só a companhia mantém prioridade e alvos antigos, e é
-   * exatamente aí que a incompatibilidade nascia sem ninguém perguntar nada.
+   * Against the final state, not against what came in the request body: on a
+   * partial edit, swapping only the airline keeps the old priority and targets,
+   * and that is exactly where the incompatibility was born unquestioned.
    */
   private async assertCapabilities(codes: string[], routine: RoutinePricingState): Promise<void> {
     const caps: AirlineCapabilities[] = []
@@ -119,9 +119,9 @@ export class RoutinesService implements IRoutinesService {
       throw new ForbiddenError(`Limite de ${MAX_ROUTINES} rotinas por usuário atingido`)
     }
 
-    // Sem busca RT a companhia devolveria as duas pernas avulsas e sem bundle — o
-    // desconto de ida-e-volta ficaria invisível e a rotina mentiria. E alvo numa
-    // dimensão que nenhuma companhia precifica nunca seria avaliado.
+    // Without an RT search the airline would return both legs loose and with no
+    // bundle — the round-trip discount would be invisible and the routine would
+    // lie. And a target in a dimension no airline prices is never evaluated.
     await this.assertCapabilities(data.airlines, {
       tripType:      data.tripType,
       priority:      data.priority,
@@ -162,9 +162,9 @@ export class RoutinesService implements IRoutinesService {
     const existing = await this.routinesRepo.findById(id, userId)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
-    // O schema de update é parcial e não enxerga a rotina atual: trocar só a
-    // prioridade para 'pts' numa rotina que já é round_trip passaria por ele.
-    // A regra vale sobre o estado FINAL, então é aqui que ela cabe.
+    // The update schema is partial and does not see the current routine: switching
+    // only the priority to 'pts' on a routine that is already round_trip would pass
+    // it. The rule applies to the FINAL state, so this is where it fits.
     const final = finalPricingState(existing, fields)
     if (final.tripType === 'round_trip') {
       const pricingError = roundTripPricingError(final)
@@ -174,8 +174,8 @@ export class RoutinesService implements IRoutinesService {
     const changingAirlines = !!fields.airlines && fields.airlines.length > 0
     const airlines = changingAirlines ? fields.airlines! : existing.airlines
 
-    // Sempre, não só quando a companhia muda: mexer na prioridade ou num alvo
-    // também pode deixar a rotina pedindo o que a companhia atual não precifica.
+    // Always, not only when the airline changes: touching the priority or a target
+    // can also leave the routine asking for what the current airline does not price.
     await this.assertCapabilities(airlines, final)
 
     if (changingAirlines || fields.origin != null || fields.destination != null) {
@@ -226,9 +226,9 @@ export class RoutinesService implements IRoutinesService {
     const existing = await this.routinesRepo.findByIdAdmin(id)
     if (!existing) throw new NotFoundError('Rotina não encontrada')
 
-    // Admin edita a rotina de outra pessoa, não as regras do produto: as mesmas
-    // validações do `update` valem aqui. Faltavam as duas — a de preço do
-    // round-trip e a de capacidade da companhia.
+    // Admin edits another person's routine, not the product rules: the same
+    // validations as `update` apply here. Both were missing — the round-trip price
+    // one and the airline capability one.
     const final = finalPricingState(existing, fields)
     if (final.tripType === 'round_trip') {
       const pricingError = roundTripPricingError(final)

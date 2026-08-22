@@ -17,7 +17,7 @@ const summaryQuerySchema = z.object({
   destination: z.string().length(3).toUpperCase(),
   date_from:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
   date_to:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
-  // Janela de volta: quando presente, /current devolve o total do PAR.
+  // Return window: when present, /current returns the PAIR total.
   inbound_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   inbound_to:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 })
@@ -32,8 +32,8 @@ export function flightFaresRoute(flightFaresSvc: IFlightFaresService) {
       reply.send(await flightFaresSvc.getHistory(q.airline, q.origin, q.destination, q.flight_date))
     })
 
-    // A janela de volta é o que distingue rotina de par da avulsa: quando vem,
-    // régua, preço atual e calendário passam todos a falar em TOTAL de par.
+    // The return window is what tells a pair routine from a loose one: when it
+    // comes, baseline, current price and calendar all speak in pair TOTAL.
     const inboundOf = (q: { inbound_from?: string; inbound_to?: string }) =>
       q.inbound_from && q.inbound_to ? { from: q.inbound_from, to: q.inbound_to } : undefined
 

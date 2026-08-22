@@ -10,9 +10,9 @@ const HEARTBEAT_MS = 25_000
 const RING_SIZE = 500
 const JOB_RETENTION_MS = 60_000
 const SWEEP_INTERVAL_MS = 60_000
-// Entrada 'running' sem evento terminal por mais que isso é considerada órfã
-// (worker caiu ou deploy no meio da execução) e é removida do liveJobs. Acima do
-// running_timeout_min (10min) do job, dando margem ao término normal.
+// A 'running' entry with no terminal event for longer than this is taken as
+// orphaned (worker died, or a deploy mid-run) and removed from liveJobs. Above the
+// job's running_timeout_min (10min), leaving room for a normal finish.
 const STALE_LIVE_JOB_MS = 15 * 60_000
 
 interface JobView {
@@ -86,9 +86,9 @@ export class SseHub {
     clearInterval(this.sweepTimer)
   }
 
-  // Remove entradas 'running' órfãs (worker caiu/deploy no meio): sem evento
-  // terminal além do timeout, elas ficariam eternamente como "Executando" e
-  // seriam reentregues a cada conexão SSE. Limpa e avisa os clientes.
+  // Removes orphaned 'running' entries (worker died / deploy mid-run): with no
+  // terminal event past the timeout they would sit forever as "Executando" and be
+  // redelivered on every SSE connection. Cleans up and tells the clients.
   private sweepStaleJobs(): void {
     const now = Date.now()
     for (const [requestId, view] of this.liveJobs) {
@@ -161,10 +161,10 @@ export class SseHub {
     for (const c of this.clients) this.writeEvent(c, this.globalId, event, data)
   }
 
-  // Na 1ª aparição de um job ao vivo: casa a telemetria com a linha do banco
-  // pelo requestId. Se existir, preenche o jobId (o worker não o conhece) e o
-  // dono. Se NÃO existir, é telemetria órfã (job já finalizado/removido) — não
-  // pode virar "Executando", então remove na hora.
+  // On the first appearance of a live job: matches the telemetry with the bank row
+  // by requestId. If it exists, fills in the jobId (the worker does not know it) and
+  // the owner. If it does NOT exist, this is orphaned telemetry (job already
+  // finished/removed) — it must not become "Executando", so it is removed at once.
   private enrichLiveJob(requestId: string): void {
     this.scrapingJobRepo
       .findByRequestId(requestId)
@@ -179,8 +179,8 @@ export class SseHub {
         }
         let changed = false
         if (view.jobId !== job.id) { view.jobId = job.id; changed = true }
-        // Backfill da rota a partir do banco: se a 1ª telemetria recebida não foi
-        // job.started (ex.: hub reconectou no meio do job), o view nasce sem rota.
+        // Backfills the route from the bank: if the first telemetry received was not
+        // job.started (e.g. the hub reconnected mid-job), the view is born routeless.
         if (!view.airline && job.airline) { view.airline = job.airline; changed = true }
         if (!view.origin && job.origin) { view.origin = job.origin; changed = true }
         if (!view.destination && job.destination) { view.destination = job.destination; changed = true }
@@ -217,8 +217,8 @@ export class SseHub {
       orphanedAt: null,
     }
 
-    // A telemetria do worker não conhece jobId nem dono; ambos vêm do banco.
-    // Na 1ª aparição, casa pelo requestId, preenche jobId/dono ou descarta órfão.
+    // Worker telemetry knows neither jobId nor owner; both come from the bank. On
+    // first appearance, match by requestId, fill jobId/owner or discard as orphaned.
     if (!prev) this.enrichLiveJob(msg.requestId)
 
     switch (msg.type) {

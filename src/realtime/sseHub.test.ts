@@ -20,7 +20,7 @@ function sign(role: 'user' | 'admin'): string {
   return app.jwt.sign({ sub: 'u', role, email: 'e@x', mustChangePassword: false })
 }
 
-/** Lê o stream SSE em background acumulando num buffer. */
+/** Reads the SSE stream in the background, accumulating into a buffer. */
 function drain(res: Response): { buf: () => string; stop: () => void } {
   const reader = res.body!.getReader()
   const dec = new TextDecoder()

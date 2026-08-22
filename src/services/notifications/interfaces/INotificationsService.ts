@@ -5,20 +5,20 @@ import { AlertTotal } from '../../email/interfaces/IEmailService'
 export interface INotificationsService {
   sendScheduled(): Promise<void>
   /**
-   * Reenvia o resumo diário de UMA rotina com os dados atuais, sem o dedup de
-   * 12h. `false` quando não há tarifa para montar o e-mail.
+   * Resends the daily summary of ONE routine with current data, skipping the 12h
+   * de-dup. `false` when there is no fare to build the e-mail from.
    */
   resendDailySummary(routine: RoutineRow): Promise<boolean>
-  /** Dispara um alerta 'target' com uma ou mais ofertas (uma por data do grid que melhorou). */
+  /** Fires a 'target' alert with one or more offers (one per grid date that improved). */
   dispatchAlert(
     routine: RoutineRow,
     outboundFares: LatestFaresByDate[],
     history: PriceHistory,
     inboundByOutboundDate?: Map<string, LatestFaresByDate>,
     /**
-     * Total do par por data de ida, já na unidade do alvo. Vem da avaliação —
-     * é o número que disparou o alerta, e o único que pode ser somado quando as
-     * pernas estão em moedas diferentes.
+     * Pair total per outbound date, already in the target unit. It comes from
+     * evaluation — it is the number that fired the alert, and the only one that can
+     * be summed when the legs are in different currencies.
      */
     totalsByDate?: Map<string, AlertTotal>,
   ): Promise<void>

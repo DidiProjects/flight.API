@@ -24,15 +24,15 @@ const CIRCUIT_COOLDOWN_MS = 15 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000
 const EVALUATION_INTERVAL_MS = 5 * 60 * 1000
 const DAILY_TICK_INTERVAL_MS = 60_000
-// Lease: o worker manda heartbeat a cada ~15s. Sem heartbeat por mais que isso, o
-// job é dado como perdido (worker morto/indisponível) e reclamado sem penalidade.
+// Lease: the worker heartbeats every ~15s. With no heartbeat for longer than this,
+// the job is taken as lost (worker dead/unavailable) and reclaimed with no penalty.
 const LEASE_TIMEOUT_SEC = 90
-// Job 'running' que nunca apareceu em nenhum heartbeat após esta graça = nunca foi
-// aceito pelo worker → reclamado sem penalidade.
+// A 'running' job that never showed up in any heartbeat after this grace was
+// never accepted by the worker → reclaimed with no penalty.
 const LEASE_GRACE_SEC = 60
-// Teto absoluto de execução (backstop do watchdog do scraper, que é ~18min).
+// Absolute execution ceiling (backstop for the scraper watchdog, which is ~18min).
 const MAX_RUN_MIN = 25
-// Runs sem callback marcadas como falha após esse tempo (rede de segurança).
+// Runs with no callback are marked as failed after this (a safety net).
 const STALE_RUN_TIMEOUT_MIN = 25
 
 function daysBetween(a: Date, b: Date): number {
@@ -45,8 +45,8 @@ function calcNextRunAt(flightDate: string): Date {
     days <= 45 ? 1 * 60 * 60 * 1000 :
     days <= 90 ? 3 * 60 * 60 * 1000 :
                  6 * 60 * 60 * 1000
-  // Jitter de ±20% desincroniza grids de datas que reagendariam no mesmo instante,
-  // evitando rajadas (thundering herd) a cada ciclo de cadência.
+  // ±20% jitter desynchronises date grids that would reschedule at the same
+  // instant, avoiding a thundering herd on every cadence cycle.
   const jitter = (Math.random() * 2 - 1) * intervalMs * 0.2
   return new Date(Date.now() + intervalMs + jitter)
 }
@@ -60,12 +60,12 @@ function calcBackoffNextRunAt(retryCount: number): Date {
 }
 
 /**
- * Espera depois de uma falha declarada pelo site da companhia.
+ * Wait after a failure declared by the airline site.
  *
- * Começa mais longe e cresce mais longe que o backoff comum: quando a busca da
- * companhia não responde, tentar de minuto em minuto só repete a pergunta que
- * ela já não conseguiu responder — e, do lado dela, é uma sessão automatizada
- * insistindo.
+ * Starts further out and grows further out than the ordinary backoff: when the
+ * airline's search does not respond, asking every minute only repeats the
+ * question it already could not answer — and, from its side, it is an automated
+ * session insisting.
  */
 function calcSiteErrorNextRunAt(retryCount: number): Date {
   const BASE_MS = 5 * 60_000
@@ -79,8 +79,8 @@ export { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt }
 
 export class SchedulerService implements ISchedulerService {
   private readonly circuitBreakers = new Map<string, CircuitBreakerState>()
-  // Bucket diário já processado pela manutenção (agregação/cleanup). Permite
-  // catch-up: se o tick exato das 02:00 for perdido, roda no próximo tick.
+  // Daily bucket already processed by maintenance (aggregation/cleanup). Allows
+  // catch-up: if the exact 02:00 tick is missed, it runs on the next tick.
   private lastMaintenanceBucket: string | null = null
 
   constructor(
@@ -122,8 +122,8 @@ export class SchedulerService implements ISchedulerService {
     this.scheduleDailyJobs()
   }
 
-  // Shutdown gracioso: para de agendar/disparar ciclos. Um tick já em execução
-  // termina; nenhum novo é armado. Chamado no SIGTERM antes de fechar HTTP/DB.
+  // Graceful shutdown: stops scheduling/firing cycles. A tick already running
+  // finishes; no new one is armed. Called on SIGTERM before closing HTTP/DB.
   stop(): void {
     this.stopped = true
     for (const t of this.timers) clearTimeout(t)
@@ -144,10 +144,10 @@ export class SchedulerService implements ISchedulerService {
     log.info({ routineId }, 'dispatchOne: manual dispatch requested')
     await this.scrapingJobRepo.upsertFromRoutine(routineId)
 
-    // Disparo manual é direcionado à rota da rotina e cobre todas as datas
-    // elegíveis (até o teto global de in-flight). Por ser uma ação explícita do
-    // admin, ignora o circuit breaker por companhia; a primeira falha real
-    // (busy/error) interrompe o burst, evitando martelar uma companhia quebrada.
+    // A manual dispatch targets the route of the routine and covers every eligible
+    // date (up to the global in-flight ceiling). Being an explicit admin action, it
+    // ignores the per-airline circuit breaker; the first real failure (busy/error)
+    // interrupts the burst, avoiding hammering a broken airline.
     const cap = this.env.SCRAPE_MAX_IN_FLIGHT
     const perAirline = this.env.SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE
     let dispatched = 0
@@ -158,10 +158,10 @@ export class SchedulerService implements ISchedulerService {
       if (result !== 'dispatched') break
       dispatched++
 
-      // O burst manual era o pior caso: em 2026-08-20 ele mandou os quatro jobs
-      // da rotina de uma vez, um segundo entre eles, e os quatro terminaram na
-      // página de erro da LATAM. As datas que sobram saem no tick seguinte —
-      // numa rotina com duas companhias, a segunda também espera esse tick.
+      // The manual burst was the worst case: on 2026-08-20 it sent all four jobs of
+      // the routine at once, one second apart, and all four ended on the LATAM error
+      // page. The remaining dates go out on the next tick — on a routine with two
+      // airlines, the second one waits for that tick too.
       if (await this.scrapingJobRepo.countInFlightByAirline(job.airline) >= perAirline) {
         log.info({ routineId, airline: job.airline, dispatched }, 'dispatchOne: per-airline cap reached')
         break
@@ -234,8 +234,8 @@ export class SchedulerService implements ISchedulerService {
           log.warn({ airline }, 'circuit_breaker_open: skipping airline')
           break
         }
-        // Antes do claim: reivindicar já marca o job como 'running', e devolvê-lo
-        // depois de descobrir que não cabe é caro e ainda mexe no next_run_at.
+        // Before the claim: claiming already marks the job as 'running', and giving
+        // it back after finding it does not fit is expensive and moves next_run_at.
         const naCompanhia = await this.scrapingJobRepo.countInFlightByAirline(airline)
         if (naCompanhia >= perAirline) {
           log.info({ airline, naCompanhia, perAirline }, 'dispatch skipped: per-airline cap reached')
@@ -268,8 +268,8 @@ export class SchedulerService implements ISchedulerService {
       this.airportsRepo.getCountryCode(job.destination),
     ])
 
-    // Job de par: manda as duas datas para o scraper fazer UMA busca
-    // ida-e-volta, que é a única forma de o desconto de bundle aparecer.
+    // Pair job: sends both dates so the scraper does ONE round-trip search, which
+    // is the only way the bundle discount shows up.
     const returnDate = job.return_date == null
       ? null
       : typeof job.return_date === 'string'
@@ -296,13 +296,13 @@ export class SchedulerService implements ISchedulerService {
     try {
       await this.scraperClient.dispatch(payload)
     } catch (err) {
-      // Fila cheia: segura o job (pending) sem penalidade e para o dispatch.
+      // Queue full: holds the job (pending) with no penalty and stops the dispatch.
       if (err instanceof ScraperBusyError) {
         await this.scrapingJobRepo.deferJob(job.id, new Date(Date.now() + err.retryAfterMs))
         log.info({ jobId: job.id, retryAfterMs: err.retryAfterMs }, 'dispatch deferred: scraper queue full')
         return 'busy'
       }
-      // Falha real de dispatch: registra a tentativa e aplica backoff/dead.
+      // Real dispatch failure: records the attempt and applies backoff/dead.
       this.recordFailure(job.airline)
       await this.analysisRunsRepo.insertRunning(runData)
       if (job.retry_count + 1 >= job.max_retries) {
@@ -317,7 +317,7 @@ export class SchedulerService implements ISchedulerService {
       return 'error'
     }
 
-    // 202 aceito: só agora o job "existe" para o scraper — amarra request_id e run.
+    // 202 accepted: only now does the job "exist" for the scraper — ties request_id and run.
     await this.scrapingJobRepo.markRunning(job.id, requestId)
     await this.analysisRunsRepo.insertRunning(runData)
     this.recordSuccess(job.airline)
@@ -345,9 +345,9 @@ export class SchedulerService implements ISchedulerService {
     this.arm(tick, HEARTBEAT_INTERVAL_MS)
   }
 
-  // Reconciliação por lease: reclama jobs cujo worker sumiu (lost, sem penalidade)
-  // ou que estouraram o teto absoluto (hung, com penalidade). Jobs ainda vivos no
-  // worker seguem heartbeatando e NÃO são tocados.
+  // Lease-based reconciliation: reclaims jobs whose worker disappeared (lost, no
+  // penalty) or that blew the absolute ceiling (hung, with penalty). Jobs still
+  // alive in the worker keep heartbeating and are NOT touched.
   async runHeartbeatCycle(): Promise<void> {
     const { lost, hung } = await this.scrapingJobRepo.reclaimExpiredJobs(
       LEASE_TIMEOUT_SEC, LEASE_GRACE_SEC, MAX_RUN_MIN,
@@ -412,16 +412,16 @@ export class SchedulerService implements ISchedulerService {
     const now = new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })
     const d = new Date(now)
 
-    // Manutenção diária a partir das 02:00, no máximo uma vez por dia. Em vez de
-    // exigir o minuto exato (que um tick perdido/atrasado pularia para sempre),
-    // roda no primeiro tick após as 02:00 cujo bucket ainda não foi processado.
+    // Daily maintenance from 02:00, at most once a day. Instead of demanding the
+    // exact minute (which a missed/late tick would skip forever), it runs on the
+    // first tick after 02:00 whose bucket has not been processed.
     if (d.getHours() >= 2) {
       const yesterday = new Date(d)
       yesterday.setDate(yesterday.getDate() - 1)
       const bucketDate = yesterday.toISOString().slice(0, 10)
 
       if (this.lastMaintenanceBucket !== bucketDate) {
-        // Marca antes de rodar para não duplicar caso a manutenção dure mais que o tick.
+        // Marked before running so it is not duplicated if maintenance outlasts the tick.
         this.lastMaintenanceBucket = bucketDate
         await this.runDailyMaintenance(bucketDate)
       }
@@ -438,7 +438,7 @@ export class SchedulerService implements ISchedulerService {
     const runsDeleted = await this.analysisRunsRepo.cleanupOlderThan(60)
     log.info({ runsDeleted }, 'analysis_runs cleanup: old runs removed')
 
-    // Timeline de eventos tem retenção mais curta (alta cardinalidade).
+    // The event timeline has a shorter retention (high cardinality).
     const eventsDeleted = await this.analysisRunsRepo.cleanupEventsOlderThan(15)
     log.info({ eventsDeleted }, 'analysis_run_events cleanup: old timeline removed')
 

@@ -38,25 +38,25 @@ const routineBaseSchema = z.object({
 const MAX_DATE_RANGE_DAYS = 30
 
 /**
- * Teto de janela em ida-e-volta, bem menor que o de só-ida.
+ * Window ceiling on round-trip, much lower than the one-way one.
  *
- * A coleta RT é por PAR de datas: o número de buscas é o PRODUTO das duas
- * janelas, não a soma. Com o teto de 30 dias valendo para as duas, uma rotina
- * pediria 900 buscas por ciclo e por companhia — a ~2,5 min cada, mais de 37
- * horas de scraping para fechar um único ciclo. Cinco dias limita o par a 25.
+ * RT collection goes by PAIR of dates: the number of searches is the PRODUCT of the
+ * two windows, not the sum. With the 30-day ceiling applying to both, one routine
+ * would ask for 900 searches per cycle per airline — at ~2.5 min each, over 37
+ * hours of scraping to close a single cycle. Five days caps the pair at 25.
  */
 const MAX_ROUNDTRIP_RANGE_DAYS = 5
 
-/** Só-ida mantém os 30 dias; ida-e-volta cai para 5. */
+/** One-way keeps the 30 days; round-trip drops to 5. */
 function maxRangeFor(tripType: string | undefined): number {
   return tripType === 'round_trip' ? MAX_ROUNDTRIP_RANGE_DAYS : MAX_DATE_RANGE_DAYS
 }
 
 /**
- * O mesmo teto, para o PATCH — onde `tripType` pode não vir no corpo.
+ * The same ceiling, for the PATCH — where `tripType` may not come in the body.
  *
- * Datas de volta no payload denunciam ida-e-volta mesmo sem o campo: quem
- * edita a janela de volta está editando uma rotina que a tem.
+ * Return dates in the payload give round-trip away even without the field: whoever
+ * edits the return window is editing a routine that has one.
  */
 function maxRangeForPatch(d: {
   tripType?: string
@@ -174,8 +174,8 @@ export const updateRoutineSchema = routineBaseSchema
       path: ['outboundEnd'],
     }),
   )
-  // A janela de volta não era validada no PATCH — só na criação. Sem isto o teto
-  // de ida-e-volta seria contornável editando a rotina depois de criada.
+  // The return window was not validated on PATCH — only on creation. Without this
+  // the round-trip ceiling could be worked around by editing the routine afterwards.
   .refine(
     (d) => {
       if (d.inboundStart == null || d.inboundEnd == null) return true

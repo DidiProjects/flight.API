@@ -1,25 +1,25 @@
 import { FxSource } from '../interfaces/IFxRateService'
 
 export interface FetchedRate {
-  /** Quantos BRL vale 1 unidade de `currency`. */
+  /** How many BRL 1 unit of `currency` is worth. */
   rate: number
-  /** A data que o provedor declara para esta cotação (YYYY-MM-DD). */
+  /** The date the provider declares for this quote (YYYY-MM-DD). */
   rateDate: string
 }
 
 /**
- * Um provedor de cotação. Sabe falar com UMA fonte e traduzir a resposta dela.
+ * A quote provider. Knows how to talk to ONE source and translate its response.
  *
- * Não sabe de cache, de fallback nem de disjuntor — isso é política e vive no
- * `FxRateService`. Assim trocar de fonte não mexe na política, e mudar a
- * política não mexe em nenhuma fonte.
+ * It knows nothing of cache, fallback or circuit breaker — that is policy and lives
+ * in `FxRateService`. So swapping the source does not touch the policy, and changing
+ * the policy does not touch any source.
  */
 export interface IExchangeRateProvider {
   readonly source: FxSource
 
   /**
-   * Cotação de `currency` para BRL. Lança quando não consegue — quem chama
-   * trata, decide o fallback e conta a falha para o disjuntor.
+   * Quote of `currency` against BRL. Throws when it cannot — the caller handles it,
+   * decides the fallback and counts the failure towards the breaker.
    */
   fetchToBrl(currency: string): Promise<FetchedRate>
 }

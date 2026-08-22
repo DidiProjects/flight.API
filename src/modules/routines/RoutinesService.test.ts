@@ -7,10 +7,10 @@ import { IAirportsRepository } from '../airports/interfaces/IAirportsRepository'
 import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 
 /**
- * O furo que estes testes fecham: a validação de companhia vivia só na criação.
- * Criar a rotina numa companhia que suporta e depois TROCAR a companhia passava
- * batido — foi assim que nasceram rotinas com alvo híbrido em companhia sem
- * híbrido.
+ * The hole these tests close: airline validation lived only in creation. Creating
+ * the routine on an airline that supports it and then SWAPPING the airline slipped
+ * through — that is how routines with a hybrid target were born on airlines with no
+ * hybrid.
  */
 
 const AIRLINES: Record<string, AirlineRow> = {
@@ -19,7 +19,7 @@ const AIRLINES: Record<string, AirlineRow> = {
   ryanair: { code: 'ryanair', name: 'Ryanair', currency: null, active: true, has_cash: true, has_pts: false, has_hyb: false, has_roundtrip: true },
 }
 
-/** Rotina híbrida de Azul — o ponto de partida do caso relatado. */
+/** Hybrid Azul routine — the starting point of the reported case. */
 const rotinaHibridaAzul = (): RoutineRow => ({
   id: 'r1', user_id: 'u1', name: 'híbrida', airlines: ['azul'],
   origin: 'GRU', destination: 'CNF',
@@ -64,7 +64,7 @@ function makeService(existing: RoutineRow) {
 describe('RoutinesService.update — capacidade da companhia', () => {
   it('barra trocar a companhia de uma rotina híbrida para uma sem híbrido', async () => {
     const { svc } = makeService(rotinaHibridaAzul())
-    // Só a companhia muda; prioridade e alvos continuam os da rotina.
+    // Only the airline changes; priority and targets stay those of the routine.
     await expect(svc.update('r1', 'u1', { airlines: ['latam'] })).rejects.toThrow(/híbrido/)
   })
 
@@ -75,8 +75,8 @@ describe('RoutinesService.update — capacidade da companhia', () => {
   })
 
   it('deixa trocar a companhia quando os alvos incompatíveis saem no mesmo request', async () => {
-    // A edição é avaliada pelo estado FINAL: limpar o híbrido e passar a dinheiro
-    // na mesma chamada é uma rotina válida para a LATAM.
+    // The edit is judged by the FINAL state: clearing the hybrid and moving to cash
+    // in the same call is a valid routine for LATAM.
     const { svc } = makeService(rotinaHibridaAzul())
     await expect(svc.update('r1', 'u1', {
       airlines: ['latam'], priority: 'cash', targetHybPts: null, targetHybCash: null, targetCash: 300,
@@ -86,8 +86,8 @@ describe('RoutinesService.update — capacidade da companhia', () => {
   it('barra ligar prioridade em pontos numa rotina de companhia sem pontos', async () => {
     const existing = { ...rotinaHibridaAzul(), airlines: ['latam'], priority: 'cash' as const, target_hyb_pts: null, target_hyb_cash: null }
     const { svc } = makeService(existing)
-    // Nem a companhia muda aqui: é a prioridade que passa a pedir o que a
-    // companhia atual não precifica.
+    // The airline does not even change here: it is the priority that starts asking
+    // for what the current airline does not price.
     await expect(svc.update('r1', 'u1', { priority: 'pts' })).rejects.toThrow(/pontos/)
   })
 

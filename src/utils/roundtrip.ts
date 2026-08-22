@@ -1,6 +1,6 @@
 /**
- * Teto de tempo entre a ida e a volta de uma rotina round-trip.
- * Decisão de produto (2026-07-24): não é configurável por rotina.
+ * Time ceiling between the outbound and the return of a round-trip routine.
+ * Product decision (2026-07-24): not configurable per routine.
  */
 export const MAX_ROUNDTRIP_SPAN_MONTHS = 3
 
@@ -9,18 +9,18 @@ function toUtcDate(v: string | Date): Date {
   return new Date(`${s}T00:00:00Z`)
 }
 
-/** Data limite da volta para uma ida — a partir dela o par é inválido. */
+/** Latest return date for an outbound — past it the pair is invalid. */
 export function maxInboundDate(outbound: string | Date): Date {
   const d = toUtcDate(outbound)
   const limit = new Date(d)
   limit.setUTCMonth(limit.getUTCMonth() + MAX_ROUNDTRIP_SPAN_MONTHS)
-  // setUTCMonth transborda quando o dia não existe no mês destino (31/01 + 1 mês
-  // = 03/03). Recua para o último dia do mês pretendido.
+  // setUTCMonth overflows when the day does not exist in the target month (31/01
+  // + 1 month = 03/03). Step back to the last day of the intended month.
   if (limit.getUTCDate() !== d.getUTCDate()) limit.setUTCDate(0)
   return limit
 }
 
-/** Um par (ida, volta) é válido quando a volta não antecede a ida nem passa do teto. */
+/** A pair (outbound, return) is valid when the return neither precedes the outbound nor passes the ceiling. */
 export function isValidRoundTripPair(outbound: string | Date, inbound: string | Date): boolean {
   const out = toUtcDate(outbound)
   const inb = toUtcDate(inbound)
@@ -28,11 +28,11 @@ export function isValidRoundTripPair(outbound: string | Date, inbound: string | 
 }
 
 /**
- * Existe ao menos um par válido entre as duas janelas? Usado na validação da
- * rotina: janelas que não fecham nenhum par gerariam scrape sem nunca avaliar.
+ * Is there at least one valid pair between the two windows? Used in routine
+ * validation: windows that close no pair would scrape without ever evaluating.
  *
- * Existe par ⟺ alguma ida é ≤ a última volta E alguma volta cabe no teto da
- * última ida — ou seja `outStart <= inEnd` e `inStart <= maxInbound(outEnd)`.
+ * A pair exists ⟺ some outbound is ≤ the last return AND some return fits the
+ * ceiling of the last outbound — `outStart <= inEnd` and `inStart <= maxInbound(outEnd)`.
  */
 export function windowsCanFormValidPair(
   outStart: string | Date,
@@ -44,19 +44,19 @@ export function windowsCanFormValidPair(
 }
 
 /**
- * Round-trip só fecha total em DINHEIRO (decisão de 2026-08-01).
+ * Round-trip only totals in CASH (decision of 2026-08-01).
  *
- * A ida é selecionada em reais de propósito — em pontos a Azul exige login do
- * TudoAzul e a volta fica inacessível. Escolhida a tarifa de ida, a companhia
- * deixa de oferecer a troca de moeda na lista de voltas, e as voltas voltam sem
- * `fare_pts`/`fare_hyb_*`.
+ * The outbound is selected in Real on purpose — on points Azul requires a TudoAzul
+ * login and the return becomes unreachable. Once the outbound fare is chosen, the
+ * airline stops offering the currency switch on the returns list, and the returns
+ * come back without `fare_pts`/`fare_hyb_*`.
  *
- * Sem as duas pernas na mesma dimensão não há total, e uma rotina RT em pontos
- * ou híbrido nunca alertaria — ficaria ligada prometendo um aviso que não vem.
- * Barrar na entrada é honesto; aceitar e silenciar não é.
+ * Without both legs in the same dimension there is no total, and an RT routine on
+ * points or hybrid would never alert — it would stay on promising a notice that
+ * does not come. Blocking on entry is honest; accepting and going quiet is not.
  *
- * Medida temporária: cai quando a coleta de pontos da volta for resolvida
- * (bundle/Fase 2 ou outra companhia que publique a volta em pontos).
+ * A temporary measure: it falls when points collection for the return is solved
+ * (bundle/phase 2, or another airline that publishes the return in points).
  */
 export function roundTripPricingError(d: {
   priority?: string | null
