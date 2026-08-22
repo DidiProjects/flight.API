@@ -67,4 +67,13 @@ export class TargetAlertStateRepository implements ITargetAlertStateRepository {
     const res = await this.db.query(`DELETE FROM target_alert_state WHERE flight_date < CURRENT_DATE`)
     return res.rowCount ?? 0
   }
+
+  async deleteByRoutine(routineId: string): Promise<number> {
+    // Keyed by routine_id, so nothing here is shared with another routine.
+    const { rowCount } = await this.db.query(
+      `DELETE FROM target_alert_state WHERE routine_id = $1`,
+      [routineId],
+    )
+    return rowCount ?? 0
+  }
 }
