@@ -14,6 +14,8 @@ export interface InsertNotificationLogData {
 export interface INotificationLogRepository {
   findLast(routineId: string, fareType: string, airline: string): Promise<NotificationLogRow | null>
   findLastByType(routineId: string, fareType: string, type: string, airline: string): Promise<NotificationLogRow | null>
+  /** Último e-mail enviado para a rotina, de qualquer tipo. */
+  findLastForRoutine(routineId: string): Promise<NotificationLogRow | null>
   hasAlertSince(routineId: string, fareType: string, since: Date): Promise<boolean>
   hasNotificationSinceHours(routineId: string, type: string, hours: number): Promise<boolean>
   insert(data: InsertNotificationLogData): Promise<void>

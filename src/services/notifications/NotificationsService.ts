@@ -56,98 +56,11 @@ export class NotificationsService implements INotificationsService {
           continue
         }
 
-        // Round-trip lê PARES; one-way lê tarifa avulsa. Os dois mundos não se
-        // misturam: mostrar o preço de uma perna como se fosse o da viagem (ou
-        // o preço de par como se fosse avulso) seria mentira em ambos os casos.
-        const isRoundTrip = routine.trip_type === 'round_trip'
-        const allOutbound: LatestFaresByDate[] = []
-        let bestPairInbound: LatestFaresByDate | null = null
-        let bestPairTotal: number | null = null
+        const built = await this.buildDailySection(routine, owner.email)
+        if (!built) continue
 
-        if (isRoundTrip) {
-          for (const airline of routine.airlines) {
-            const rows = await this.flightFaresRepo.getLatestPairs(
-              airline, routine.origin, routine.destination,
-              toDateStr(routine.outbound_start), toDateStr(routine.outbound_end),
-              toDateStr(routine.inbound_start!), toDateStr(routine.inbound_end!),
-            )
-            const byPair = new Map<string, PairFareRow[]>()
-            for (const r of rows) {
-              const key = `${toDateStr(r.flight_date)}|${toDateStr(r.return_date)}`
-              const list = byPair.get(key)
-              if (list) list.push(r)
-              else byPair.set(key, [r])
-            }
-            for (const legs of byPair.values()) {
-              const out = this.bestFare(legs.filter((l) => !l.is_return), routine.priority)
-              const inb = this.bestFare(legs.filter((l) => l.is_return), routine.priority)
-              if (!out || !inb) continue
-              if ((out.currency ?? null) !== (inb.currency ?? null)) continue
-
-              const outV = this.fareAmount(out, routine.priority)
-              const inV = this.fareAmount(inb, routine.priority)
-              if (outV == null || inV == null) continue
-
-              const bundleRaw =
-                routine.priority === 'cash' ? (out as PairFareRow).bundle_cash :
-                routine.priority === 'pts'  ? (out as PairFareRow).bundle_pts :
-                (out as PairFareRow).bundle_hyb_pts
-              const total = bundleRaw == null ? outV + inV : Number(bundleRaw)
-
-              if (bestPairTotal == null || total < bestPairTotal) {
-                bestPairTotal = total
-                bestPairInbound = inb
-                allOutbound.length = 0
-                allOutbound.push(out)
-              }
-            }
-          }
-        } else {
-          for (const airline of routine.airlines) {
-            const outbound = await this.flightFaresRepo.getLatestByRoute(
-              airline,
-              routine.origin,
-              routine.destination,
-              toDateStr(routine.outbound_start),
-              toDateStr(routine.outbound_end),
-              null,
-            )
-            allOutbound.push(...outbound)
-          }
-        }
-
-        if (allOutbound.length === 0) {
-          log.warn({ routineId: routine.id, userId, status: 'skipped' }, 'scheduled routine skipped — no fares found')
-          continue
-        }
-
-        const bestOutbound = this.bestFare(allOutbound, routine.priority)
-        if (!bestOutbound) continue
-
-        const unsubToken = await this.unsubTokensRepo.create(routine.id, owner.email, true)
-
-        sections.push({
-          routineName:  routine.name,
-          origin:       routine.origin,
-          destination:  routine.destination,
-          passengers:   routine.passengers,
-          fareType:     routine.priority,
-          airlineOffers: [{
-            airline:  bestOutbound.airline,
-            outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
-            // A volta é a rota invertida.
-            return:   bestPairInbound
-              ? this.fareToBlock(bestPairInbound, routine.destination, routine.origin)
-              : null,
-            // O resumo agendado não passa pela avaliação, então não tem total
-            // convertido. Sem ele o e-mail mostra as pernas e omite a soma —
-            // que é o certo quando as moedas podem ser diferentes.
-            total: null,
-          }],
-          unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
-        })
-
-        logEntries.push({ routine, bestFare: bestOutbound })
+        sections.push(built.section)
+        logEntries.push({ routine, bestFare: built.bestFare })
       }
 
       if (sections.length === 0) {
@@ -181,6 +94,153 @@ export class NotificationsService implements INotificationsService {
       }
     }
   }
+
+  /**
+   * Re-sends the daily summary for a single routine, with the fares that are in
+   * the bank right now. Skips the 12h de-dup of the scheduled loop — asking for
+   * a resend is asking to bypass exactly that. `false` when the routine has no
+   * fare to show.
+   */
+  async resendDailySummary(routine: RoutineRow): Promise<boolean> {
+    const owner = await this.usersRepo.findById(routine.user_id)
+    if (!owner) {
+      log.warn({ routineId: routine.id, userId: routine.user_id }, 'resend skipped — user not found')
+      return false
+    }
+
+    const built = await this.buildDailySection(routine, owner.email)
+    if (!built) return false
+
+    await this.emailSvc.sendDailyBest({ primaryEmail: owner.email, routines: [built.section] })
+
+    log.info({
+      routineId:      routine.id,
+      userId:         owner.id,
+      routineName:    routine.name,
+      airline:        built.bestFare.airline,
+      type:           'scheduled',
+      trigger:        'manual-resend',
+      outboundAmount: this.fareAmount(built.bestFare, routine.priority),
+      status:         'success',
+    }, 'daily summary resent by admin')
+
+    await this.notifLogRepo.insert({
+      routineId:      routine.id,
+      airline:        built.bestFare.airline,
+      type:           'scheduled',
+      fareType:       routine.priority,
+      outboundAmount: this.fareAmount(built.bestFare, routine.priority),
+      returnAmount:   null,
+      emailTo:        owner.email,
+      emailCc:        null,
+    })
+
+    return true
+  }
+
+  /**
+   * The daily-summary block for one routine, or `null` when there is no fare to
+   * show. Extracted from the scheduled loop so the manual resend can build the
+   * very same block for a single routine.
+   */
+  private async buildDailySection(
+    routine: RoutineRow,
+    ownerEmail: string,
+  ): Promise<{ section: DailyBestRoutineSection; bestFare: LatestFaresByDate } | null> {
+      // Round-trip lê PARES; one-way lê tarifa avulsa. Os dois mundos não se
+      // misturam: mostrar o preço de uma perna como se fosse o da viagem (ou
+      // o preço de par como se fosse avulso) seria mentira em ambos os casos.
+      const isRoundTrip = routine.trip_type === 'round_trip'
+      const allOutbound: LatestFaresByDate[] = []
+      let bestPairInbound: LatestFaresByDate | null = null
+      let bestPairTotal: number | null = null
+
+      if (isRoundTrip) {
+        for (const airline of routine.airlines) {
+          const rows = await this.flightFaresRepo.getLatestPairs(
+            airline, routine.origin, routine.destination,
+            toDateStr(routine.outbound_start), toDateStr(routine.outbound_end),
+            toDateStr(routine.inbound_start!), toDateStr(routine.inbound_end!),
+          )
+          const byPair = new Map<string, PairFareRow[]>()
+          for (const r of rows) {
+            const key = `${toDateStr(r.flight_date)}|${toDateStr(r.return_date)}`
+            const list = byPair.get(key)
+            if (list) list.push(r)
+            else byPair.set(key, [r])
+          }
+          for (const legs of byPair.values()) {
+            const out = this.bestFare(legs.filter((l) => !l.is_return), routine.priority)
+            const inb = this.bestFare(legs.filter((l) => l.is_return), routine.priority)
+            if (!out || !inb) continue
+            if ((out.currency ?? null) !== (inb.currency ?? null)) continue
+
+            const outV = this.fareAmount(out, routine.priority)
+            const inV = this.fareAmount(inb, routine.priority)
+            if (outV == null || inV == null) continue
+
+            const bundleRaw =
+              routine.priority === 'cash' ? (out as PairFareRow).bundle_cash :
+              routine.priority === 'pts'  ? (out as PairFareRow).bundle_pts :
+              (out as PairFareRow).bundle_hyb_pts
+            const total = bundleRaw == null ? outV + inV : Number(bundleRaw)
+
+            if (bestPairTotal == null || total < bestPairTotal) {
+              bestPairTotal = total
+              bestPairInbound = inb
+              allOutbound.length = 0
+              allOutbound.push(out)
+            }
+          }
+        }
+      } else {
+        for (const airline of routine.airlines) {
+          const outbound = await this.flightFaresRepo.getLatestByRoute(
+            airline,
+            routine.origin,
+            routine.destination,
+            toDateStr(routine.outbound_start),
+            toDateStr(routine.outbound_end),
+            null,
+          )
+          allOutbound.push(...outbound)
+        }
+      }
+
+      if (allOutbound.length === 0) {
+        log.warn({ routineId: routine.id, userId: routine.user_id, status: 'skipped' }, 'scheduled routine skipped — no fares found')
+        return null
+      }
+
+      const bestOutbound = this.bestFare(allOutbound, routine.priority)
+      if (!bestOutbound) return null
+
+      const unsubToken = await this.unsubTokensRepo.create(routine.id, ownerEmail, true)
+
+      const section: DailyBestRoutineSection = {
+        routineName:  routine.name,
+        origin:       routine.origin,
+        destination:  routine.destination,
+        passengers:   routine.passengers,
+        fareType:     routine.priority,
+        airlineOffers: [{
+          airline:  bestOutbound.airline,
+          outbound: this.fareToBlock(bestOutbound, routine.origin, routine.destination),
+          // A volta é a rota invertida.
+          return:   bestPairInbound
+            ? this.fareToBlock(bestPairInbound, routine.destination, routine.origin)
+            : null,
+          // O resumo agendado não passa pela avaliação, então não tem total
+          // convertido. Sem ele o e-mail mostra as pernas e omite a soma —
+          // que é o certo quando as moedas podem ser diferentes.
+          total: null,
+        }],
+        unsubLink: `${this.env.API_BASE_URL}/unsubscribe/${unsubToken}`,
+      }
+
+      return { section, bestFare: bestOutbound }
+  }
+
 
   async dispatchAlert(
     routine: RoutineRow,
