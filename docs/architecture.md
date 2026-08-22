@@ -81,6 +81,7 @@ O flight.API é o **hub** entre o worker de scraping e o painel Admin. Detalhes 
 - **Persistência** (`realtimePersistence.ts`): grava cada evento em `analysis_run_events` (timeline idempotente por `seq`). `job.finished` com status `cancelled` é a **única fonte** (não há webhook em cancel) → marca `analysis_runs` cancelled e libera o job (volta a `pending`, não conta como falha).
 - **SSE → admin** (`sseHub.ts`): `GET /flight/admin/stream` (JWT admin por query param, pois `EventSource` não envia header). 1º evento `job.snapshot`; depois fan-out em memória de `job.upsert`/`job.event`/`job.removed`. Ring-buffer + `Last-Event-ID` para reconexão sem buracos.
 - **Controle REST** (`modules/admin`): `GET /admin/jobs`, `GET /admin/jobs/:requestId/events`, `POST /admin/jobs/:requestId/cancel`.
+- **Ações por rotina** (`modules/admin`): `POST /admin/routines/:routineId/resend-last-notification` remonta e reenvia o último e-mail da rotina com as tarifas atuais (o tipo vem do `notification_log`); `POST /admin/routines/:routineId/reset-analyses` zera `analysis_runs`/eventos, devolve os `scraping_jobs` ao estado inicial e apaga o watermark. Como run e job são chaveados por ROTA, só é tocado o que **apenas** aquela rotina alcança — o resto é reportado como preservado.
 
 > Escala atual: fan-out em memória. Para flight.API horizontal, trocar por Redis pub/sub (ver features.md §10).
 
