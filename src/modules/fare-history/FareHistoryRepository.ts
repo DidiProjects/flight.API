@@ -206,7 +206,7 @@ export class FareHistoryRepository implements IFareHistoryRepository {
         LIMIT 1
       ),
       segs AS (
-        SELECT h.id, h.amount_cash, h.amount_pts, h.observed_from, h.last_seen_at
+        SELECT h.id, h.amount_cash, h.amount_pts, h.amount_hyb_pts, h.amount_hyb_cash, h.observed_from, h.last_seen_at
         FROM fare_price_history h
         JOIN itins i ON i.id = h.itinerary_id
         WHERE h.currency = (SELECT currency FROM cur)
@@ -221,6 +221,8 @@ export class FareHistoryRepository implements IFareHistoryRepository {
         (SELECT currency FROM cur) AS currency,
         MIN(s.amount_cash)         AS min_cash,
         MIN(s.amount_pts)          AS min_pts,
+        MIN(s.amount_hyb_pts)      AS min_hyb_pts,
+        MIN(s.amount_hyb_cash)     AS min_hyb_cash,
         COUNT(s.id)::int           AS samples
       FROM buckets b
       -- A segment counts for the bucket it OVERLAPS, not the one it started in.
@@ -239,6 +241,8 @@ export class FareHistoryRepository implements IFareHistoryRepository {
         bucket_start: r.bucket_start,
         min_cash: r.min_cash,
         min_pts: r.min_pts,
+        min_hyb_pts: r.min_hyb_pts,
+        min_hyb_cash: r.min_hyb_cash,
         samples: r.samples,
       })),
     }

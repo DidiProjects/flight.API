@@ -38,6 +38,9 @@ export interface FareHistoryBucket {
   bucket_start: Date
   min_cash: string | null
   min_pts: string | null
+  /** Hybrid keeps its two components: the points side is what the card charts. */
+  min_hyb_pts: string | null
+  min_hyb_cash: string | null
   samples: number
 }
 
