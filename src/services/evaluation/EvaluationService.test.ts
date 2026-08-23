@@ -456,6 +456,59 @@ describe('EvaluationService', () => {
       expect(inboundArg?.get('2026-08-15')?.is_return).toBe(true)
     })
 
+    // ── regressão medida em 2026-08-23 ────────────────────────────────────────
+    // A rotina "teste 1" mandou nove e-mails com o MESMO preço, um por data
+    // coletada. O total do par era somado em ponto flutuante — 1178.54 + 1188.61
+    // dá 2367.1499999999996 — e o piso vinha de NUMERIC(12,2), que devolve
+    // 2367.15. O `>=` do gate lia a diferença de 4.5e-13 como recorde novo.
+    it('data nova com o mesmo total do piso — grava watermark e NÃO manda e-mail', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1178.54, inCash: 1188.61 }))
+      vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2026-08-14': 2367.15 }))
+
+      await svc.runCycle()
+
+      // O total soma no centavo, igual ao que a coluna guardaria.
+      const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2367.15 })])
+      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+    })
+
+    it('queda menor que a margem de 1% não manda e-mail', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      // 2350,00 contra 2367,15: queda de 0,72%.
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1175.00, inCash: 1175.00 }))
+      vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2026-08-15': 2367.15 }))
+
+      await svc.runCycle()
+
+      expect(mockAlertStateRepo.recordNotified).not.toHaveBeenCalled()
+      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+    })
+
+    it('queda de um centavo não manda e-mail', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1178.53, inCash: 1188.61 }))
+      vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2026-08-15': 2367.15 }))
+
+      await svc.runCycle()
+
+      expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
+    })
+
+    it('queda a partir de 1% manda e-mail', async () => {
+      vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
+      // 2343,47 contra 2367,15: exatamente 1%.
+      givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1178.54, inCash: 1164.93 }))
+      vi.mocked(mockAlertStateRepo.getWatermarks).mockResolvedValue(wm({ '2026-08-15': 2367.15 }))
+
+      await svc.runCycle()
+
+      const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
+      expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2343.47 })])
+      expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
+    })
+
     it('bundle da companhia vence a soma das pernas', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
       givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300, bundle: 2100 }))
