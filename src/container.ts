@@ -14,10 +14,12 @@ import { ScrapingJobRepository }      from './modules/scraping-jobs/ScrapingJobR
 import { FlightFaresRepository }      from './modules/flight-fares/FlightFaresRepository'
 import { AnalysisRunsRepository }     from './modules/analysis-runs/AnalysisRunsRepository'
 import { TargetAlertStateRepository } from './modules/target-alert-state/TargetAlertStateRepository'
+import { FareHistoryRepository }      from './modules/fare-history/FareHistoryRepository'
 
 // Services
 import { HttpScraperClient }    from './services/scraper-client/HttpScraperClient'
 import { FlightFaresService }   from './modules/flight-fares/FlightFaresService'
+import { FareHistoryService }   from './modules/fare-history/FareHistoryService'
 import { EmailService }         from './services/email/EmailService'
 import { NotificationsService } from './services/notifications/NotificationsService'
 import { AuthService }          from './modules/auth/AuthService'
@@ -55,6 +57,7 @@ const scrapingJobRepo  = new ScrapingJobRepository(pool)
 const flightFaresRepo  = new FlightFaresRepository(pool)
 const analysisRunsRepo = new AnalysisRunsRepository(pool)
 const alertStateRepo   = new TargetAlertStateRepository(pool)
+const fareHistoryRepo  = new FareHistoryRepository(pool)
 
 // ── Realtime ────────────────────────────────────────────────────────────────
 const hubBus              = new HubBus()
@@ -72,6 +75,7 @@ const fxSvc  = new FxRateService(
 )
 
 const flightFaresSvc = new FlightFaresService(flightFaresRepo)
+const fareHistorySvc = new FareHistoryService(fareHistoryRepo)
 const emailSvc = new EmailService(env)
 
 const notifSvc = new NotificationsService(
@@ -92,9 +96,9 @@ const authSvc      = new AuthService(usersRepo, authRepo, refreshTokenRepo, emai
 const usersSvc     = new UsersService(usersRepo, emailSvc)
 const airlinesSvc  = new AirlinesService(airlinesRepo, routinesRepo)
 const routinesSvc  = new RoutinesService(routinesRepo, airlinesRepo, airportsRepo, flightFaresRepo)
-const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo, fxSvc)
+const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo, fxSvc, fareHistoryRepo)
 const unsubSvc     = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
-const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo, scraperClient, workerGateway, airportsRepo)
+const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo, scraperClient, workerGateway, airportsRepo, fareHistoryRepo)
 const airportsSvc  = new AirportsService(airportsRepo, airlinesRepo)
 const analysisRunsSvc = new AnalysisRunsService(routinesRepo, analysisRunsRepo)
 const adminSvc        = new AdminService(
@@ -112,6 +116,7 @@ export const container = {
   unsubSvc,
   schedulerSvc,
   flightFaresSvc,
+  fareHistorySvc,
   analysisRunsSvc,
   adminSvc,
   scrapingJobRepo,

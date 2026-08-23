@@ -29,7 +29,11 @@ Repositório não fala com a rede. Quem abre socket é service.
 - **Senhas só com `bcryptjs` (12 rounds)** via `src/utils/crypto.ts`. Nunca
   PBKDF2 — o banco usa pgcrypto/bcrypt e os hashes precisam bater.
 - **`tsconfig.json` exclui `**/*.test.ts`**: erro de tipo em teste não aparece
-  no `npm run typecheck`. Só rodando os testes.
+  no `npm run typecheck`. Só rodando os testes. Pior caso medido: argumento novo
+  no construtor de um service deixa o mock do teste desatualizado, a dependência
+  chega `undefined` e o `try/catch` engole o `TypeError` — a suíte fica verde
+  sobre um caminho que não faz nada. Ao mexer em construtor, procurar os
+  `new <Service>(` dos testes na mão.
 - **Bloqueio de companhia se decide pelo `outcome` do callback**, não pelo texto
   do erro. O casamento por regex sobrou como retaguarda para callback sem
   `outcome`, e era ele que pausava a LATAM por uma hora por causa de um "likely
