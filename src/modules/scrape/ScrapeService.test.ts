@@ -4,6 +4,7 @@ import type { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/in
 import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
+import type { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
 import type { ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -101,7 +102,12 @@ function makeMocks() {
     convert: vi.fn(),
   } satisfies Partial<IFxRateService> as unknown as IFxRateService
 
-  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx }
+  const mockFareHistoryRepo = {
+    recordRun:            vi.fn().mockResolvedValue(0),
+    cleanupNotSeenSince:  vi.fn().mockResolvedValue(0),
+  } satisfies IFareHistoryRepository as IFareHistoryRepository
+
+  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx, mockFareHistoryRepo }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -110,6 +116,7 @@ describe('ScrapeService.processCallback', () => {
   let mockScrapingJobRepo: IScrapingJobRepository
   let mockFlightFaresRepo: IFlightFaresRepository
   let mockAnalysisRunsRepo: IAnalysisRunsRepository
+  let mockFareHistoryRepo: IFareHistoryRepository
   let svc: ScrapeService
 
   beforeEach(() => {
@@ -117,7 +124,8 @@ describe('ScrapeService.processCallback', () => {
     mockScrapingJobRepo = mocks.mockScrapingJobRepo
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
     mockAnalysisRunsRepo = mocks.mockAnalysisRunsRepo
-    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx)
+    mockFareHistoryRepo = mocks.mockFareHistoryRepo
+    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx, mockFareHistoryRepo)
   })
 
   it('requestId desconhecido — retorna sem chamar insertMany', async () => {
@@ -305,6 +313,33 @@ describe('ScrapeService.processCallback', () => {
 
     expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledOnce()
     expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledWith(job.id, expect.any(Date))
+  })
+
+  it('o histórico curado é alimentado com o request_id da coleta', async () => {
+    const job = makeJob({ flight_date: '2026-07-01' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+
+    await svc.processCallback(makeCallback({ flights: [makeFlightOffer()] }))
+
+    expect(mockFareHistoryRepo.recordRun).toHaveBeenCalledWith('req-00000-0000-0000-0000-000000000001')
+  })
+
+  // The history is fed inside a try/catch, so a broken repository would leave the
+  // suite green while nothing was recorded. This pins the collection as the part
+  // that must survive, and the history as the part allowed to fail.
+  it('histórico que falha não derruba a coleta nem o reagendamento', async () => {
+    const job = makeJob({ flight_date: '2026-07-01' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
+    vi.mocked(mockScrapingJobRepo.markSuccess).mockResolvedValue(undefined)
+    vi.mocked(mockFareHistoryRepo.recordRun).mockRejectedValue(new Error('boom'))
+
+    await expect(svc.processCallback(makeCallback({ flights: [makeFlightOffer()] }))).resolves.toBeUndefined()
+
+    expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledOnce()
   })
 
   it('volta carrega o vinculo com a ida que a precificou', async () => {

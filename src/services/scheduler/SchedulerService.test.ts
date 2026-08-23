@@ -3,6 +3,7 @@ import { SchedulerService } from './SchedulerService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import type { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
+import type { IFareHistoryRepository } from '../../modules/fare-history/interfaces/IFareHistoryRepository'
 import type { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import type { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
 import type { IScraperClient } from '../scraper-client/IScraperClient'
@@ -115,6 +116,13 @@ function makeAnalysisRunsRepoMock(): IAnalysisRunsRepository {
   } as unknown as IAnalysisRunsRepository
 }
 
+function makeFareHistoryRepoMock(): IFareHistoryRepository {
+  return {
+    recordRun:           vi.fn().mockResolvedValue(0),
+    cleanupNotSeenSince: vi.fn().mockResolvedValue(0),
+  } satisfies IFareHistoryRepository
+}
+
 function makeNotifMock(): INotificationsService {
   return {
     evaluate:        vi.fn().mockResolvedValue(undefined),
@@ -145,6 +153,7 @@ function makeSvc(
   cancelDispatcher = makeCancelDispatcherMock(),
 ) {
   const analysisRunsRepo = makeAnalysisRunsRepoMock()
+  const fareHistoryRepo = makeFareHistoryRepoMock()
   const svc = new SchedulerService(
     scrapingJobRepo,
     makeFlightFaresRepoMock(),
@@ -155,8 +164,9 @@ function makeSvc(
     scraperClient,
     cancelDispatcher as never,
     { getCountryCode: vi.fn().mockResolvedValue(null) } as never,
+    fareHistoryRepo,
   )
-  return { svc, scraperClient, cancelDispatcher, analysisRunsRepo }
+  return { svc, scraperClient, cancelDispatcher, analysisRunsRepo, fareHistoryRepo }
 }
 
 describe('SchedulerService — dispatch loop', () => {

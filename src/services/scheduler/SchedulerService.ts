@@ -4,6 +4,7 @@ import { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-j
 import { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { IAirportsRepository } from '../../modules/airports/interfaces/IAirportsRepository'
 import { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
+import { IFareHistoryRepository } from '../../modules/fare-history/interfaces/IFareHistoryRepository'
 import { INotificationsService } from '../notifications/interfaces/INotificationsService'
 import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
 import { IScraperClient, ScraperBusyError } from '../scraper-client/IScraperClient'
@@ -93,6 +94,7 @@ export class SchedulerService implements ISchedulerService {
     private readonly scraperClient: IScraperClient,
     private readonly cancelDispatcher: ICancelDispatcher,
     private readonly airportsRepo: IAirportsRepository,
+    private readonly fareHistoryRepo: IFareHistoryRepository,
   ) {}
 
   async pruneOrphans(): Promise<void> {
@@ -447,6 +449,11 @@ export class SchedulerService implements ISchedulerService {
 
     const alertStateCleaned = await this.evaluationSvc.cleanupAlertState()
     log.info({ alertStateCleaned }, 'target_alert_state cleanup: past-date cells removed')
+
+    // Itineraries off the radar for a month. Their history goes with them
+    // (CASCADE): a flight that no longer sells has a series nobody reads.
+    const itinerariesCleaned = await this.fareHistoryRepo.cleanupNotSeenSince(30)
+    log.info({ itinerariesCleaned }, 'fare_itineraries cleanup: stale itineraries removed')
   }
 
   // ---------------------------------------------------------------------------
