@@ -1,21 +1,21 @@
 import { CurrentBest, PriceByDate, PriceHistory } from './IFlightFaresRepository'
 
-/** Um TRAJETO voado: de um aeroporto a outro. Hoje um por jornada. */
+/** One flown SEGMENT: airport to airport. One per journey today. */
 export interface Segment {
   origin: string
   destination: string
 }
 
 /**
- * O que a companhia VENDE e precifica: a ida, ou a volta.
+ * What the airline SELLS and prices: the outbound, or the return.
  *
- * O dinheiro mora aqui — não no trajeto — porque é assim que a tarifa é cotada.
- * `segments` tem um elemento hoje; o dia em que a conexão for modelada, tem N,
- * e nada no contrato precisa mudar.
+ * The money lives here — not on the segment — because that is how the fare is
+ * quoted. `segments` has one element today; the day connections are modelled it
+ * has N, and nothing in the contract has to change.
  */
 export interface Journey {
   direction: 'outbound' | 'inbound'
-  /** Moeda DESTA jornada, como a companhia cobrou. */
+  /** Currency of THIS journey, as the airline charged it. */
   currency: string | null
   cash: number | null
   pts: number | null
@@ -26,17 +26,17 @@ export interface Journey {
 
 export type FlightFaresCurrent = PriceHistory & CurrentBest & {
   /**
-   * As jornadas do melhor par: uma em só-ida, duas em ida-e-volta.
+   * The journeys of the best pair: one on one-way, two on round-trip.
    *
-   * Substitui os oito campos achatados (`best_cash_outbound`, `best_pts_inbound`
-   * …), que não comportavam moeda por jornada sem virar doze. Os antigos seguem
-   * no payload enquanto o front não migra.
+   * Replaces the eight flattened fields (`best_cash_outbound`, `best_pts_inbound`
+   * …), which could not carry a currency per journey without becoming twelve. The
+   * old ones stay in the payload until the front migrates.
    *
-   * ⚠ Medido em 2026-08-04: as duas jornadas de um par NUNCA têm moedas
-   * diferentes (196 linhas, 11 execuções, zero divergência). A busca RT é
-   * precificada no mercado de quem parte, e as duas pernas saem juntas. Moeda
-   * diferente aparece entre ROTINAS distintas — a mesma perna colhida por uma
-   * busca RT e por uma só-ida que parte do outro lado.
+   * ⚠ Measured on 2026-08-04: the two journeys of a pair NEVER have different
+   * currencies (196 rows, 11 runs, zero divergence). An RT search is priced in the
+   * market of departure, and both legs come out together. A different currency
+   * appears between distinct ROUTINES — the same leg collected by an RT search and
+   * by a one-way leaving from the other side.
    */
   journeys: Journey[]
 }

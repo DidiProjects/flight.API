@@ -17,8 +17,8 @@ const parse = (o: Record<string, unknown>) => createRoutineSchema.safeParse({ ..
 const errorOn = (r: ReturnType<typeof parse>) =>
   r.success ? null : r.error.issues[0].message
 
-// Ida-e-volta tem teto de 5 dias por janela, então o `base` (9 dias de ida, que
-// é legítimo em só-ida) não serve de ponto de partida para os casos de par.
+// Round-trip has a 5-day ceiling per window, so `base` (a 9-day outbound, which is
+// legitimate on one-way) is no starting point for the pair cases.
 const rtIda = { outboundStart: '2026-08-01', outboundEnd: '2026-08-05' }
 
 describe('createRoutineSchema — round-trip', () => {
@@ -64,9 +64,9 @@ describe('createRoutineSchema — round-trip', () => {
 })
 
 /**
- * O teto de 5 dias existe porque a coleta RT é por PAR: o número de buscas é o
- * PRODUTO das janelas. Com 30 dias dos dois lados seriam 900 buscas por ciclo e
- * por companhia; com 5, no máximo 25.
+ * The 5-day ceiling exists because RT collection goes by PAIR: the number of
+ * searches is the PRODUCT of the windows. With 30 days on both sides that would be
+ * 900 searches per cycle per airline; with 5, at most 25.
  */
 describe('createRoutineSchema — teto de 5 dias no round-trip', () => {
   const volta = { inboundStart: '2026-08-20', inboundEnd: '2026-08-24' }
@@ -90,7 +90,7 @@ describe('createRoutineSchema — teto de 5 dias no round-trip', () => {
   })
 
   it('só-ida continua aceitando 30 dias', () => {
-    // O teto é do par, não do produto: uma perna avulsa não multiplica nada.
+    // The ceiling belongs to the pair, not to the product: a loose leg multiplies nothing.
     expect(parse({ outboundStart: '2026-08-01', outboundEnd: '2026-08-31' }).success).toBe(true)
   })
 
@@ -101,9 +101,9 @@ describe('createRoutineSchema — teto de 5 dias no round-trip', () => {
 })
 
 /**
- * Round-trip só fecha total em dinheiro: a companhia não publica o preço da
- * volta em pontos (a ida é escolhida em reais, e aí some o seletor de moeda da
- * lista de voltas). Aceitar pts/hyb criaria rotina ligada que nunca alerta.
+ * Round-trip only totals in cash: the airline does not publish the return price in
+ * points (the outbound is chosen in Real, and the currency selector then disappears
+ * from the returns list). Accepting pts/hyb would create a routine that never alerts.
  */
 describe('createRoutineSchema — round-trip só em dinheiro', () => {
   const rt = { ...rtIda, tripType: 'round_trip', inboundStart: '2026-08-20', inboundEnd: '2026-08-25' }
@@ -119,14 +119,14 @@ describe('createRoutineSchema — round-trip só em dinheiro', () => {
   })
 
   it('alvo em pontos é rejeitado mesmo com prioridade em dinheiro', () => {
-    // A prioridade manda no que é exibido, mas o alvo em pontos seria avaliado
-    // contra um total que nunca existe.
+    // Priority rules what is displayed, but the points target would be evaluated
+    // against a total that never exists.
     expect(errorOn(parse({ ...rt, priority: 'cash', targetPts: 30000 })))
       .toMatch(/só aceita alvo em dinheiro/)
   })
 
   it('one_way continua aceitando pontos e híbrido', () => {
-    // A restrição é do par, não do produto: perna avulsa tem preço em pontos.
+    // The restriction belongs to the pair, not the product: a loose leg has a points price.
     expect(parse({ priority: 'pts', targetPts: 30000, targetCash: null }).success).toBe(true)
     expect(parse({ priority: 'hyb', targetHybPts: 10000, targetHybCash: 500, targetCash: null }).success).toBe(true)
   })

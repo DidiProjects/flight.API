@@ -36,7 +36,7 @@ declare module '@fastify/jwt' {
   }
 }
 
-// Decorators de auth adicionados à instância Fastify
+// Auth decorators added to the Fastify instance
 declare module 'fastify' {
   interface FastifyInstance {
     authenticate:           (req: FastifyRequest) => Promise<void>

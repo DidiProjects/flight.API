@@ -18,7 +18,7 @@ export interface AirlineRow {
   has_cash: boolean
   has_pts: boolean
   has_hyb: boolean
-  /** Sabe fazer busca ida-e-volta numa sessão só (pré-requisito para round_trip). */
+  /** Can search round-trip in a single session (prerequisite for round_trip). */
   has_roundtrip: boolean
 }
 

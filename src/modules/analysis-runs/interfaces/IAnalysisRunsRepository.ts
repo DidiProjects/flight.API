@@ -43,7 +43,7 @@ export interface InsertRunningData {
   origin: string
   destination: string
   flightDate: string
-  /** Preenchido quando a execução é uma busca ida-e-volta. */
+  /** Filled when the run was a round-trip search. */
   returnDate?: string | null
 }
 
@@ -62,13 +62,13 @@ export interface RoutineMatchParams {
   limit?: number
 }
 
-/** Saldo do reset: o que saiu e o que ficou, e por quê. */
+/** Balance of the reset: what went out and what stayed, and why. */
 export interface DeleteRunsResult {
   runs: number
   events: number
-  /** Execuções em andamento — o callback do scraper ainda vai cair nelas. */
+  /** Runs in progress — the scraper callback is still going to land on them. */
   running: number
-  /** Execuções que outra rotina também cobre. */
+  /** Runs another routine also covers. */
   shared: number
 }
 

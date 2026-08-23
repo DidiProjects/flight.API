@@ -8,17 +8,17 @@ import type { INotificationsService } from '../notifications/interfaces/INotific
 import type { RoutineRow } from '../../types/index'
 
 /**
- * Watermark de teste. A composição fica `null` de propósito no default: é o
- * estado das linhas gravadas antes de a composição existir, e o comportamento
- * delas não pode regredir.
+ * Test watermark. The composition is `null` on purpose in the default: that is
+ * the state of rows written before the composition existed, and their behaviour
+ * must not regress.
  */
 function wm(entries: Record<string, number>): Map<string, WatermarkState> {
   return new Map(Object.entries(entries).map(([d, amount]) => [d, { amount, breakdown: null }]))
 }
 
-// O erro de par incompleto é o que chega no Grafana; o teste precisa distinguir
-// "descartado e reportado" de "tolerado em silêncio". O serviço loga por
-// logger.child(), então o mock precisa ser do módulo, não um spy no logger raiz.
+// The incomplete-pair error is what reaches Grafana; the test has to tell
+// "discarded and reported" from "tolerated silently". The service logs through
+// logger.child(), so the mock has to be of the module, not a spy on the root logger.
 const logSpy = vi.hoisted(() => ({
   error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(),
 }))
@@ -103,7 +103,7 @@ function makeMocks() {
     getPriceHistory:  vi.fn().mockResolvedValue(makeHistory()),
   } satisfies Partial<IFlightFaresRepository> as unknown as IFlightFaresRepository
 
-  // Por padrão o "banco" confirma como avançadas todas as datas candidatas.
+  // By default the "bank" confirms every candidate date as advanced.
   const mockAlertStateRepo = {
     getWatermarks:   vi.fn().mockResolvedValue(new Map<string, WatermarkState>()),
     recordNotified:  vi.fn().mockImplementation(
@@ -116,8 +116,8 @@ function makeMocks() {
     dispatchAlert: vi.fn().mockResolvedValue(undefined),
   } satisfies Partial<INotificationsService> as unknown as INotificationsService
 
-  // Câmbio: por padrão a tarifa já está em Real, então a conversão é identidade
-  // e os testes existentes seguem falando dos mesmos números.
+  // Exchange: by default the fare is already in Real, so conversion is the identity
+  // and the existing tests keep talking about the same numbers.
   const mockFx = {
     toBrl: vi.fn(async (amount: number, currency: string) =>
       currency === 'BRL'
@@ -258,7 +258,7 @@ describe('EvaluationService', () => {
     expect(mockNotifSvc.dispatchAlert).toHaveBeenCalledOnce()
     const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
     expect(fares.map((f) => f.flight_date)).toEqual(['2027-02-25', '2027-02-22', '2027-02-28'])
-    // watermarks gravados para as 3 datas
+    // watermarks written for the 3 dates
     const [, , entries] = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0]
     expect(entries.map((e: AlertWatermark) => e.flightDate).sort()).toEqual(['2027-02-22', '2027-02-25', '2027-02-28'])
   })
@@ -284,9 +284,9 @@ describe('EvaluationService', () => {
   })
 
   it('data nova no alvo com preço >= piso da rotina — grava watermark mas suprime o e-mail', async () => {
-    // Cenário do bug: a rotina já alertou 3100 (data 22). Uma data NOVA (25)
-    // entra no alvo com o mesmo/pior preço (3350). Sem o gate de recorde isso
-    // mandava um e-mail por ciclo, todos no mesmo preço, só mudando a data.
+    // The bug scenario: the routine already alerted 3100 (date 22). A NEW date (25)
+    // enters target at the same or a worse price (3350). Without the record gate
+    // that sent one e-mail per cycle, all at the same price, only the date changing.
     const routine = makeRoutine({ target_cash: 4000, margin: 0 })
     const d25 = makeFare({ flight_date: '2027-02-25', fare_cash: 3350 })
 
@@ -296,11 +296,11 @@ describe('EvaluationService', () => {
 
     await svc.runCycle()
 
-    // O watermark por data é gravado (histórico/monotonicidade intactos)...
+    // The per-date watermark is written (history/monotonicity intact)...
     expect(mockAlertStateRepo.recordNotified).toHaveBeenCalledWith(
       routine.id, 'cash', [expect.objectContaining({ flightDate: '2027-02-25', amount: 3350, airline: 'azul' })],
     )
-    // ...mas nenhum e-mail é enviado, pois 3350 não bate o piso 3100.
+    // ...but no e-mail goes out, since 3350 does not beat the 3100 floor.
     expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
   })
 
@@ -319,9 +319,9 @@ describe('EvaluationService', () => {
   })
 
   it('empate de preço entre datas — histórico e headline são da tarifa coletada mais recentemente (alinha com o card)', async () => {
-    // Duas datas no mesmo preço; o e-mail renderiza a de scraped_at mais recente
-    // (desempate do dispatchAlert). O histórico tem que ser calculado para ESSA
-    // mesma data — senão o card mostra uma data e o "% abaixo da média" outra.
+    // Two dates at the same price; the e-mail renders the one with the most recent
+    // scraped_at (the dispatchAlert tiebreak). History has to be computed for THAT
+    // same date — otherwise the card shows one date and the "% below average" another.
     const routine = makeRoutine({ target_cash: 4000, margin: 0 })
     const older = makeFare({ flight_date: '2027-02-22', fare_cash: 3100, scraped_at: new Date('2026-06-30T08:00:00Z') })
     const newer = makeFare({ flight_date: '2027-02-25', fare_cash: 3100, scraped_at: new Date('2026-06-30T18:00:00Z') })
@@ -331,9 +331,9 @@ describe('EvaluationService', () => {
 
     await svc.runCycle()
 
-    // histórico buscado para a data da headline (a mais recente em scraped_at)
+    // history fetched for the headline date (the most recent by scraped_at)
     expect(mockFlightFaresRepo.getPriceHistory).toHaveBeenCalledWith('azul', 'VCP', 'LIS', '2027-02-25')
-    // e offers[0] (o que o dispatchAlert renderiza) é a mesma tarifa
+    // and offers[0] (what dispatchAlert renders) is the same fare
     const [, fares] = vi.mocked(mockNotifSvc.dispatchAlert).mock.calls[0]
     expect(fares[0].flight_date).toBe('2027-02-25')
   })
@@ -372,7 +372,7 @@ describe('EvaluationService', () => {
 
   it('escolhe o menor preço NUMÉRICO quando fare_cash vem como string do pg (regressão)', async () => {
     const routine = makeRoutine({ target_cash: 2000, margin: 0 })
-    // pg devolve NUMERIC como string; "1076.00" < "652.00" é true lexicograficamente.
+    // pg returns NUMERIC as a string; "1076.00" < "652.00" is true lexicographically.
     const expensive = makeFare({ flight_date: '2026-08-11', fare_cash: '1076.00' as unknown as number })
     const cheap     = makeFare({ flight_date: '2026-08-11', fare_cash: '652.00' as unknown as number })
 
@@ -407,7 +407,7 @@ describe('EvaluationService', () => {
     expect(n).toBe(7)
     expect(mockAlertStateRepo.cleanupPastDates).toHaveBeenCalledOnce()
   })
-  // -- round-trip: coleta por PAR ---------------------------------------------
+  // -- round-trip: collection by PAIR ------------------------------------------
 
   describe('round_trip', () => {
     const rtRoutine = () => makeRoutine({
@@ -417,13 +417,13 @@ describe('EvaluationService', () => {
       target_cash:   3000,
     })
 
-    // Uma busca RT devolve as DUAS pernas do mesmo par, compartilhando o
-    // request_id da execução — que é a identidade do par.
+    // An RT search returns BOTH legs of the same pair, sharing the request_id of
+    // the run — which is the identity of the pair.
     //
-    // ATENÇÃO: a perna de volta tem flight_date igual à data DELA (a data de
-    // volta), não à data da ida. A data de ida do par vem em pair_outbound_date.
-    // O fixture antigo dava o mesmo flight_date às duas pernas e por isso não
-    // pegou o bug que descartava todo par real como incompleto.
+    // NOTE: the return leg has flight_date equal to ITS date (the return date), not
+    // the outbound date. The outbound date of the pair comes in pair_outbound_date.
+    // The old fixture gave both legs the same flight_date and so never caught the
+    // bug that discarded every real pair as incomplete.
     let reqSeq = 0
     const pair = (o: {
       out: string; ret: string; outCash: number; inCash: number;
@@ -512,10 +512,10 @@ describe('EvaluationService', () => {
       expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
     })
 
-    // -- 1-para-N: a volta pertence a UMA ida ---------------------------------
+    // -- 1-to-N: the return belongs to ONE outbound ----------------------------
 
-    // Cada volta vem carimbada com o voo de ida que a precificou. Um par pode
-    // trazer varias idas, cada uma com a sua lista de voltas.
+    // Each return is stamped with the outbound flight that priced it. A pair may
+    // bring several outbounds, each with its own list of returns.
     const linkedPair = (o: {
       out: string; ret: string;
       outs: { flight: string; cash: number; inboundUnavailable?: boolean }[];
@@ -542,8 +542,8 @@ describe('EvaluationService', () => {
 
     it('so soma a volta que pertence a ida', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      // A volta de 700 existe, mas so no contexto da ida de 1500. Cruzar com a
-      // ida de 1200 daria 1900 — um par que a companhia nunca ofereceu.
+      // The 700 return exists, but only in the context of the 1500 outbound. Crossing
+      // it with the 1200 outbound would give 1900 — a pair the airline never offered.
       givenPairs(linkedPair({
         out: '2026-08-15', ret: '2026-09-10',
         outs: [{ flight: 'AD100', cash: 1200 }, { flight: 'AD200', cash: 1500 }],
@@ -559,7 +559,7 @@ describe('EvaluationService', () => {
 
     it('ida sem volta vinculada nao produz total', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      // AD200 nao teve as voltas coletadas; a unica volta pertence a AD100.
+      // AD200 had no returns collected; the only return belongs to AD100.
       givenPairs(linkedPair({
         out: '2026-08-15', ret: '2026-09-10',
         outs: [{ flight: 'AD100', cash: 1400 }, { flight: 'AD200', cash: 1000 }],
@@ -568,15 +568,15 @@ describe('EvaluationService', () => {
 
       await svc.runCycle()
 
-      // 1000 + 1300 nao vale: a volta nao foi precificada no contexto de AD200.
+      // 1000 + 1300 does not count: the return was not priced in the context of AD200.
       const entries = vi.mocked(mockAlertStateRepo.recordNotified).mock.calls[0][2]
       expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2700, airline: 'azul' })])
     })
 
     it('coleta antiga sem vinculo mantem o comportamento por data', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      // Tarifas gravadas antes do carimbo: sem vinculo, cruza tudo do par —
-      // senao o que ja esta no banco pararia de ser avaliado.
+      // Fares written before the stamp: with no link, everything in the pair crosses —
+      // otherwise what is already in the bank would stop being evaluated.
       givenPairs(pair({ out: '2026-08-15', ret: '2026-09-10', outCash: 1200, inCash: 1300 }))
 
       await svc.runCycle()
@@ -585,12 +585,12 @@ describe('EvaluationService', () => {
       expect(entries).toEqual([expect.objectContaining({ flightDate: '2026-08-15', amount: 2500, airline: 'azul' })])
     })
 
-    // -- 4.2 volta indefinida: exibe, nao alerta ------------------------------
+    // -- 4.2 undefined return: display, do not alert ---------------------------
 
     it('volta indefinida por limitacao conhecida - nao alerta e nao reporta erro', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      // Nenhuma volta abriu (login do TudoAzul). A ida existe e e barata, mas o
-      // preco da ida NAO e o preco da viagem.
+      // No return opened (TudoAzul login). The outbound exists and is cheap, but the
+      // outbound price is NOT the trip price.
       givenPairs(linkedPair({
         out: '2026-08-15', ret: '2026-09-10',
         outs: [{ flight: 'AD100', cash: 400, inboundUnavailable: true }],
@@ -600,7 +600,7 @@ describe('EvaluationService', () => {
       await svc.runCycle()
 
       expect(mockNotifSvc.dispatchAlert).not.toHaveBeenCalled()
-      // Limitacao conhecida nao e dado corrompido: nada de erro no Grafana.
+      // A known limitation is not corrupted data: no error in Grafana.
       expect(logSpy.error).not.toHaveBeenCalled()
     })
 
@@ -622,7 +622,7 @@ describe('EvaluationService', () => {
 
     it('ida com volta indefinida nao contamina a ida que tem volta', async () => {
       vi.mocked(mockRoutinesRepo.findAllActive).mockResolvedValue([rtRoutine()])
-      // AD200 e mais barata mas ficou sem volta; o total tem de sair de AD100.
+      // AD200 is cheaper but ended with no return; the total has to come from AD100.
       givenPairs(linkedPair({
         out: '2026-08-15', ret: '2026-09-10',
         outs: [{ flight: 'AD100', cash: 1200 }, { flight: 'AD200', cash: 400, inboundUnavailable: true }],

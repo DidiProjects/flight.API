@@ -89,9 +89,9 @@ function makeMocks() {
     markFinished:  vi.fn(),
   } satisfies Partial<IAnalysisRunsRepository> as unknown as IAnalysisRunsRepository
 
-  // Câmbio fixo e determinístico: BRL não converte, GBP vale 7. Os testes deste
-  // arquivo verificam o mapeamento das fares, não a cotação — mas a conversão
-  // agora acontece na ingestão (017) e precisa de um provedor.
+  // Fixed, deterministic exchange: BRL does not convert, GBP is worth 7. The tests
+  // in this file check the fare mapping, not the quote — but conversion now happens
+  // at ingestion (017) and needs a provider.
   const mockFx = {
     toBrl: vi.fn(async (amount: number, currency: string) =>
       currency === 'BRL'
@@ -159,10 +159,10 @@ describe('ScrapeService.processCallback', () => {
   })
 
   it('o estado terminal manda, mesmo quando o texto do erro fala em bloqueio', async () => {
-    // O caso que originou a mudança: a LATAM foi pausada por uma hora, três
-    // vezes em 2026-08-20, porque o scraper escrevia "likely bot/IP block" no
-    // texto — e este serviço lia o texto. A página era a de erro da própria
-    // companhia, e o classificador, com o DOM na mão, diz SITE_ERROR.
+    // The case that drove the change: LATAM was paused for an hour, three times on
+    // 2026-08-20, because the scraper wrote "likely bot/IP block" into the text — and
+    // this service read the text. The page was the error page of the airline itself,
+    // and the classifier, with the DOM in hand, says SITE_ERROR.
     const job = makeJob({ retry_count: 0, max_retries: 3 })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
 
@@ -178,8 +178,8 @@ describe('ScrapeService.processCallback', () => {
   })
 
   it('falha do site não escala para dead, nem na última tentativa', async () => {
-    // A busca da companhia não responder não é culpa do job; matá-lo faria a
-    // rota sumir da coleta até a próxima derivação.
+    // The airline search failing to respond is not the job's fault; killing it would
+    // drop the route from collection until the next derivation.
     const job = makeJob({ retry_count: 2, max_retries: 3 })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
 
@@ -209,8 +209,8 @@ describe('ScrapeService.processCallback', () => {
   })
 
   it('layout mudado é falha do job: backoff normal, sem pausar a companhia', async () => {
-    // O estado que pede mexer no código. Pausar a companhia aqui esconderia o
-    // problema por uma hora e não consertaria nada.
+    // The state that calls for a code change. Pausing the airline here would hide the
+    // problem for an hour and fix nothing.
     const job = makeJob({ retry_count: 0, max_retries: 3 })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
 
@@ -284,8 +284,8 @@ describe('ScrapeService.processCallback', () => {
     expect(mockFlightFaresRepo.insertMany).toHaveBeenCalledOnce()
     const [calledJobId, calledRequestId, calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
     expect(calledJobId).toBe(job.id)
-    // request_id da execução é repassado para virar o discriminador de snapshot
-    // no flight_fares (sem ele, re-coletas da mesma rota congelariam o preço).
+    // the run request_id is passed through to become the snapshot discriminator in
+    // flight_fares (without it, re-collections of the same route would freeze the price).
     expect(calledRequestId).toBe('req-00000-0000-0000-0000-000000000001')
     expect(calledFares).toHaveLength(2)
     expect(calledFares[0]).toMatchObject({
@@ -329,7 +329,7 @@ describe('ScrapeService.processCallback', () => {
 
   it('ida que venha carimbada por engano nao guarda o vinculo', async () => {
     const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
-    // O vinculo existe SO na volta; guardar na ida corromperia o agrupamento.
+    // The link exists ONLY on the return; storing it on the outbound would corrupt grouping.
     const outbound = { ...makeFlightOffer(), isReturn: false, pairedOutboundFlight: 'AD1234' }
 
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
@@ -344,7 +344,7 @@ describe('ScrapeService.processCallback', () => {
 
   it('volta indefinida e marcada na ida, nunca na volta', async () => {
     const job = makeJob({ flight_date: '2026-08-15', return_date: '2026-09-10' })
-    // A limitacao e da IDA: as voltas DELA nao abriram.
+    // The limitation belongs to the OUTBOUND: ITS returns did not open.
     const outbound = { ...makeFlightOffer(), inboundUnavailable: true }
     const inbound = {
       ...makeFlightOffer(),
@@ -375,12 +375,12 @@ describe('ScrapeService.processCallback', () => {
     expect(calledFares[0]).toMatchObject({ inbound_unavailable: false })
   })
 
-  // ── moeda obrigatória ────────────────────────────────────────────────────────
+  // ── currency required ────────────────────────────────────────────────────────
 
   it('oferta sem moeda é descartada, e as boas da mesma coleta são gravadas', async () => {
-    // `flight_fares.currency` é NOT NULL e o insert é UM comando multi-linha:
-    // sem este filtro, uma oferta ruim abortaria o lote e a coleta inteira se
-    // perderia por causa de uma linha.
+    // `flight_fares.currency` is NOT NULL and the insert is ONE multi-row command:
+    // without this filter a single bad offer would abort the batch and the whole
+    // collection would be lost over one row.
     const job = makeJob({ flight_date: '2026-08-15' })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
     vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
@@ -410,12 +410,12 @@ describe('ScrapeService.processCallback', () => {
     expect(calledFares).toEqual([])
   })
 
-  // ── número de voo ilegível ───────────────────────────────────────────────────
+  // ── unreadable flight number ─────────────────────────────────────────────────
 
   it('número de voo vazio vira NULL, e duas leituras falhas não colidem na dedup', async () => {
-    // O scraper da LATAM usa '' quando o modal não abre. O índice único de dedup
-    // só ignora NULL, então duas linhas com '' colidiam na chave e a segunda era
-    // descartada — perdendo uma tarifa real por não saber o número dela.
+    // The LATAM scraper uses '' when the modal does not open. The dedup unique index
+    // only ignores NULL, so two rows with '' collided on the key and the second was
+    // discarded — losing a real fare for not knowing its number.
     const job = makeJob({ flight_date: '2026-08-15' })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
     vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(2)
@@ -431,12 +431,12 @@ describe('ScrapeService.processCallback', () => {
     expect(calledFares.map((f: { flight_number: unknown }) => f.flight_number)).toEqual([null, null])
   })
 
-  // ── direção da perna de volta ────────────────────────────────────────────────
+  // ── direction of the return leg ──────────────────────────────────────────────
 
   it('volta com a rota da ida é descartada, e a ida da mesma coleta fica', async () => {
-    // Retrato do request 8be20a19: a tela de voltas da LATAM não avançou, o
-    // scraper leu os cards de IDA e carimbou isReturn. O par fechava o voo com
-    // ele mesmo — R$730,65 + R$730,65 num trecho só de ida.
+    // Portrait of request 8be20a19: the LATAM returns screen did not advance, the
+    // scraper read the OUTBOUND cards and stamped isReturn. The pair closed the flight
+    // with itself — R$730.65 + R$730.65 on a single one-way leg.
     const job = makeJob({ flight_date: '2026-08-15' })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
     vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
@@ -457,8 +457,8 @@ describe('ScrapeService.processCallback', () => {
   })
 
   it('volta que pousa em outro aeroporto da cidade é preservada', async () => {
-    // A BA devolve 21 voltas LCY→GRU numa busca GRU→LHR. O corte é por rota
-    // IGUAL à da ida; exigir o inverso exato perderia essas.
+    // BA returns 21 LCY→GRU inbounds on a GRU→LHR search. The cut is by a route EQUAL
+    // to the outbound; demanding the exact inverse would lose those.
     const job = makeJob({ origin: 'GRU', destination: 'LHR', flight_date: '2026-09-21' })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
     vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)
@@ -480,8 +480,8 @@ describe('ScrapeService.processCallback', () => {
   })
 
   it('só-volta continua gravando: a rotina inverte a rota, e a perna é ida', async () => {
-    // Jornada "Teste 3 VOLTA": rotina CNF→GRU one_way. As tarifas chegam com
-    // isReturn=false, então o corte não pode encostar nelas.
+    // Journey "Teste 3 VOLTA": a CNF→GRU one_way routine. The fares arrive with
+    // isReturn=false, so the cut must not touch them.
     const job = makeJob({ origin: 'CNF', destination: 'GRU', flight_date: '2026-09-25' })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
     vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(1)

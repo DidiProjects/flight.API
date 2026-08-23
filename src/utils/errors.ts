@@ -55,9 +55,9 @@ export class MissingCurrencyError extends Error {
 }
 
 /**
- * Rotina round-trip cuja análise voltou com só uma das pernas. O par não fecha,
- * então a avaliação é descartada — é dado incompleto, não oferta barata.
- * O nome vira label no Grafana via o campo `err.type` do log.
+ * Round-trip routine whose analysis came back with only one leg. The pair does not
+ * close, so the evaluation is discarded — it is incomplete data, not a cheap offer.
+ * The name becomes a Grafana label through the `err.type` field of the log.
  */
 export class IncompleteRoundTripError extends Error {
   constructor(

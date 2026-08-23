@@ -4,15 +4,15 @@ import { ScrapingJobRepository } from '../scraping-jobs/ScrapingJobRepository'
 import { AnalysisRunsRepository } from '../analysis-runs/AnalysisRunsRepository'
 
 /**
- * Testa a única parte do reset que não cabe em mock: a exclusividade. Análises e
- * jobs são chaveados por ROTA, não por rotina, então duas rotinas que compartilham
- * trajeto e janela enxergam a MESMA linha. Apagar o que a outra rotina alcança
- * seria destruir dado alheio a partir de um botão de admin.
+ * Tests the one part of the reset that does not fit a mock: exclusivity. Runs and
+ * jobs are keyed by ROUTE, not by routine, so two routines sharing trip and window
+ * see the SAME row. Deleting what the other routine reaches would destroy someone
+ * else's data from an admin button.
  *
- * Roda contra um Postgres real porque a decisão inteira vive no SQL (EXISTS
- * cruzando routines × routine_airlines). Pulado sem TEST_DATABASE_URL.
+ * Runs against a real Postgres because the whole decision lives in the SQL (EXISTS
+ * crossing routines × routine_airlines). Skipped without TEST_DATABASE_URL.
  *
- * Local:  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test
+ * Locally:  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test
  */
 
 const DB_URL = process.env.TEST_DATABASE_URL
@@ -105,7 +105,7 @@ describeIt('reset de análises — exclusividade por rota (integração / Postgr
                                ${SCHEMA}.scraping_jobs, ${SCHEMA}.analysis_runs,
                                ${SCHEMA}.analysis_run_events`)
 
-    // A e B dividem trajeto e companhia; as janelas se cruzam em 05→10/09.
+    // A and B share trip and airline; the windows overlap on 05→10/09.
     await pool.query(`
       INSERT INTO ${SCHEMA}.routines (id, origin, destination, outbound_start, outbound_end, trip_type, inbound_start, inbound_end)
       VALUES ($1, 'GRU', 'LIS', '2026-09-01', '2026-09-10', 'one_way',    NULL,         NULL),

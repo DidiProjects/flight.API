@@ -35,8 +35,8 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
     )
   }
 
-  // Início real do scrape (telemetria job.started): zera o relógio do timeout de
-  // stale, que antes contava desde o dispatch (job ainda na fila contava errado).
+  // Real start of the scrape (job.started telemetry): resets the stale timeout
+  // clock, which used to count from dispatch (a queued job counted wrongly).
   async resetStartedAt(requestId: string): Promise<void> {
     await this.db.query(
       `UPDATE analysis_runs SET started_at = now() WHERE request_id = $1 AND status = 'running'`,
@@ -44,8 +44,8 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
     )
   }
 
-  // Timeline append-only. Idempotente por (request_id, seq): telemetria é
-  // best-effort e pode reentregar na reconexão — duplicados são ignorados.
+  // Append-only timeline. Idempotent by (request_id, seq): telemetry is best-effort
+  // and may be redelivered on reconnect — duplicates are ignored.
   async appendEvent(data: AppendEventData): Promise<void> {
     await this.db.query(
       `INSERT INTO analysis_run_events (request_id, seq, type, level, payload)
@@ -55,8 +55,8 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
     )
   }
 
-  // Registra quem pediu o cancelamento (no momento do pedido, mesmo que a entrega
-  // ao worker seja diferida). Não muda o status.
+  // Records who asked for the cancellation (at request time, even if delivery to
+  // the worker is deferred). Does not change the status.
   async setCancelledBy(requestId: string, userId: string): Promise<void> {
     await this.db.query(
       `UPDATE analysis_runs SET cancelled_by = $2
@@ -65,7 +65,7 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
     )
   }
 
-  // Confirmação do cancelamento (chega via telemetria job.finished cancelled).
+  // Cancellation confirmed (arrives via job.finished cancelled telemetry).
   async markCancelled(requestId: string): Promise<void> {
     await this.db.query(
       `UPDATE analysis_runs

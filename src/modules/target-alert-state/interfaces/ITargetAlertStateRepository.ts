@@ -1,11 +1,11 @@
 /**
- * Uma parcela do preço, como a companhia cobrou — moeda original, valor
- * original. A composição do par é a lista dessas parcelas.
+ * One part of the price, as the airline charged it — original currency, original
+ * value. The composition of the pair is the list of these parts.
  *
- * É o que faz "o preço caiu" significar preço e não câmbio: com o alvo em Real,
- * o valor comparado é convertido, e os mesmos £730 valem R$4.986 a 6,83 e
- * R$4.818 a 6,60. Composição idêntica entre dois ciclos significa que a
- * companhia não mexeu em nada, por mais que a conversão tenha mudado.
+ * It is what makes "the price dropped" mean price and not exchange: with the
+ * target in Real the compared value is converted, and the same £730 is worth
+ * R$4,986 at 6.83 and R$4,818 at 6.60. An identical composition between two
+ * cycles means the airline changed nothing, however much the conversion moved.
  */
 export interface PriceBreakdown {
   direction: 'outbound' | 'inbound'
@@ -15,30 +15,30 @@ export interface PriceBreakdown {
 
 export interface AlertWatermark {
   flightDate: string
-  /** Valor já na unidade de comparação (BRL em rotina cash). */
+  /** Value already in the comparison unit (BRL on a cash routine). */
   amount: number
   airline: string
   breakdown: PriceBreakdown[]
 }
 
-/** O que já foi alertado para uma data. */
+/** What has already been alerted for a date. */
 export interface WatermarkState {
   amount: number
-  /** `null` em linha gravada antes de a composição existir. */
+  /** `null` on a row written before the composition existed. */
   breakdown: PriceBreakdown[] | null
 }
 
 export interface ITargetAlertStateRepository {
-  /** Watermarks (melhor preço já alertado) por data, para uma rotina + tipo de tarifa. */
+  /** Watermarks (best price already alerted) per date, for a routine + fare type. */
   getWatermarks(routineId: string, fareType: string): Promise<Map<string, WatermarkState>>
   /**
-   * Upsert monotônico-descendente: grava só onde o preço é novo ou menor que o já
-   * alertado e devolve as datas que de fato avançaram. O banco decide o vencedor,
-   * então ciclos sobrepostos não geram alerta em dobro (sem cooldown por tempo).
+   * Monotonic-descending upsert: writes only where the price is new or lower than
+   * the one already alerted, and returns the dates that actually advanced. The bank
+   * picks the winner, so overlapping cycles raise no double alert (no time cooldown).
    */
   recordNotified(routineId: string, fareType: string, entries: AlertWatermark[]): Promise<Set<string>>
-  /** Remove células de datas já passadas. Retorna quantas linhas saíram. */
+  /** Removes cells of dates already past. Returns how many rows went out. */
   cleanupPastDates(): Promise<number>
-  /** Zera o anti-repetição da rotina: ela volta a poder alertar do zero. */
+  /** Clears the anti-repetition of the routine: it can alert from scratch again. */
   deleteByRoutine(routineId: string): Promise<number>
 }

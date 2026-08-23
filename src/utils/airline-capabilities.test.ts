@@ -20,8 +20,8 @@ describe('airlineCapabilityError', () => {
   })
 
   it('barra alvo híbrido em companhia sem híbrido', () => {
-    // O caso que apareceu de verdade: alvo 20.000 pts + R$400 numa rotina de
-    // Ryanair/BA/LATAM, todas com has_hyb = false.
+    // The case that actually showed up: a 20,000 pts + R$400 target on a
+    // Ryanair/BA/LATAM routine, all with has_hyb = false.
     const err = airlineCapabilityError([latam], { priority: 'cash', targetHybPts: 20000, targetHybCash: 400 })
     expect(err).toMatch(/híbrido/)
   })
@@ -36,14 +36,14 @@ describe('airlineCapabilityError', () => {
   })
 
   it('aceita a dimensão quando AO MENOS UMA companhia a precifica', () => {
-    // [azul, latam] com prioridade em pontos: a Azul alerta, a LATAM só não
-    // contribui. Nada corrompe, então não há motivo para barrar.
+    // [azul, latam] with priority on points: Azul alerts, LATAM simply does not
+    // contribute. Nothing is corrupted, so there is no reason to block.
     expect(airlineCapabilityError([azul, latam], { priority: 'pts', targetPts: 15000 })).toBeNull()
   })
 
   it('exige ida-e-volta de TODAS as companhias, não de uma', () => {
-    // Diferente da dimensão de preço: um job de par numa companhia sem busca RT
-    // volta com as pernas avulsas e sem total — dado de par falso.
+    // Different from the price dimension: a pair job on an airline with no RT search
+    // comes back with loose legs and no total — false pair data.
     expect(airlineCapabilityError([azul, latam], { tripType: 'round_trip' })).toMatch(/latam/)
     expect(airlineCapabilityError([azul, ryanair], { tripType: 'round_trip' })).toBeNull()
   })

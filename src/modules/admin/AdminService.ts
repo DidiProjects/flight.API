@@ -14,17 +14,17 @@ export interface CancelJobResult {
   delivery: 'dispatched' | 'recovered'
 }
 
-/** O que o reenvio fez: qual e-mail saiu, ou por que não saiu nenhum. */
+/** What the resend did: which e-mail went out, or why none did. */
 export interface ResendResult {
-  /** Tipo do último e-mail enviado para a rotina — é o que foi reenviado. */
+  /** Kind of the last e-mail sent to the routine — that is what was resent. */
   type: 'alert' | 'scheduled'
   sent: boolean
-  /** Preenchido quando `sent` é false: o que faltou. */
+  /** Filled when `sent` is false: what was missing. */
   reason?: string
   lastSentAt: Date
 }
 
-/** Saldo do reset, linha a linha: o que zerou e o que foi preservado. */
+/** Balance of the reset, row by row: what was cleared and what was preserved. */
 export interface ResetAnalysesResult {
   analysisRuns: { deleted: number; events: number; keptRunning: number; keptShared: number }
   scrapingJobs: { reset: number; keptRunning: number; keptShared: number }

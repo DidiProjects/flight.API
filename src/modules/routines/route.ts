@@ -147,9 +147,9 @@ export function routinesRoute(
 
     app.post('/:id/dispatch', { preHandler: [app.requireAdmin] }, async (req, reply) => {
       const { id } = req.params as { id: string }
-      // 202 assíncrono: o dispatch cobre todas as datas elegíveis da rotina e pode
-      // fazer várias chamadas sequenciais ao scraper. Roda em background para não
-      // segurar o request no loop; erros ficam no log, não na resposta.
+      // Async 202: the dispatch covers every eligible date of the routine and may
+      // make several sequential calls to the scraper. It runs in the background so
+      // the request is not held in the loop; errors go to the log, not the response.
       void schedulerSvc.dispatchOne(id).catch((err) => {
         req.log.error({ err, routineId: id }, 'manual dispatch failed')
       })

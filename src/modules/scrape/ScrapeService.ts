@@ -14,34 +14,34 @@ const log = logger.child({ service: 'scrape' })
 const BLOCK_COOLDOWN_MS = 60 * 60 * 1000
 
 /**
- * Retaguarda para callback sem `outcome` (scraper em versão anterior, ou falha
- * sem tela para classificar).
+ * Fallback for a callback with no `outcome` (an older scraper, or a failure
+ * with no screen to classify).
  *
- * Era a fonte primária, e é uma armadilha: casava com a palavra "block" que o
- * próprio scraper escrevia no texto do erro ao chutar bloqueio. A mensagem
- * provava a si mesma, e a LATAM foi pausada por uma hora, três vezes em
- * 2026-08-20, por uma página de erro do site dela.
+ * It used to be the primary source, and it is a trap: it matched the word
+ * "block" that the scraper itself wrote into the error text when guessing a
+ * block. The message proved itself, and LATAM was paused for an hour, three
+ * times on 2026-08-20, over an error page of its own site.
  */
 function isBlockError(error: string): boolean {
   return /bot|block|ip[\s/_-]?block|captcha|detection|acesso foi limitado|comportamento incomum/i.test(error)
 }
 
-/** Bloqueio pausa a companhia inteira: a evidência precisa ser do DOM, não do texto. */
+/** A block pauses the whole airline: the evidence must come from the DOM, not the text. */
 function isAirlineBlocked(data: ScrapeCallback): boolean {
   if (data.outcome) return data.outcome.state === 'BLOCKED'
   return isBlockError(data.error ?? '')
 }
 
 /**
- * A companhia declarou falha própria (a busca dela não respondeu, ou ela
- * mostrou a própria página de erro). Não é bloqueio — não pausa ninguém — e não
- * é culpa do job, então não escala para 'dead'.
+ * The airline declared a failure of its own (its search did not respond, or it
+ * showed its own error page). Not a block — it pauses nobody — and not the
+ * job's fault, so it does not escalate to 'dead'.
  */
 function isSiteError(data: ScrapeCallback): boolean {
   return data.outcome?.state === 'SITE_ERROR'
 }
 
-/** DATE do pg volta como string ou Date; normaliza para YYYY-MM-DD ou null. */
+/** A pg DATE comes back as string or Date; normalise to YYYY-MM-DD or null. */
 function toDateOrNull(v: string | Date | null): string | null {
   if (v == null) return null
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
@@ -56,19 +56,19 @@ export class ScrapeService implements IScrapeService {
   ) {}
 
   /**
-   * Converte as tarifas para Real UMA vez, aqui, na ingestão da análise.
+   * Converts the fares to Real ONCE, here, when the analysis is ingested.
    *
-   * A taxa fica gravada na linha: o histórico passa a refletir o câmbio de
-   * quando a rotina rodou, e não o de hoje. Antes a conversão era na leitura, e
-   * a régua de 30 dias se mexia sozinha — queda da libra virava "o voo
-   * baratear".
+   * The rate is stored on the row: history then reflects the exchange rate of
+   * when the routine ran, not of today. Conversion used to happen on read, and
+   * the 30-day baseline moved on its own — a falling pound became "the flight
+   * got cheaper".
    *
-   * Uma cotação por MOEDA, não por linha: o cache do FxRateService é por
-   * moeda-dia, então as 40 tarifas de uma coleta custam uma consulta.
+   * One quote per CURRENCY, not per row: the FxRateService cache is keyed by
+   * currency-day, so the 40 fares of a collection cost one lookup.
    *
-   * Sem cotação a linha entra com `null` em vez de ser recusada. Perder o preço
-   * porque o câmbio piscou seria pior que gravá-lo sem o valor em Real — a
-   * moeda original continua lá, e as somas em Real simplesmente ignoram a linha.
+   * Without a quote the row goes in with `null` instead of being rejected. Losing
+   * the price because the exchange rate blinked would be worse than storing it
+   * without the Real value — the currency is still there, and Real sums skip the row.
    */
   private async withBrl<T extends { currency: string | null; fare_cash: number | null; fare_hyb_cash: number | null }>(
     rows: T[],
@@ -130,9 +130,9 @@ export class ScrapeService implements IScrapeService {
         return
       }
 
-      // Falha do site: só este job espera, e espera mais do que uma falha comum
-      // — insistir de minuto em minuto numa busca que não responde não a faz
-      // responder.
+      // Site failure: only this job waits, and it waits longer than on an ordinary
+      // failure — hammering a search that does not respond every minute does not
+      // make it respond.
       if (isSiteError(data)) {
         const nextRunAt = calcSiteErrorNextRunAt(job.retry_count)
         await this.scrapingJobRepo.markSiteError(job.id, data.error, nextRunAt)
@@ -164,16 +164,16 @@ export class ScrapeService implements IScrapeService {
     log.info({ jobId: job.id, faresCount: count }, 'scraping_job_success')
   }
 
-  // Callback cujo request_id não bate com nenhum job: o job já foi recuperado
-  // (timeout) e re-despachado, ou é duplicado/atrasado. O payload carrega o id
-  // do scraping_job em `routineId`, então tentamos reidratar por ele para não
-  // perder a coleta nem deixar a analysis_run presa em 'running'.
+  // A callback whose request_id matches no job: the job was already recovered
+  // (timeout) and re-dispatched, or this is a duplicate/late delivery. The
+  // payload carries the scraping_job id in `routineId`, so we try to rehydrate
+  // from it, to lose neither the collection nor the analysis_run stuck in running.
   private async handleOrphanCallback(data: ScrapeCallback): Promise<void> {
     const job = data.routineId
       ? await this.scrapingJobRepo.findById(data.routineId)
       : null
 
-    // Erro sem voos: só fecha a run; não mexe no job (ele já seguiu adiante).
+    // Error with no flights: closes the run only; the job is untouched (it moved on).
     if (data.error && data.flights.length === 0) {
       await this.analysisRunsRepo.markFinished(data.requestId, {
         status:       isAirlineBlocked(data) ? 'blocked' : 'failed',
@@ -184,18 +184,18 @@ export class ScrapeService implements IScrapeService {
     }
 
     if (!job) {
-      // Sem job não há scraping_job_id para amarrar as fares — só fecha a run.
+      // With no job there is no scraping_job_id to tie the fares to — close the run.
       await this.analysisRunsRepo.markFinished(data.requestId, { status: 'success', faresFound: data.flights.length })
       log.warn({ requestId: data.requestId }, 'orphan callback: job não encontrado, fares descartadas')
       return
     }
 
-    // Persiste a coleta (ON CONFLICT protege contra duplicata na mesma execução).
+    // Persists the collection (ON CONFLICT protects against a duplicate in the same run).
     const rows  = await this.withBrl(this.toFareRows(data, toDateOrNull(job.return_date)), { requestId: data.requestId, airline: data.airline })
     const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, rows)
 
-    // Só reagenda o job se ele NÃO estiver no meio de uma nova coleta (re-despacho
-    // já em voo com outro request_id) — nesse caso evitamos sobrescrever o estado.
+    // Only reschedules the job if it is NOT mid-collection (a re-dispatch already in
+    // flight with another request_id) — in that case we avoid overwriting the state.
     const jobMovedOn = job.status === 'running' && job.request_id !== data.requestId
     if (!jobMovedOn) {
       await this.scrapingJobRepo.markSuccess(job.id, calcNextRunAt(job.flight_date))
@@ -206,18 +206,18 @@ export class ScrapeService implements IScrapeService {
   }
 
   /**
-   * O `return_date` vem do JOB, não do callback: o job é quem define o par que
-   * foi buscado. Sem este carimbo a tarifa colhida numa busca ida-e-volta ficaria
-   * indistinguível de uma avulsa e voltaria a ser reaproveitada como se fosse.
+   * `return_date` comes from the JOB, not from the callback: the job defines the
+   * pair that was searched. Without this stamp a fare collected in a round-trip
+   * search would be indistinguishable from a loose one and reused as if it were.
    */
   private toFareRows(data: ScrapeCallback, returnDate: string | null) {
-    // Tarifa sem moeda não entra. A `scraping.API` já descarta na origem, mas a
-    // garantia tem que existir deste lado também: a coluna é NOT NULL e o INSERT
-    // é UM comando multi-linha — uma oferta ruim abortaria o lote inteiro e a
-    // coleta toda se perderia por causa de uma linha.
+    // A fare with no currency does not enter. `scraping.API` already discards at
+    // the source, but the guarantee has to exist on this side too: the column is
+    // NOT NULL and the INSERT is ONE multi-row command — a single bad offer would
+    // abort the whole batch and the entire collection would be lost over one row.
     //
-    // Filtrar em vez de recusar o callback é deliberado: o erro é de quem
-    // coletou, e perder 1 oferta é melhor que perder as 44 da mesma busca.
+    // Filtering instead of rejecting the callback is deliberate: the error belongs
+    // to whoever collected, and losing 1 offer beats losing the 44 of the same search.
     const comMoeda = data.flights.filter((f) => f.currency != null && f.currency.length === 3)
     const dropped = data.flights.length - comMoeda.length
     if (dropped > 0) {
@@ -231,14 +231,14 @@ export class ScrapeService implements IScrapeService {
       }, 'scrape: ofertas sem moeda descartadas antes de persistir')
     }
 
-    // Volta com a MESMA rota da busca é a lista de idas lida como se fosse a de
-    // voltas — o par fecharia a ida com ela mesma e somaria dois trechos na
-    // mesma direção. O scraper já corta na origem; aqui é a rede, porque o dado
-    // errado é indistinguível do certo depois de gravado.
+    // A return with the SAME route as the search is the outbound list read as if it
+    // were the return list — the pair would close the outbound with itself and sum
+    // two legs in the same direction. The scraper already cuts at the source; this
+    // is the net, because bad data is indistinguishable from good once stored.
     //
-    // O critério é rota IGUAL à da ida, não rota exatamente invertida: a BA
-    // devolve 21 voltas LCY→GRU numa busca GRU→LHR, e exigir o inverso exato
-    // descartaria volta legítima de qualquer companhia multi-aeroporto.
+    // The criterion is a route EQUAL to the outbound, not exactly inverted: BA
+    // returns 21 LCY→GRU inbounds on a GRU→LHR search, and demanding the exact
+    // inverse would discard legitimate returns from any multi-airport airline.
     const usable = comMoeda.filter(
       (f) => !(f.isReturn && f.origin === data.origin && f.destination === data.destination),
     )
@@ -254,11 +254,11 @@ export class ScrapeService implements IScrapeService {
     }
 
     return usable.map((f) => ({
-      // `|| null`, não `?? null`: o scraper usa string vazia para "não consegui
-      // ler o número do voo", e ela passava direto. O índice único de dedup só
-      // exclui NULL (`WHERE flight_number IS NOT NULL`), então duas leituras
-      // falhas na mesma coleta colidiam na chave e a segunda era silenciosamente
-      // descartada — perdendo uma tarifa real por não saber o número dela.
+      // `|| null`, not `?? null`: the scraper uses an empty string for "could not
+      // read the flight number", and it passed straight through. The dedup unique
+      // index only excludes NULL (`WHERE flight_number IS NOT NULL`), so two failed
+      // reads in the same collection collided on the key and the second was
+      // silently discarded — losing a real fare for not knowing its number.
       flight_number:  f.flightNumber || null,
       flight_date:    f.date,
       is_return:      f.isReturn,
@@ -275,9 +275,9 @@ export class ScrapeService implements IScrapeService {
       fare_hyb_pts:   f.fareHybPts ?? null,
       fare_hyb_cash:  f.fareHybCash ?? null,
       return_date:    returnDate,
-      // Vínculo 1-para-N: só as voltas carregam a ida que as precificou.
+      // 1-to-N link: only the returns carry the outbound that priced them.
       paired_outbound_flight: f.isReturn ? (f.pairedOutboundFlight ?? null) : null,
-      // Volta indefinida é propriedade da IDA (as voltas DELA não abriram).
+      // An undefined return is a property of the OUTBOUND (ITS returns did not open).
       inbound_unavailable:    !f.isReturn && f.inboundUnavailable === true,
     }))
   }

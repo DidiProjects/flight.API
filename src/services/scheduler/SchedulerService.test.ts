@@ -211,10 +211,10 @@ describe('SchedulerService — dispatch loop', () => {
   })
 
   it('não reivindica job de companhia que já está com uma sessão em voo', async () => {
-    // Duas sessões automatizadas no mesmo site, do mesmo IP, ao mesmo tempo: em
-    // 2026-08-20 todas as nove falhas da LATAM tiveram outra sessão da LATAM em
-    // paralelo. A checagem vem ANTES do claim porque reivindicar já marca o job
-    // como 'running'.
+    // Two automated sessions on the same site, from the same IP, at the same time: on
+    // 2026-08-20 all nine LATAM failures had another LATAM session in parallel. The
+    // check comes BEFORE the claim because claiming already marks the job as
+    // 'running'.
     const scrapingJobRepo = makeScrapingJobRepoMock(makeJob())
     vi.mocked(scrapingJobRepo.countInFlightByAirline).mockResolvedValue(1)
     const { svc, scraperClient } = makeSvc(scrapingJobRepo)
@@ -226,8 +226,8 @@ describe('SchedulerService — dispatch loop', () => {
   })
 
   it('o disparo manual para no teto por companhia, em vez de mandar a rotina inteira de uma vez', async () => {
-    // O pior caso medido: o dispatchOne mandou os quatro jobs da rotina com um
-    // segundo entre eles, e os quatro terminaram na página de erro da LATAM.
+    // The worst case measured: dispatchOne sent all four jobs of the routine one
+    // second apart, and all four ended on the LATAM error page.
     const job = makeJob()
     const scrapingJobRepo = makeScrapingJobRepoMock(job)
     vi.mocked(scrapingJobRepo.claimNextJobForRoutine).mockResolvedValue(job)
@@ -287,7 +287,7 @@ describe('SchedulerService — graceful stop', () => {
     const repo = makeScrapingJobRepoMock()
     const { svc } = makeSvc(repo)
 
-    // Sonda: o heartbeat (2min) chama reclaimExpiredJobs — dispara várias vezes em 30min.
+    // Probe: the heartbeat (2min) calls reclaimExpiredJobs — it fires several times in 30min.
     svc.start()
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
     const callsBefore = vi.mocked(repo.reclaimExpiredJobs).mock.calls.length
@@ -316,7 +316,7 @@ describe('SchedulerService — lease reclaim (runHeartbeatCycle)', () => {
     expect(analysisRunsRepo.markFinished).toHaveBeenCalledWith(
       'r-hung', expect.objectContaining({ status: 'failed' }),
     )
-    // mensagens distintas: lost = lease, hung = tempo máximo
+    // distinct messages: lost = lease, hung = maximum time
     const msgs = vi.mocked(analysisRunsRepo.markFinished).mock.calls.map((c) => c[1].errorMessage)
     expect(msgs).toEqual(expect.arrayContaining([
       expect.stringMatching(/lease/i),

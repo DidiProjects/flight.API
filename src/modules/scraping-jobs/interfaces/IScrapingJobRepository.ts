@@ -4,7 +4,7 @@ export interface ScrapingJobRow {
   origin: string
   destination: string
   flight_date: string
-  /** Preenchido = job de ida-e-volta (busca RT com as duas datas). NULL = one-way. */
+  /** Filled = round-trip job (RT search with both dates). NULL = one-way. */
   return_date: string | null
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead' | 'cancelled'
   priority: number
@@ -30,12 +30,12 @@ export interface AdminJobRow extends ScrapingJobRow {
   run_finished_at: Date | null
 }
 
-/** Saldo do reset: o que voltou ao zero e o que foi preservado, e por quê. */
+/** Balance of the reset: what went back to zero and what was preserved, and why. */
 export interface ResetJobsResult {
   reset: number
-  /** Jobs em execução — o worker está no meio do scrape, não se mexe. */
+  /** Running jobs — the worker is mid-scrape, they are left alone. */
   running: number
-  /** Jobs que outra rotina também cobre — o dado não é só desta rotina. */
+  /** Jobs another routine also covers — the data is not this routine's alone. */
   shared: number
 }
 

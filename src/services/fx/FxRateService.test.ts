@@ -10,7 +10,7 @@ vi.mock('../../utils/logger', () => ({
   logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) },
 }))
 
-/** Provedor de mentira, para exercitar a POLÍTICA sem tocar na rede. */
+/** Fake provider, to exercise the POLICY without touching the network. */
 function fakeProvider(source: FxSource, impl: () => Promise<{ rate: number; rateDate: string }>): IExchangeRateProvider {
   return { source, fetchToBrl: vi.fn(impl) }
 }
@@ -19,8 +19,8 @@ const FIXED_NOW = () => new Date('2026-08-04T12:00:00Z')
 
 describe('FxRateService — conversão', () => {
   it('BRL não vai à rede: taxa 1, source native', async () => {
-    // O caminho mais comum do sistema não pode depender de um terceiro estar
-    // de pé.
+    // The most common path of the system cannot depend on a third party being
+    // up.
     const p = fakeProvider('frankfurter', async () => { throw new Error('não deveria ser chamado') })
     const svc = new FxRateService([p], FIXED_NOW)
 
@@ -42,8 +42,8 @@ describe('FxRateService — conversão', () => {
   })
 
   it('a data devolvida é a DA COTAÇÃO, não a de hoje', async () => {
-    // O BCE publica em dia útil: no sábado a cotação boa é a de sexta, e dizer
-    // "hoje" seria mentira no e-mail que explica o alerta.
+    // The ECB publishes on business days: on Saturday the good quote is Friday's,
+    // and saying "today" would be a lie in the e-mail that explains the alert.
     const svc = new FxRateService(
       [fakeProvider('frankfurter', async () => ({ rate: 6.8, rateDate: '2026-07-31' }))],
       FIXED_NOW,
@@ -63,8 +63,8 @@ describe('FxRateService — conversão', () => {
 })
 
 describe('FxRateService — faixa de sanidade', () => {
-  // A única proteção contra falha SILENCIOSA: as outras estouram barulhento,
-  // uma cotação absurda vira e-mail de "preço caiu" sem ninguém perceber.
+  // The only protection against a SILENT failure: the others fail loudly, an absurd
+  // quote becomes a "price dropped" e-mail with nobody noticing.
   it.each([
     ['zero', 0],
     ['negativa', -6.8],
@@ -148,7 +148,7 @@ describe('FxRateService — fallback e cache', () => {
     falhar = true
 
     const out = await svc.toBrl(100, 'GBP')
-    // Número velho é melhor que nada, mas quem chama precisa SABER que é velho.
+    // An old number beats nothing, but the caller has to KNOW it is old.
     expect(out).toMatchObject({ rate: 6.8, stale: true })
   })
 
@@ -168,15 +168,15 @@ describe('FxRateService — disjuntor', () => {
     const bom  = fakeProvider('currency-api', async () => ({ rate: 6.8, rateDate: '2026-08-04' }))
     const svc = new FxRateService([ruim, bom], FIXED_NOW)
 
-    // Moedas diferentes para não cair no cache e exercitar o provedor de novo.
+    // Different currencies so the cache is missed and the provider is exercised again.
     await svc.toBrl(100, 'GBP')
     await svc.toBrl(100, 'EUR')
     await svc.toBrl(100, 'USD')
     expect(ruim.fetchToBrl).toHaveBeenCalledTimes(3)
 
     await svc.toBrl(100, 'CHF')
-    // A quarta não chega nele: martelar quem está fora do ar só gasta o
-    // orçamento de tempo do ciclo de avaliação.
+    // The fourth never reaches it: hammering something that is down only burns the
+    // time budget of the evaluation cycle.
     expect(ruim.fetchToBrl).toHaveBeenCalledTimes(3)
   })
 
@@ -211,8 +211,8 @@ describe('FxRateService — disjuntor', () => {
     await svc.toBrl(100, 'USD')
     falhar = true
 
-    // Duas falhas + sucesso + duas falhas não deveria abrir o disjuntor: o
-    // sucesso no meio diz que o provedor está vivo, só instável.
+    // Two failures + a success + two failures must not open the breaker: the success
+    // in the middle says the provider is alive, only unstable.
     await svc.toBrl(100, 'CHF')
     await svc.toBrl(100, 'DKK')
     await svc.toBrl(100, 'NOK')
@@ -225,8 +225,8 @@ describe('ExchangeRateHttpClient — allowlist', () => {
     expect(ExchangeRateHttpClient.isAllowed('https://api.frankfurter.dev/v1/latest?base=GBP')).toBe(true)
     expect(ExchangeRateHttpClient.isAllowed('https://cdn.jsdelivr.net/npm/x.json')).toBe(true)
 
-    // Em texto claro a cotação pode ser trocada em trânsito, e taxa adulterada
-    // vira decisão de alerta.
+    // In clear text the quote can be swapped in transit, and a tampered rate becomes
+    // an alert decision.
     expect(ExchangeRateHttpClient.isAllowed('http://api.frankfurter.dev/v1/latest')).toBe(false)
   })
 
@@ -266,8 +266,8 @@ describe('providers — validação da resposta', () => {
   })
 
   it('Frankfurter: corpo fora do formato vira erro, não NaN', async () => {
-    // Sem o schema, `rates.BRL` ausente viraria undefined → NaN → e seguiria
-    // adiante como se fosse número.
+    // Without the schema, a missing `rates.BRL` would become undefined → NaN → and
+    // carry on as if it were a number.
     const p = new FrankfurterProvider(httpQueDevolve({ date: '2026-08-03' }))
     await expect(p.fetchToBrl('GBP')).rejects.toThrow(/formato/)
 
@@ -281,8 +281,8 @@ describe('providers — validação da resposta', () => {
   })
 
   it('currency-api: recusa código que não seja três letras', async () => {
-    // A moeda vem do banco; montar caminho de URL com valor não sanitizado é
-    // como se atravessa uma allowlist de host por path traversal.
+    // The currency comes from the bank; building a URL path with an unsanitised
+    // value is how a host allowlist gets crossed by path traversal.
     const http = httpQueDevolve({ date: '2026-08-04' })
     const p = new CurrencyApiProvider(http)
 
@@ -292,7 +292,7 @@ describe('providers — validação da resposta', () => {
 })
 
 describe('FxRateService — conversão entre duas moedas', () => {
-  /** GBP→BRL 6,8 e EUR→BRL 6,0: a razão dá GBP→EUR = 1,1333… */
+  /** GBP→BRL 6.8 and EUR→BRL 6.0: the ratio gives GBP→EUR = 1.1333… */
   const provedor = () => fakeProvider('frankfurter', async () => ({ rate: 0, rateDate: '' }))
 
   function svcCom(taxas: Record<string, number>) {
@@ -321,7 +321,7 @@ describe('FxRateService — conversão entre duas moedas', () => {
   })
 
   it('entre duas estrangeiras usa o Real como pivô', async () => {
-    // £100 = R$680; €1 = R$6 ⇒ £100 = €113,33
+    // £100 = R$680; €1 = R$6 ⇒ £100 = €113.33
     const svc = svcCom({ GBP: 6.8, EUR: 6.0 })
     const out = await svc.convert(100, 'GBP', 'EUR')
 
@@ -330,8 +330,8 @@ describe('FxRateService — conversão entre duas moedas', () => {
   })
 
   it('sem cotação de alguma ponta, devolve null', async () => {
-    // Meia conversão não existe: melhor o card omitir o total do que somar
-    // libra com euro por engano.
+    // Half a conversion does not exist: better the card omits the total than sums
+    // pounds with euros by mistake.
     const svc = svcCom({ GBP: 6.8 })
     expect(await svc.convert(100, 'GBP', 'EUR')).toBeNull()
     expect(await svc.convert(100, 'JPY', 'GBP')).toBeNull()

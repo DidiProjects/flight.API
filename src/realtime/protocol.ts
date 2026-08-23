@@ -1,6 +1,6 @@
 /**
- * Protocolo de tempo real (worker ↔ hub). Cópia sincronizada do contrato
- * canônico em flight-monitoring.IA/contracts/realtime-protocol.ts (§14).
+ * Realtime protocol (worker ↔ hub). Synchronised copy of the canonical contract
+ * in flight-monitoring.IA/contracts/realtime-protocol.ts (§14).
  */
 export const PROTOCOL_VERSION = 1 as const
 

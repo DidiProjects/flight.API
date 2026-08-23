@@ -2,12 +2,12 @@ import { RoutineRow } from '../../../types'
 
 export interface IEvaluationService {
   runCycle(): Promise<void>
-  /** Limpa watermarks de datas já passadas. Retorna quantas linhas saíram. */
+  /** Clears watermarks of dates already past. Returns how many rows went out. */
   cleanupAlertState(): Promise<number>
   /**
-   * Reenvia o alerta de target da rotina com os dados atuais, sem os gates de
-   * anti-repetição e sem mexer no watermark. `false` quando não há oferta no
-   * alvo para montar o e-mail.
+   * Resends the target alert of the routine with current data, with no
+   * anti-repetition gates and without touching the watermark. `false` when there is
+   * no offer within target to build the e-mail from.
    */
   resendAlert(routine: RoutineRow): Promise<boolean>
 }

@@ -3,20 +3,20 @@ import { logger } from '../../utils/logger'
 const log = logger.child({ service: 'fx-http' })
 
 /**
- * O ÚNICO ponto desta camada que abre socket.
+ * The ONLY point of this layer that opens a socket.
  *
- * Concentrar aqui não é organização, é superfície de ataque: allowlist de host,
- * proibição de redirect e timeout ficam num lugar só, e um provedor novo não
- * consegue nascer sem eles nem por esquecimento.
+ * Concentrating it here is not tidiness, it is attack surface: the host allowlist,
+ * the redirect ban and the timeout live in one place, and a new provider cannot be
+ * born without them, not even by oversight.
  */
 export class ExchangeRateHttpClient {
   /**
-   * Hosts que esta camada pode acessar. Constante do código — nunca vem de
-   * input, de banco ou de env editável por usuário.
+   * Hosts this layer may reach. A code constant — never from input, from the bank,
+   * or from a user-editable env.
    *
-   * O par com `redirect: 'manual'` é o que fecha SSRF: sem ele, um provedor
-   * comprometido responderia 302 para um host interno e a allowlist teria sido
-   * checada só no primeiro salto.
+   * Pairing it with `redirect: 'manual'` is what closes SSRF: without that, a
+   * compromised provider would answer 302 towards an internal host and the allowlist
+   * would have been checked on the first hop only.
    */
   private static readonly ALLOWED_HOSTS: ReadonlySet<string> = new Set([
     'api.frankfurter.dev',
@@ -25,7 +25,7 @@ export class ExchangeRateHttpClient {
 
   constructor(private readonly timeoutMs = 3_000) {}
 
-  /** Erro de host recusado, separado para o teste conseguir afirmar o motivo. */
+  /** Refused-host error, kept apart so the test can assert the reason. */
   static isAllowed(url: string): boolean {
     let parsed: URL
     try {
@@ -33,23 +33,23 @@ export class ExchangeRateHttpClient {
     } catch {
       return false
     }
-    // HTTPS obrigatório: em texto claro a cotação pode ser trocada em trânsito,
-    // e uma taxa adulterada vira decisão de alerta.
+    // HTTPS required: in clear text the quote can be swapped in transit, and a
+    // tampered rate becomes an alert decision.
     if (parsed.protocol !== 'https:') return false
     return ExchangeRateHttpClient.ALLOWED_HOSTS.has(parsed.hostname)
   }
 
   /**
-   * GET com timeout, sem redirect, devolvendo JSON não tipado.
+   * GET with a timeout, no redirect, returning untyped JSON.
    *
-   * Não valida o corpo de propósito — quem conhece o formato é o provedor, e é
-   * lá que o schema é conferido. Aqui só se garante que a resposta veio de onde
-   * deveria e não travou o processo.
+   * It deliberately does not validate the body — the provider knows the format, and
+   * that is where the schema is checked. Here we only guarantee the response came
+   * from where it should and did not hang the process.
    */
   async getJson(url: string): Promise<unknown> {
     if (!ExchangeRateHttpClient.isAllowed(url)) {
-      // Não loga a URL inteira: se ela algum dia vier de outro lugar, o log não
-      // vira o veículo do valor não confiável.
+      // Does not log the whole URL: if it ever comes from elsewhere, the log does
+      // not become the vehicle for the untrusted value.
       log.error({ host: safeHost(url) }, 'fx: host fora da allowlist recusado antes de abrir conexão')
       throw new Error('fx: host não permitido')
     }
@@ -61,8 +61,8 @@ export class ExchangeRateHttpClient {
       signal: AbortSignal.timeout(this.timeoutMs),
     })
 
-    // 3xx com `redirect: 'manual'` chega aqui como resposta opaca. Seguir por
-    // conta própria reabriria o buraco que a allowlist fecha.
+    // A 3xx with `redirect: 'manual'` arrives here as an opaque response. Following
+    // it ourselves would reopen the hole the allowlist closes.
     if (res.status >= 300 && res.status < 400) {
       throw new Error(`fx: redirect recusado (${res.status})`)
     }
@@ -73,7 +73,7 @@ export class ExchangeRateHttpClient {
   }
 }
 
-/** Só o host, para o log nunca carregar query string de origem duvidosa. */
+/** Host only, so the log never carries a query string of doubtful origin. */
 function safeHost(url: string): string {
   try {
     return new URL(url).hostname

@@ -1,48 +1,48 @@
-/** De onde a cotação veio. `native` = já era Real, não houve conversão. */
+/** Where the quote came from. `native` = it was already Real, no conversion. */
 export type FxSource = 'frankfurter' | 'currency-api' | 'native'
 
 export interface ConvertedAmount {
-  /** O valor em BRL. */
+  /** The value in BRL. */
   amount: number
-  /** Quantos BRL vale 1 unidade da moeda de origem. 1 quando já era BRL. */
+  /** How many BRL 1 unit of the source currency is worth. 1 when it was already BRL. */
   rate: number
   source: FxSource
-  /** A data DA COTAÇÃO, não a de hoje — o BCE publica em dia útil. */
+  /** The date OF THE QUOTE, not of today — the ECB publishes on business days. */
   rateDate: string
   /**
-   * A taxa veio de cache antigo porque todos os provedores falharam.
+   * The rate came from an old cache because every provider failed.
    *
-   * Existe para quem chama poder decidir: alertar com número velho pode ser
-   * pior que não alertar. A camada não decide isso sozinha.
+   * It exists so the caller can decide: alerting on an old number may be worse
+   * than not alerting. This layer does not decide that on its own.
    */
   stale: boolean
 }
 
 /**
- * Conversão de moeda para Real.
+ * Currency conversion to Real.
  *
- * Consumido SÓ por outro service ou controller — nenhuma rota expõe câmbio e
- * nenhum repositório fala com a rede. A garantia é de desenho: o service entra
- * por injeção no `container.ts` e a única classe que abre socket é o
+ * Consumed ONLY by another service or controller — no route exposes exchange and
+ * no repository talks to the network. The guarantee is by design: the service is
+ * injected in `container.ts` and the only class that opens a socket is
  * `ExchangeRateHttpClient`.
  */
 export interface IFxRateService {
   /**
-   * Converte entre duas moedas quaisquer. `null` quando não há taxa confiável
-   * para alguma das pontas.
+   * Converts between any two currencies. `null` when there is no trustworthy rate
+   * for either end.
    *
-   * O pivô é o Real: as duas cotações que já temos em cache viram uma razão.
-   * Assim não há um segundo conjunto de pares para manter, e a faixa de
-   * sanidade continua sendo aplicada nas duas pontas.
+   * The pivot is Real: the two quotes already in cache become a ratio. That way
+   * there is no second set of pairs to maintain, and the sanity range keeps being
+   * applied on both ends.
    */
   convert(amount: number, from: string, to: string): Promise<ConvertedAmount | null>
 
   /**
-   * Converte para BRL. Devolve `null` quando não há taxa confiável.
+   * Converts to BRL. Returns `null` when there is no trustworthy rate.
    *
-   * `null` em vez de exceção de propósito: a avaliação precisa poder PULAR um
-   * par sem derrubar o ciclo inteiro. Decidir alerta com número duvidoso é o
-   * único desfecho que não pode acontecer.
+   * `null` instead of an exception on purpose: evaluation has to be able to SKIP a
+   * pair without taking the whole cycle down. Deciding an alert on a doubtful
+   * number is the one outcome that must not happen.
    */
   toBrl(amount: number, currency: string): Promise<ConvertedAmount | null>
 }

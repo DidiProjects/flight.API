@@ -1,7 +1,7 @@
 import { Pool } from 'pg'
 import { CurrentBest, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
-/** Rota sem coleta nos últimos 30 dias: sem régua, o card não emite veredito. */
+/** A route with no collection in 30 days: no baseline, so the card gives no verdict. */
 const EMPTY_HISTORY: PriceHistory = {
   currency: null,
   avg_cash_30d: null,
@@ -12,17 +12,17 @@ const EMPTY_HISTORY: PriceHistory = {
 }
 
 /**
- * Uma execução só descreve um par quando RESOLVEU a perna de volta: ou trouxe
- * voltas, ou registrou que elas não estavam disponíveis (login do TudoAzul).
+ * A run only describes a pair once it RESOLVED the return leg: either it
+ * brought inbounds, or it recorded that they were unavailable (TudoAzul login).
  *
- * Sem este filtro, o `DISTINCT ON ... ORDER BY scraped_at DESC` das três queries
- * de par elegia simplesmente a coleta mais recente — inclusive uma em que o laço
- * 1-para-N tropeçou na primeira ida e só as idas subiram. Aí todo total saía
- * NULL: a rotina perdia a melhor tarifa que já tinha, o calendário esvaziava e o
- * ciclo de avaliação não achava par nenhum para alertar. Uma coleta pior apagava
- * o resultado de uma coleta boa, e o job ainda constava como `success`.
+ * Without this filter, the `DISTINCT ON ... ORDER BY scraped_at DESC` of the
+ * three pair queries simply elected the most recent collection — including one
+ * where the 1-to-N loop tripped on the first outbound and only outbounds went
+ * up. Every total then came out NULL: the routine lost the best fare it had,
+ * the calendar emptied, and the evaluation cycle found no pair to alert on. A
+ * worse collection erased a good one, and the job still read as `success`.
  *
- * Exige `o` como alias da perna de ida na query que interpola.
+ * Requires `o` as the alias of the outbound leg in the interpolating query.
  */
 const RESOLVEU_A_VOLTA = `(
         o.inbound_unavailable
@@ -48,8 +48,8 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   ): Promise<number> {
     if (fares.length === 0) return 0
 
-    // Um único timestamp por coleta: todas as tarifas da mesma execução
-    // compartilham scraped_at (a frescura é da run, não de cada linha).
+    // A single timestamp per collection: every fare of the same run shares
+    // scraped_at (freshness belongs to the run, not to each row).
     const scrapedAt = new Date()
     const values: unknown[] = []
     const placeholders: string[] = []
@@ -88,9 +88,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       )
     }
 
-    // Dedup por EXECUÇÃO (request_id), não por job: scraping_jobs é por rota
-    // (permanente), então conflitar em scraping_job_id congelaria o snapshot na
-    // primeira coleta. Cada run grava seu próprio snapshot (histórico de preço).
+    // Dedup by RUN (request_id), not by job: scraping_jobs is per route
+    // (permanent), so conflicting on scraping_job_id would freeze the snapshot at
+    // the first collection. Each run writes its own snapshot (price history).
     const { rowCount } = await this.db.query(
       `INSERT INTO flight_fares
          (scraping_job_id, request_id, flight_number, flight_date, is_return, origin, destination, airline,
@@ -108,19 +108,19 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   }
 
   /**
-   * Tarifas de PAR (busca ida-e-volta) para as janelas da rotina.
+   * PAIR fares (round-trip search) for the routine windows.
    *
-   * Devolve as duas pernas de cada par colhido, já trazendo o total do bundle.
-   * Só considera linhas com `return_date` preenchido — tarifa avulsa não entra,
-   * porque não foi precificada no contexto do par.
+   * Returns both legs of each collected pair, already carrying the bundle total.
+   * Only rows with `return_date` filled are considered — a loose fare does not
+   * enter, because it was not priced in the context of the pair.
    *
-   * O par é identificado pela EXECUÇÃO (`request_id`): as duas pernas da mesma
-   * busca RT compartilham request_id. A perna de volta tem `flight_date` igual à
-   * data DELA (a data de volta), não à data da ida — casar as pernas por
-   * flight_date separava o par em dois grupos e todo par real era descartado
-   * como incompleto.
+   * The pair is identified by the RUN (`request_id`): both legs of the same RT
+   * search share request_id. The return leg has `flight_date` equal to ITS date
+   * (the return date), not the outbound date — matching legs by flight_date split
+   * the pair into two groups and every real pair was discarded as incomplete.
+   * as incomplete.
    *
-   * A data de ida do par vem da perna de ida e volta em `pair_outbound_date`.
+   * The outbound date of the pair comes from the outbound leg as `pair_outbound_date`.
    */
   async getLatestPairs(
     airline: string,
@@ -181,11 +181,11 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     destination: string,
     dateFrom: string,
     dateTo: string,
-    // Obrigatório de propósito: tarifa colhida numa busca ida-e-volta é
-    // precificada no contexto do par e NÃO vale como tarifa avulsa — nem o
-    // contrário. Deixar isto opcional deixaria os dois lados vazarem um no outro.
-    //   null   -> só tarifas one-way (return_date IS NULL)
-    //   'date' -> só tarifas daquele par
+    // Required on purpose: a fare collected in a round-trip search is priced in
+    // the context of the pair and does NOT count as a loose fare — nor the other
+    // way round. Making this optional would let the two sides leak into each other.
+    //   null   -> one-way fares only (return_date IS NULL)
+    //   'date' -> fares of that pair only
     returnDate: string | null,
     maxAgeHours?: number,
   ): Promise<LatestFaresByDate[]> {
@@ -236,17 +236,17 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     destination: string,
     flightDate: string,
   ): Promise<PriceHistory> {
-    // ⚠ A régua é de UMA moeda só.
+    // ⚠ The baseline covers ONE currency only.
     //
-    // Antes isto era `MAX(currency)` com AVG/MIN/PERCENTILE sobre todas as
-    // linhas: numa rota colhida em duas moedas, os números eram misturados e o
-    // resultado saía rotulado com a moeda que o MAX alfabético escolhesse. É o
-    // caso real de LHR→GRU, colhida em BRL como volta da busca RT que parte de
-    // GRU e em GBP como só-ida partindo de Londres — R$7.627 e £730 entravam na
-    // mesma média.
+    // This used to be `MAX(currency)` with AVG/MIN/PERCENTILE over every row: on a
+    // route collected in two currencies the numbers were mixed and the result came
+    // out labelled with whichever currency the alphabetical MAX picked. That is the
+    // real case of LHR→GRU, collected in BRL as the return of the RT search leaving
+    // GRU and in GBP as a one-way out of London — R$7,627 and £730 landed in the
+    // same average.
     //
-    // A moeda escolhida é a da coleta MAIS RECENTE: é a que o card está
-    // exibindo, então é contra ela que o veredito tem que comparar.
+    // The chosen currency is the one of the MOST RECENT collection: it is what the
+    // card is showing, so it is what the verdict has to compare against.
     const { rows } = await this.db.query<PriceHistory>(`
       WITH atual AS (
         SELECT currency
@@ -281,18 +281,18 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   }
 
   /**
-   * Distribuição histórica dos TOTAIS de par — a régua do veredito em round-trip.
+   * Historical distribution of pair TOTALS — the verdict baseline on round-trip.
    *
-   * Sem isto o card comparava o total do par (duas pernas) contra a média de uma
-   * perna só, porque `origin/destination` da rota exclui a volta, que tem a rota
-   * invertida. O total é ~2x a régua, então TODA rotina RT dizia "Preço alto"
-   * para sempre — inclusive na melhor oferta que a rota já teve.
+   * Without this the card compared the pair total (two legs) against the average
+   * of a single leg, because the route `origin/destination` excludes the return,
+   * which has the route inverted. The total is ~2x the baseline, so EVERY RT
+   * routine said "expensive" forever — including on the best offer it ever had.
    *
-   * Sem `DISTINCT ON` de propósito: aqui se quer a distribuição ao longo dos 30
-   * dias, não a foto da coleta mais recente.
+   * No `DISTINCT ON` on purpose: what is wanted here is the distribution across
+   * the 30 days, not a snapshot of the most recent collection.
    *
-   * `INNER JOIN` na volta: par sem volta não tem total, e entrar na régua como
-   * se tivesse distorceria a média para baixo.
+   * `INNER JOIN` on the return: a pair with no return has no total, and letting
+   * it into the baseline as if it had would drag the average down.
    */
   private async getPairSummary(
     airlines: string[],
@@ -346,16 +346,16 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   }
 
   /**
-   * Régua de preço da rotina (30 dias).
+   * Price baseline of the routine (30 days).
    *
-   * Com `inbound`, é a distribuição dos totais de PAR; sem, a de tarifa avulsa.
-   * Os dois ramos são exclusivos porque o veredito compara a régua com o valor
-   * exibido no card, e esse valor é total de par ou tarifa avulsa — nunca uma
-   * mistura.
+   * With `inbound`, it is the distribution of PAIR totals; without, of loose fares.
+   * The two branches are exclusive because the verdict compares the baseline with
+   * the value shown on the card, and that value is either a pair total or a loose
+   * fare — never a mixture.
    *
-   * ⚠ Sem filtro de `stops`: `getCurrentBest` não filtra, então o valor exibido
-   * pode vir de um voo com escala. Uma régua só de voos diretos (mais caros)
-   * fazia qualquer conexão barata parecer uma pechincha histórica.
+   * ⚠ No `stops` filter: `getCurrentBest` does not filter either, so the shown
+   * value may come from a flight with a stop. A baseline of direct flights only
+   * (pricier) made any cheap connection look like a historical bargain.
    */
   async getSummary(
     airlines: string[],
@@ -410,7 +410,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     return rows[0] ?? EMPTY_HISTORY
   }
 
-  /** Menor total de par para as janelas da rotina (bundle da cia, ou soma da mesma busca RT). */
+  /** Lowest pair total for the routine windows (airline bundle, or sum of the same RT search). */
   private async getCurrentBestPair(
     airlines: string[],
     origin: string,
@@ -534,12 +534,12 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   }
 
   /**
-   * Preço atual da rotina.
+   * Current price of the routine.
    *
-   * Com `inbound` (round_trip), devolve o menor TOTAL DE PAR. Sem, só tarifa
-   * avulsa (`return_date IS NULL`). Os dois ramos são exclusivos de propósito:
-   * mostrar o preço de uma perna como se fosse o da viagem — ou o preço de par
-   * como se fosse avulso — é exatamente o que se quer evitar.
+   * With `inbound` (round_trip), returns the lowest PAIR TOTAL. Without, loose
+   * fares only (`return_date IS NULL`). The two branches are exclusive on purpose:
+   * showing the price of one leg as if it were the trip — or a pair price as if it
+   * were loose — is exactly what this avoids.
    */
   async getCurrentBest(
     airlines: string[],
@@ -599,14 +599,14 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   }
 
   /**
-   * Calendário de uma rotina round-trip: por data de IDA, o menor TOTAL de par.
+   * Calendar of a round-trip routine: per OUTBOUND date, the lowest pair TOTAL.
    *
-   * A pergunta que o calendário responde numa viagem de ida e volta é "em que
-   * dia sair deixa a VIAGEM mais barata" — não quanto custa a perna de ida.
+   * On a round trip the question the calendar answers is "which departure day
+   * makes the TRIP cheapest" — not what the outbound leg costs.
    *
-   * Antes desta variante o calendário vinha vazio em RT: `getPriceByDate` filtra
-   * `return_date IS NULL` e a coleta de par grava as duas pernas com a data de
-   * volta preenchida, que é o que identifica o par.
+   * Before this variant the calendar came back empty on RT: `getPriceByDate`
+   * filters `return_date IS NULL` and pair collection writes both legs with the
+   * return date filled, which is what identifies the pair.
    */
   private async getPairPriceByDate(
     airlines: string[],

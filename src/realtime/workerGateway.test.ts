@@ -52,7 +52,7 @@ describe('workerGateway', () => {
     ws.addEventListener('message', (e) => {
       const m = JSON.parse(typeof e.data === 'string' ? e.data : String(e.data))
       got.push(m)
-      // responde o comando cancel com ack
+      // answers the cancel command with an ack
       if (m.type === 'cancel') {
         ws.send(JSON.stringify({ v: 1, type: 'cancel.ack', id: 'a', requestId: m.requestId, ts: new Date().toISOString(), payload: { correlationId: m.id, result: 'aborted' } }))
       }
@@ -72,7 +72,7 @@ describe('workerGateway', () => {
     const dispatch = await gateway.requestCancel('r1')
     expect(dispatch).toEqual({ delivery: 'dispatched', result: 'aborted' })
 
-    // sem worker dono → no_worker
+    // no owning worker → no_worker
     expect(await gateway.requestCancel('desconhecido')).toEqual({ delivery: 'no_worker' })
 
     ws.close()

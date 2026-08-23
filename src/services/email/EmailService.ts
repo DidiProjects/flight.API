@@ -106,7 +106,7 @@ export class EmailService implements IEmailService {
       return `${m}/${d}/${y}`
     }
     const leg0 = `c[0].ds=${offer.origin}&c[0].std=${azulDate(offer.date)}&c[0].as=${offer.destination}`
-    // Com volta, o link reproduz a MESMA busca ida-e-volta que originou o preço.
+    // With a return, the link reproduces the SAME round-trip search that priced it.
     const leg1 = ret
       ? `&c[1].ds=${ret.origin}&c[1].std=${azulDate(ret.date)}&c[1].as=${ret.destination}`
       : ''
@@ -115,21 +115,21 @@ export class EmailService implements IEmailService {
 
   private buildLatamLink(offer: OfferBlock, passengers: number, fareType: string, ret?: OfferBlock | null): string {
     const redemption = fareType === 'cash' ? 'false' : 'true'
-    // `trip=RT&inbound=<data>` conferido contra o site em 2026-08-05: a busca
-    // abre com 35 cards e o cabeçalho "Escolha um voo de ida".
+    // `trip=RT&inbound=<date>` checked against the site on 2026-08-05: the search
+    // opens with 35 cards and the heading "Escolha um voo de ida".
     const inbound = ret ? ret.date : 'undefined'
     const trip = ret ? 'RT' : 'OW'
     return `https://www.latamairlines.com/br/pt/oferta-voos?origin=${offer.origin}&outbound=${offer.date}&destination=${offer.destination}&inbound=${inbound}&adt=${passengers}&chd=0&inf=0&trip=${trip}&cabin=Economy&redemption=${redemption}&sort=RECOMMENDED`
   }
 
   /**
-   * Só-ida vai para a UI nova; ida-e-volta, para a velha.
+   * One-way goes to the new UI; round-trip, to the old one.
    *
-   * O fluxo de ida-e-volta da BA só foi medido na UI velha (`flightList`, com
-   * `onds` de duas pernas e `ond=2`) — é a que o scraper percorre quando a
-   * origem é Brasil, e é de lá que sai todo par BA que dispara alerta hoje.
-   * Montar `trip=return` na UI nova sem ter conferido o fluxo era o que já
-   * fazia o link cair em só-ida.
+   * The BA round-trip flow was only measured on the old UI (`flightList`, with a
+   * two-leg `onds` and `ond=2`) — it is the one the scraper walks when the origin
+   * is Brazil, and where every BA pair that fires an alert today comes from.
+   * Building `trip=return` on the new UI without checking the flow is what already
+   * made the link land on a one-way search.
    */
   private buildBritishAirwaysLink(offer: OfferBlock, passengers: number, ret?: OfferBlock | null): string {
     if (ret) {
@@ -161,7 +161,7 @@ export class EmailService implements IEmailService {
     return `https://www.britishairways.com/nx/b/airselect/en/gbr/book/search/?${p.toString()}`
   }
 
-  /** Espelha o `buildSearchUrl` do scraper: os `tp*` acompanham a busca. */
+  /** Mirrors the scraper `buildSearchUrl`: the `tp*` params follow the search. */
   private buildRyanairLink(offer: OfferBlock, passengers: number, ret?: OfferBlock | null): string {
     const p = new URLSearchParams({
       adults:              String(passengers),
@@ -244,9 +244,9 @@ export class EmailService implements IEmailService {
   }
 
   /**
-   * Total da viagem no e-mail de RT. O alerta é avaliado contra a soma das duas
-   * pernas — sem esta linha o usuário vê dois preços e nenhum deles é o número
-   * que disparou a notificação.
+   * Trip total in the RT e-mail. The alert is evaluated against the sum of both
+   * legs — without this line the user sees two prices and neither is the number
+   * that fired the notification.
    */
   private renderPairTotal(ao: AirlineOfferPair, fareType: string): string {
     const sum = (a: number | null | undefined, b: number | null | undefined) =>
@@ -260,9 +260,9 @@ export class EmailService implements IEmailService {
     const totalPts = sum(out.farePts, ret.farePts)
 
     if (fareType === 'cash') {
-      // O total NÃO é somado aqui: em par de moedas diferentes, out.fareCash +
-      // ret.fareCash daria libra somada com euro. Quem soma é a avaliação, que
-      // converte antes — e é o número que disparou o alerta.
+      // The total is NOT summed here: on a pair with different currencies,
+      // out.fareCash + ret.fareCash would add pounds to euros. Evaluation sums,
+      // after converting — and that is the number that fired the alert.
       if (ao.total == null) return ''
       const nota = ao.total.converted && ao.total.rateDate
         ? ` <span style="font-weight:400;color:#6b7280;">(convertido, cotação de ${ao.total.rateDate.split('-').reverse().join('/')})</span>`
@@ -272,7 +272,7 @@ export class EmailService implements IEmailService {
         `${this.fmtCurrency(ao.total.amount, ao.total.currency)}${nota}`,
       ))
     } else if (fareType === 'pts' && totalPts != null) {
-      // Pontos não convertem: somar é legítimo.
+      // Points do not convert: summing is legitimate.
       rows.push(this.renderFareRow('Pontos total', `${totalPts.toLocaleString('pt-BR')} pts`))
     } else if (fareType === 'hyb') {
       const hybPts = sum(out.fareHybPts, ret.fareHybPts)

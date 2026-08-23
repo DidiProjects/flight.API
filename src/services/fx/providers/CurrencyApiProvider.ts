@@ -4,14 +4,14 @@ import { FetchedRate, IExchangeRateProvider } from './IExchangeRateProvider'
 import { FxSource } from '../interfaces/IFxRateService'
 
 /**
- * @fawazahmed0/currency-api — provedor de reserva.
+ * @fawazahmed0/currency-api — backup provider.
  *
- * Entra só quando a Frankfurter não responde. Fica em segundo lugar porque
- * depende de CDN de terceiro e não temos como subir uma cópia nossa — o
- * contrário exato do argumento que colocou a Frankfurter em primeiro.
+ * Steps in only when Frankfurter does not answer. It sits second because it depends
+ * on a third-party CDN and we cannot host a copy of our own — the exact opposite of
+ * the argument that put Frankfurter first.
  *
- * Formato: `{ "date": "2026-08-04", "gbp": { "brl": 6.82, ... } }` — moedas em
- * minúsculo, e a chave do objeto é a moeda de origem.
+ * Format: `{ "date": "2026-08-04", "gbp": { "brl": 6.82, ... } }` — currencies in
+ * lowercase, and the object key is the source currency.
  */
 const responseSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -27,8 +27,8 @@ export class CurrencyApiProvider implements IExchangeRateProvider {
 
   async fetchToBrl(currency: string): Promise<FetchedRate> {
     const code = currency.toLowerCase()
-    // Só letras: a moeda vem do banco, mas montar caminho de URL com valor não
-    // sanitizado é como se atravessa uma allowlist de host por path traversal.
+    // Letters only: the currency comes from the bank, but building a URL path with an
+    // unsanitised value is how a host allowlist gets crossed by path traversal.
     if (!/^[a-z]{3}$/.test(code)) {
       throw new Error(`currency-api: código de moeda inválido: ${currency}`)
     }

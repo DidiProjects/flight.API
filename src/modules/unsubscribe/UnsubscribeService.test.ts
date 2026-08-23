@@ -6,10 +6,10 @@ import { IRoutinesRepository } from '../routines/interfaces/IRoutinesRepository'
 import { UnsubscribeTokenRow } from '../../types'
 
 /**
- * O furo que estes testes fecham: o segundo clique no link de descadastro caía
- * no mesmo erro de um token forjado. Quem clicou duas vezes, ou clicou no link
- * de um e-mail antigo, via "erro" numa rotina que já estava desativada — e
- * ficava sem saber se tinha conseguido sair.
+ * The hole these tests close: a second click on the unsubscribe link fell into the
+ * same error as a forged token. Whoever clicked twice, or clicked the link of an
+ * old e-mail, saw "error" on a routine that was already deactivated — and was left
+ * not knowing whether they had managed to opt out.
  */
 
 const HOUR = 60 * 60 * 1000
@@ -21,7 +21,7 @@ const token = (over: Partial<UnsubscribeTokenRow> = {}): UnsubscribeTokenRow => 
   created_at: new Date(), ...over,
 })
 
-/** `subscribed` decide o que o SELECT de estado devolve — é o que o serviço lê. */
+/** `subscribed` decides what the state SELECT returns — it is what the service reads. */
 function build(rec: UnsubscribeTokenRow | null, subscribed: boolean) {
   const markUsed = vi.fn().mockResolvedValue(undefined)
   const repo = {
