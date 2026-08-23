@@ -19,6 +19,7 @@ import { FareHistoryRepository }      from './modules/fare-history/FareHistoryRe
 // Services
 import { HttpScraperClient }    from './services/scraper-client/HttpScraperClient'
 import { FlightFaresService }   from './modules/flight-fares/FlightFaresService'
+import { FareHistoryService }   from './modules/fare-history/FareHistoryService'
 import { EmailService }         from './services/email/EmailService'
 import { NotificationsService } from './services/notifications/NotificationsService'
 import { AuthService }          from './modules/auth/AuthService'
@@ -74,6 +75,7 @@ const fxSvc  = new FxRateService(
 )
 
 const flightFaresSvc = new FlightFaresService(flightFaresRepo)
+const fareHistorySvc = new FareHistoryService(fareHistoryRepo)
 const emailSvc = new EmailService(env)
 
 const notifSvc = new NotificationsService(
@@ -114,6 +116,7 @@ export const container = {
   unsubSvc,
   schedulerSvc,
   flightFaresSvc,
+  fareHistorySvc,
   analysisRunsSvc,
   adminSvc,
   scrapingJobRepo,

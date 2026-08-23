@@ -23,7 +23,51 @@ export interface FarePricePoint {
   observationCount: number
 }
 
+/** Window and resolution of a series. Fixed set: the SQL interval is not user input. */
+export type FareHistoryRange = 'day' | 'month' | '6m'
+
+/**
+ * One bucket of the chart. `min_cash`/`min_pts` are the best price OFFERED during
+ * the bucket — the minimum across every segment that overlaps it.
+ *
+ * `samples` is how many segments overlapped. Zero means nothing was on sale (or
+ * nothing was collected) in that window: an honest hole, not a price of zero.
+ * NUMERIC arrives from pg as string.
+ */
+export interface FareHistoryBucket {
+  bucket_start: Date
+  min_cash: string | null
+  min_pts: string | null
+  samples: number
+}
+
+export interface FareHistorySeries {
+  /** Currency of the most recent segment — the one the card is showing. */
+  currency: string | null
+  buckets: FareHistoryBucket[]
+}
+
+/** Route and windows of a routine. With `inbound`, the series is of pair TOTALS. */
+export interface FareHistoryQuery {
+  airlines: string[]
+  origin: string
+  destination: string
+  dateFrom: string
+  dateTo: string
+  inbound?: { from: string; to: string }
+}
+
 export interface IFareHistoryRepository {
+  /**
+   * The best price over time for the routine's route and windows.
+   *
+   * Not the series of one itinerary: the cheapest itinerary changes, and what the
+   * card shows is the best of the moment. Each bucket takes the minimum across
+   * every segment that overlaps it, which is the same quantity the headline price
+   * is — over time.
+   */
+  getSeries(query: FareHistoryQuery, range: FareHistoryRange): Promise<FareHistorySeries>
+
   /**
    * Derives the itineraries of a run from the fares it just wrote and records
    * the price of each.

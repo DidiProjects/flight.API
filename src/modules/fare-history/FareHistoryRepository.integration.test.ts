@@ -289,6 +289,90 @@ describeIt('FareHistoryRepository (integração / Postgres real)', () => {
     expect(rows[0].n).toBe(0)
   })
 
+  describe('getSeries', () => {
+    const ROUTE = {
+      airlines: ['azul'], origin: 'GRU', destination: 'CNF',
+      dateFrom: '2027-01-01', dateTo: '2027-01-31',
+      inbound: { from: '2027-01-01', to: '2027-01-31' },
+    }
+
+    /** Writes a segment directly: getSeries reads history, it does not build it. */
+    async function seedSegment(cash: number, fromHoursAgo: number, toHoursAgo: number): Promise<void> {
+      const { rows } = await pool.query(
+        `INSERT INTO fare_itineraries
+           (airline, trip_type, origin, destination, outbound_flight_number, outbound_date,
+            inbound_flight_number, inbound_date, currency)
+         VALUES ('azul','round_trip','GRU','CNF',$1,'2027-01-09','AD200','2027-01-15','BRL')
+         ON CONFLICT (airline, trip_type, origin, destination, outbound_flight_number,
+                      outbound_date, inbound_flight_number, inbound_date)
+         DO UPDATE SET currency = EXCLUDED.currency
+         RETURNING id`,
+        [`AD${100 + cash}`],
+      )
+      await pool.query(
+        `INSERT INTO fare_price_history
+           (itinerary_id, currency, amount_cash, observed_from, last_seen_at)
+         VALUES ($1,'BRL',$2, NOW() - ($3 || ' hours')::interval, NOW() - ($4 || ' hours')::interval)`,
+        [rows[0].id, cash, fromHoursAgo, toHoursAgo],
+      )
+    }
+
+    it('um platô cobre todos os buckets que atravessou, não só o de origem', async () => {
+      await seedSegment(700, 5, 1)
+
+      const series = await repo.getSeries(ROUTE, 'day')
+
+      const filled = series.buckets.filter((b) => b.samples > 0)
+      expect(series.currency).toBe('BRL')
+      // A five-hour segment lands on the hourly buckets it overlapped, not on one.
+      expect(filled.length).toBeGreaterThanOrEqual(4)
+      expect(filled.every((b) => b.min_cash === '700.00')).toBe(true)
+    })
+
+    it('buraco de coleta fica vazio em vez de virar linha reta', async () => {
+      await seedSegment(700, 20, 18)
+
+      const series = await repo.getSeries(ROUTE, 'day')
+
+      const empty = series.buckets.filter((b) => b.samples === 0)
+      expect(empty.length).toBeGreaterThan(0)
+      expect(empty.every((b) => b.min_cash === null)).toBe(true)
+    })
+
+    it('o bucket leva o MENOR preço entre os itinerários que o cobrem', async () => {
+      await seedSegment(700, 5, 1)
+      await seedSegment(650, 5, 1)
+
+      const series = await repo.getSeries(ROUTE, 'day')
+
+      const filled = series.buckets.filter((b) => b.samples > 0)
+      expect(filled.every((b) => b.min_cash === '650.00')).toBe(true)
+      // Both segments counted, so the front can tell a thin sample from a solid one.
+      expect(filled.some((b) => b.samples === 2)).toBe(true)
+    })
+
+    it('rotina de par não enxerga itinerário de ida simples da mesma rota', async () => {
+      await seedSegment(700, 5, 1)
+      const { rows } = await pool.query(
+        `INSERT INTO fare_itineraries
+           (airline, trip_type, origin, destination, outbound_flight_number, outbound_date, currency)
+         VALUES ('azul','one_way','GRU','CNF','AD999','2027-01-09','BRL') RETURNING id`,
+      )
+      await pool.query(
+        `INSERT INTO fare_price_history (itinerary_id, currency, amount_cash, observed_from, last_seen_at)
+         VALUES ($1,'BRL',100, NOW() - INTERVAL '5 hours', NOW() - INTERVAL '1 hour')`,
+        [rows[0].id],
+      )
+
+      const series = await repo.getSeries(ROUTE, 'day')
+
+      // R$100 is the price of ONE leg. Letting it in would make the trip look
+      // 7x cheaper than the card says.
+      const filled = series.buckets.filter((b) => b.samples > 0)
+      expect(filled.every((b) => b.min_cash === '700.00')).toBe(true)
+    })
+  })
+
   it('a limpeza apaga o itinerário parado e leva o histórico junto', async () => {
     await seedPair('11111111-1111-1111-1111-111111111111', '2026-08-01T10:00:00Z', { out: 400, back: 300 })
     await repo.recordRun('11111111-1111-1111-1111-111111111111')

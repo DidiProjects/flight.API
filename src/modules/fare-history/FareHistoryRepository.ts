@@ -1,5 +1,22 @@
 import { Pool } from 'pg'
-import { IFareHistoryRepository } from './interfaces/IFareHistoryRepository'
+import {
+  FareHistoryBucket,
+  FareHistoryQuery,
+  FareHistoryRange,
+  FareHistorySeries,
+  IFareHistoryRepository,
+} from './interfaces/IFareHistoryRepository'
+
+/**
+ * Span and resolution of each range. A closed table, never user input: these go
+ * into the SQL as `interval` parameters and a free string here would be an
+ * injection point.
+ */
+const RANGE_SPEC: Record<FareHistoryRange, { span: string; step: string }> = {
+  day:     { span: '24 hours', step: '1 hour' },
+  month:   { span: '30 days',  step: '1 day'  },
+  '6m':    { span: '180 days', step: '7 days' },
+}
 
 /**
  * One statement, because the three steps have to see the same snapshot: derive
@@ -150,6 +167,82 @@ ON CONFLICT (itinerary_id, observed_from) DO NOTHING
 
 export class FareHistoryRepository implements IFareHistoryRepository {
   constructor(private readonly db: Pool) {}
+
+  async getSeries(query: FareHistoryQuery, range: FareHistoryRange): Promise<FareHistorySeries> {
+    const { span, step } = RANGE_SPEC[range]
+    const params: unknown[] = [
+      query.airlines, query.origin, query.destination,
+      query.dateFrom, query.dateTo, span, step,
+    ]
+
+    // A routine with a return window reads round-trip itineraries, whose price is
+    // the pair total; one without reads one-way. Mixing them would put the total
+    // of a trip and the price of a leg in the same series.
+    const tripFilter = query.inbound
+      ? `AND i.trip_type = 'round_trip' AND i.inbound_date BETWEEN $8 AND $9`
+      : `AND i.trip_type = 'one_way'`
+    if (query.inbound) params.push(query.inbound.from, query.inbound.to)
+
+    const { rows } = await this.db.query<FareHistoryBucket & { currency: string | null }>(`
+      WITH bounds AS (
+        SELECT date_trunc('hour', NOW()) - $6::interval AS from_ts, NOW() AS to_ts
+      ),
+      itins AS (
+        SELECT i.id
+        FROM fare_itineraries i
+        WHERE i.airline = ANY($1::text[])
+          AND i.origin = $2 AND i.destination = $3
+          AND i.outbound_date BETWEEN $4 AND $5
+          ${tripFilter}
+      ),
+      -- One currency only. Averaging across markets is what put R$7,627 and £730
+      -- into the same number before (015); the chosen one is the most recent,
+      -- because it is the one the card is labelling right now.
+      cur AS (
+        SELECT h.currency
+        FROM fare_price_history h
+        JOIN itins i ON i.id = h.itinerary_id
+        ORDER BY h.last_seen_at DESC
+        LIMIT 1
+      ),
+      segs AS (
+        SELECT h.id, h.amount_cash, h.amount_pts, h.observed_from, h.last_seen_at
+        FROM fare_price_history h
+        JOIN itins i ON i.id = h.itinerary_id
+        WHERE h.currency = (SELECT currency FROM cur)
+          AND h.last_seen_at >= (SELECT from_ts FROM bounds)
+      ),
+      buckets AS (
+        SELECT gs AS bucket_start
+        FROM bounds, generate_series(bounds.from_ts, bounds.to_ts, $7::interval) gs
+      )
+      SELECT
+        b.bucket_start,
+        (SELECT currency FROM cur) AS currency,
+        MIN(s.amount_cash)         AS min_cash,
+        MIN(s.amount_pts)          AS min_pts,
+        COUNT(s.id)::int           AS samples
+      FROM buckets b
+      -- A segment counts for the bucket it OVERLAPS, not the one it started in.
+      -- That is what makes a plateau cover every bucket it spanned, and leaves a
+      -- collection gap empty instead of drawing a straight line through it.
+      LEFT JOIN segs s
+        ON  s.observed_from <  b.bucket_start + $7::interval
+        AND s.last_seen_at  >= b.bucket_start
+      GROUP BY b.bucket_start
+      ORDER BY b.bucket_start
+    `, params)
+
+    return {
+      currency: rows[0]?.currency ?? null,
+      buckets: rows.map((r) => ({
+        bucket_start: r.bucket_start,
+        min_cash: r.min_cash,
+        min_pts: r.min_pts,
+        samples: r.samples,
+      })),
+    }
+  }
 
   async recordRun(requestId: string): Promise<number> {
     const { rowCount } = await this.db.query(RECORD_RUN, [requestId])
