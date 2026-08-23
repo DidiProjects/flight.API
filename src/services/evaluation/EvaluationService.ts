@@ -12,6 +12,7 @@ import { RoutineRow } from '../../types'
 import { logger } from '../../utils/logger'
 import { isValidRoundTripPair } from '../../utils/roundtrip'
 import { IncompleteRoundTripError } from '../../utils/errors'
+import { isCheaperBy, sumMoney } from '../../utils/money'
 
 const log = logger.child({ service: 'evaluation' })
 
@@ -71,11 +72,14 @@ export class EvaluationService implements IEvaluationService {
     private readonly notifSvc: INotificationsService,
     private readonly fx: IFxRateService,
     /**
-     * Margin that absorbs exchange noise when the price composition shifts by a
-     * hair. An identical composition already blocks the common case (§5.6 of the
-     * plan); this is the net for cent-level drift.
+     * How much cheaper a fare has to be before it is worth another e-mail: 1%.
+     *
+     * It serves two purposes at once. A price drop of a cent is not news, and a
+     * composition that shifted by a hair because the exchange rate moved is not
+     * a drop at all — an identical composition already blocks the common case,
+     * and this is the net under it.
      */
-    private readonly fxNoiseMargin = 0.01,
+    private readonly minImprovement = 0.01,
   ) {}
 
   async runCycle(): Promise<void> {
@@ -251,9 +255,10 @@ export class EvaluationService implements IEvaluationService {
       // was the rate. That is not a price drop and cannot lower the watermark.
       if (this.sameBreakdown(prev.breakdown, breakdown)) continue
 
-      // Different composition: compare in Real, with the margin that absorbs the
-      // cent of noise.
-      if (amount < prev.amount * (1 - this.fxNoiseMargin)) {
+      // Different composition: compare in Real, in cents, and only past the
+      // margin — the watermark came from NUMERIC(12,2) and a total computed here
+      // never matches it bit for bit.
+      if (isCheaperBy(amount, prev.amount, this.minImprovement)) {
         candidates.push({ flightDate: date, amount, fare, breakdown })
       }
     }
@@ -285,15 +290,19 @@ export class EvaluationService implements IEvaluationService {
 
     // 6. Per-routine record gate. The dates that advanced are already written to
     //    the per-date watermark (step 4, history intact), but the e-mail only
-    //    goes out if the cheapest offer beats the routine floor. That stops new
-    //    dates at the same price from stacking one e-mail per cycle.
+    //    goes out if the cheapest offer beats the routine floor BY THE MARGIN.
+    //    That stops new dates at the same price from stacking one e-mail per
+    //    cycle — measured on 2026-08-23, nine e-mails with the identical price,
+    //    because the bare `>=` compared a total summed here against a floor that
+    //    had been through NUMERIC(12,2) and lost by 4.5e-13.
     const headline = offers[0]
-    if (headline.amount >= routineFloor) {
+    if (!isCheaperBy(headline.amount, routineFloor, this.minImprovement)) {
       log.info({
         routineId:      routine.id,
         routineName:    routine.name,
         headlineAmount: headline.amount,
         routineFloor,
+        minImprovement: this.minImprovement,
         advancedDates:  offers.map((o) => o.flightDate),
         type:           'alert',
         status:         'suppressed-not-record',
@@ -422,7 +431,7 @@ export class EvaluationService implements IEvaluationService {
             // Pair price: the airline bundle when it came, else the sum of the legs
             // from that same RT search. Never mixed with a loose fare.
             const bundle = this.bundleValue(out, routine)
-            const total = bundle ?? outValue + inValue
+            const total = bundle ?? sumMoney(outValue, inValue)
             if (!this.totalInTarget(total, routine, outCmp, inCmp)) continue
 
             const cur = best.get(outDate)
