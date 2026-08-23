@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
 import {
+  DeleteHistoryResult,
   FareHistoryBucket,
   FareHistoryQuery,
   FareHistoryRange,
@@ -165,6 +166,28 @@ WHERE t.itinerary_id NOT IN (SELECT itinerary_id FROM unchanged)
 ON CONFLICT (itinerary_id, observed_from) DO NOTHING
 `
 
+/**
+ * An itinerary belongs to a routine by ROUTE and trip type, the same rule
+ * `belongsToRoutine` applies to jobs and runs — spelled out again here because
+ * the columns are not the same ones: `outbound_date`/`inbound_date` instead of
+ * `flight_date`/`return_date`, and the trip type is on the row itself.
+ */
+const itineraryBelongsToRoutine = (alias: string, routineIdComparison: string) => `
+  EXISTS (
+    SELECT 1 FROM routines r
+    JOIN routine_airlines ra ON ra.routine_id = r.id
+    WHERE r.id ${routineIdComparison}
+      AND ra.airline    = ${alias}.airline
+      AND r.origin      = ${alias}.origin
+      AND r.destination = ${alias}.destination
+      AND r.trip_type   = ${alias}.trip_type
+      AND ${alias}.outbound_date BETWEEN r.outbound_start AND r.outbound_end
+      AND (
+        ${alias}.inbound_date IS NULL
+        OR ${alias}.inbound_date BETWEEN r.inbound_start AND r.inbound_end
+      )
+  )`
+
 export class FareHistoryRepository implements IFareHistoryRepository {
   constructor(private readonly db: Pool) {}
 
@@ -259,5 +282,37 @@ export class FareHistoryRepository implements IFareHistoryRepository {
       [days],
     )
     return rowCount ?? 0
+  }
+
+  async deleteExclusiveToRoutine(routineId: string): Promise<DeleteHistoryResult> {
+    const { rows: before } = await this.db.query<{ segments: string }>(
+      `SELECT count(h.id) AS segments
+         FROM fare_price_history h
+         JOIN fare_itineraries i ON i.id = h.itinerary_id
+        WHERE ${itineraryBelongsToRoutine('i', '= $1')}
+          AND NOT ${itineraryBelongsToRoutine('i', '<> $1')}`,
+      [routineId],
+    )
+
+    // The segments go with the itinerary (ON DELETE CASCADE): a series without
+    // the itinerary that identifies it has nothing to be a series of.
+    const { rowCount } = await this.db.query(
+      `DELETE FROM fare_itineraries i
+        WHERE ${itineraryBelongsToRoutine('i', '= $1')}
+          AND NOT ${itineraryBelongsToRoutine('i', '<> $1')}`,
+      [routineId],
+    )
+
+    const { rows } = await this.db.query<{ shared: string }>(
+      `SELECT count(*) AS shared FROM fare_itineraries i
+        WHERE ${itineraryBelongsToRoutine('i', '= $1')}`,
+      [routineId],
+    )
+
+    return {
+      itineraries: rowCount ?? 0,
+      segments: Number(before[0]?.segments ?? 0),
+      shared: Number(rows[0]?.shared ?? 0),
+    }
   }
 }

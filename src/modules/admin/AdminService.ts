@@ -1,6 +1,8 @@
 import type { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IAnalysisRunsRepository, AnalysisRunEventRow } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { ITargetAlertStateRepository } from '../target-alert-state/interfaces/ITargetAlertStateRepository'
+import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
+import type { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
 import type { IRoutinesRepository } from '../routines/interfaces/IRoutinesRepository'
 import type { INotificationsService } from '../../services/notifications/interfaces/INotificationsService'
 import type { INotificationLogRepository } from '../../services/notifications/interfaces/INotificationLogRepository'
@@ -29,6 +31,10 @@ export interface ResetAnalysesResult {
   analysisRuns: { deleted: number; events: number; keptRunning: number; keptShared: number }
   scrapingJobs: { reset: number; keptRunning: number; keptShared: number }
   alertWatermarks: { deleted: number }
+  /** Raw collections. The card price reads these, so a reset that spares them shows the old price. */
+  fares: { deleted: number; keptShared: number }
+  /** Curated series behind the chart (018). */
+  priceHistory: { itineraries: number; segments: number; keptShared: number }
 }
 
 export interface IAdminService {
@@ -50,6 +56,8 @@ export class AdminService implements IAdminService {
     private readonly notifSvc: INotificationsService,
     private readonly evaluationSvc: IEvaluationService,
     private readonly alertStateRepo: ITargetAlertStateRepository,
+    private readonly flightFaresRepo: IFlightFaresRepository,
+    private readonly fareHistoryRepo: IFareHistoryRepository,
   ) {}
 
   listJobs(): Promise<ScrapingJobRow[]> {
@@ -120,11 +128,18 @@ export class AdminService implements IAdminService {
     const runs = await this.analysisRunsRepo.deleteExclusiveToRoutine(routineId)
     const jobs = await this.scrapingJobRepo.resetExclusiveToRoutine(routineId)
     const watermarks = await this.alertStateRepo.deleteByRoutine(routineId)
+    // The collections and the series they feed. Without these two the reset
+    // cleared the history and the card went on showing the last price it had,
+    // because /fares/current reads flight_fares and not the runs.
+    const fares = await this.flightFaresRepo.deleteExclusiveToRoutine(routineId)
+    const history = await this.fareHistoryRepo.deleteExclusiveToRoutine(routineId)
 
     return {
       analysisRuns:    { deleted: runs.runs, events: runs.events, keptRunning: runs.running, keptShared: runs.shared },
       scrapingJobs:    { reset: jobs.reset, keptRunning: jobs.running, keptShared: jobs.shared },
       alertWatermarks: { deleted: watermarks },
+      fares:           { deleted: fares.deleted, keptShared: fares.shared },
+      priceHistory:    { itineraries: history.itineraries, segments: history.segments, keptShared: history.shared },
     }
   }
 }

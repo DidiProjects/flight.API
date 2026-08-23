@@ -104,6 +104,7 @@ const analysisRunsSvc = new AnalysisRunsService(routinesRepo, analysisRunsRepo)
 const adminSvc        = new AdminService(
   scrapingJobRepo, analysisRunsRepo, workerGateway,
   routinesRepo, notifLogRepo, notifSvc, evaluationSvc, alertStateRepo,
+  flightFaresRepo, fareHistoryRepo,
 )
 
 export const container = {
