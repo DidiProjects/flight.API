@@ -21,12 +21,15 @@ function makeService() {
   const notifSvc = { resendDailySummary: vi.fn().mockResolvedValue(true) }
   const evaluationSvc = { resendAlert: vi.fn().mockResolvedValue(true) }
   const alertStateRepo = { deleteByRoutine: vi.fn().mockResolvedValue(3) }
+  const flightFaresRepo = { deleteExclusiveToRoutine: vi.fn().mockResolvedValue({ deleted: 0, shared: 0 }) }
+  const fareHistoryRepo = { deleteExclusiveToRoutine: vi.fn().mockResolvedValue({ itineraries: 0, segments: 0, shared: 0 }) }
   const svc = new AdminService(
     scrapingJobRepo as never, analysisRunsRepo as never, cancelDispatcher as never,
     routinesRepo as never, notifLogRepo as never, notifSvc as never,
     evaluationSvc as never, alertStateRepo as never,
+    flightFaresRepo as never, fareHistoryRepo as never,
   )
-  return { svc, scrapingJobRepo, analysisRunsRepo, cancelDispatcher, routinesRepo, notifLogRepo, notifSvc, evaluationSvc, alertStateRepo }
+  return { svc, scrapingJobRepo, analysisRunsRepo, cancelDispatcher, routinesRepo, notifLogRepo, notifSvc, evaluationSvc, alertStateRepo, flightFaresRepo, fareHistoryRepo }
 }
 
 describe('AdminService.cancelJob', () => {
@@ -141,11 +144,13 @@ describe('AdminService.resetRoutineAnalyses', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('devolve o saldo do que zerou e do que foi preservado', async () => {
-    const { svc, analysisRunsRepo, scrapingJobRepo } = makeService()
+    const { svc, analysisRunsRepo, scrapingJobRepo, flightFaresRepo, fareHistoryRepo } = makeService()
     // @ts-expect-error partial fake
     analysisRunsRepo.deleteExclusiveToRoutine = vi.fn().mockResolvedValue({ runs: 12, events: 40, running: 1, shared: 2 })
     // @ts-expect-error partial fake
     scrapingJobRepo.resetExclusiveToRoutine = vi.fn().mockResolvedValue({ reset: 5, running: 1, shared: 2 })
+    flightFaresRepo.deleteExclusiveToRoutine.mockResolvedValue({ deleted: 340, shared: 7 })
+    fareHistoryRepo.deleteExclusiveToRoutine.mockResolvedValue({ itineraries: 18, segments: 96, shared: 1 })
 
     const res = await svc.resetRoutineAnalyses('r1')
 
@@ -153,14 +158,33 @@ describe('AdminService.resetRoutineAnalyses', () => {
       analysisRuns:    { deleted: 12, events: 40, keptRunning: 1, keptShared: 2 },
       scrapingJobs:    { reset: 5, keptRunning: 1, keptShared: 2 },
       alertWatermarks: { deleted: 3 },
+      fares:           { deleted: 340, keptShared: 7 },
+      priceHistory:    { itineraries: 18, segments: 96, keptShared: 1 },
     })
   })
 
+  // The card reads /fares/current, which reads flight_fares: a reset that stops
+  // at the runs clears the history and keeps showing the old best price.
+  it('apaga as tarifas e a série curada da rotina', async () => {
+    const { svc, flightFaresRepo, fareHistoryRepo } = makeService()
+    // @ts-expect-error partial fake
+    svc['analysisRunsRepo'].deleteExclusiveToRoutine = vi.fn().mockResolvedValue({ runs: 0, events: 0, running: 0, shared: 0 })
+    // @ts-expect-error partial fake
+    svc['scrapingJobRepo'].resetExclusiveToRoutine = vi.fn().mockResolvedValue({ reset: 0, running: 0, shared: 0 })
+
+    await svc.resetRoutineAnalyses('r1')
+
+    expect(flightFaresRepo.deleteExclusiveToRoutine).toHaveBeenCalledWith('r1')
+    expect(fareHistoryRepo.deleteExclusiveToRoutine).toHaveBeenCalledWith('r1')
+  })
+
   it('rotina inexistente é 404 e não apaga nada', async () => {
-    const { svc, routinesRepo, alertStateRepo } = makeService()
+    const { svc, routinesRepo, alertStateRepo, flightFaresRepo, fareHistoryRepo } = makeService()
     routinesRepo.findByIdAdmin.mockResolvedValue(null)
 
     await expect(svc.resetRoutineAnalyses('r1')).rejects.toThrow('não encontrada')
     expect(alertStateRepo.deleteByRoutine).not.toHaveBeenCalled()
+    expect(flightFaresRepo.deleteExclusiveToRoutine).not.toHaveBeenCalled()
+    expect(fareHistoryRepo.deleteExclusiveToRoutine).not.toHaveBeenCalled()
   })
 })

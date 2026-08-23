@@ -176,7 +176,7 @@ Admin routes check all three in sequence. Regular user routes check `authenticat
 | GET | `/admin/jobs/:jobId/timeline` | Admin | Telemetry of every run of one job |
 | POST | `/admin/jobs/:requestId/cancel` | Admin | Interrupt a running job |
 | POST | `/admin/routines/:routineId/resend-last-notification` | Admin | Re-send the routine's last e-mail (target alert or daily summary, whichever came last), rebuilt from current fares |
-| POST | `/admin/routines/:routineId/reset-analyses` | Admin | Clear the routine's analysis history: runs, events, scraping jobs and alert watermark. Keeps flight_fares, and keeps whatever another routine also covers |
+| POST | `/admin/routines/:routineId/reset-analyses` | Admin | Clear the routine's analysis history: runs, events, scraping jobs, alert watermark, collected fares and the curated price series. Keeps whatever another routine also covers |
 
 ### Scrape
 | Method | Path | Auth | Description |

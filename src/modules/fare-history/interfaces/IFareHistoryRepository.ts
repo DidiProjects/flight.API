@@ -60,6 +60,15 @@ export interface FareHistoryQuery {
   inbound?: { from: string; to: string }
 }
 
+/** Balance of a routine-scoped delete of the curated history. */
+export interface DeleteHistoryResult {
+  itineraries: number
+  /** Price segments that went with them, by cascade. */
+  segments: number
+  /** Itineraries of this routine another routine also tracks, left in place. */
+  shared: number
+}
+
 export interface IFareHistoryRepository {
   /**
    * The best price over time for the routine's route and windows.
@@ -90,4 +99,11 @@ export interface IFareHistoryRepository {
    * sells; keeping its series would only grow the table.
    */
   cleanupNotSeenSince(days: number): Promise<number>
+
+  /**
+   * Drops the itineraries that ONLY this routine reaches, and their series with
+   * them. Part of the routine reset: 018 arrived after it, so the reset used to
+   * clear the runs and leave the chart intact.
+   */
+  deleteExclusiveToRoutine(routineId: string): Promise<DeleteHistoryResult>
 }
