@@ -2,6 +2,7 @@ import { IScrapeService } from './interfaces/IScrapeService'
 import { IScrapingJobRepository } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
+import { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
 import { ScrapeCallback } from './schema'
 import { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt } from '../../services/scheduler/SchedulerService'
 import { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
@@ -53,7 +54,24 @@ export class ScrapeService implements IScrapeService {
     private readonly flightFaresRepo: IFlightFaresRepository,
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
     private readonly fx: IFxRateService,
+    private readonly fareHistoryRepo: IFareHistoryRepository,
   ) {}
+
+  /**
+   * Feeds the curated history from the fares just written.
+   *
+   * Never blocks the callback: the collection is already persisted and the job
+   * already rescheduled, so losing a history point is worth far less than
+   * failing the run over it.
+   */
+  private async recordHistory(requestId: string, jobId: string): Promise<void> {
+    try {
+      const segments = await this.fareHistoryRepo.recordRun(requestId)
+      log.info({ jobId, requestId, segments }, 'fare history recorded')
+    } catch (err) {
+      log.error({ err, jobId, requestId }, 'fare history failed: collection kept')
+    }
+  }
 
   /**
    * Converts the fares to Real ONCE, here, when the analysis is ingested.
@@ -156,6 +174,7 @@ export class ScrapeService implements IScrapeService {
 
     const rows  = await this.withBrl(this.toFareRows(data, toDateOrNull(job.return_date)), { requestId: data.requestId, airline: data.airline })
     const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, rows)
+    await this.recordHistory(data.requestId, job.id)
 
     const nextRunAt = calcNextRunAt(job.flight_date)
     await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
@@ -193,6 +212,7 @@ export class ScrapeService implements IScrapeService {
     // Persists the collection (ON CONFLICT protects against a duplicate in the same run).
     const rows  = await this.withBrl(this.toFareRows(data, toDateOrNull(job.return_date)), { requestId: data.requestId, airline: data.airline })
     const count = await this.flightFaresRepo.insertMany(job.id, data.requestId, rows)
+    await this.recordHistory(data.requestId, job.id)
 
     // Only reschedules the job if it is NOT mid-collection (a re-dispatch already in
     // flight with another request_id) — in that case we avoid overwriting the state.

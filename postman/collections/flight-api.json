@@ -1235,6 +1235,67 @@
             },
             "description": "Melhor preço por DATA (snapshot mais recente de cada data) na janela — usado pelo FareCalendar (heatmap de datas) do RoutineCard. Requer JWT."
           }
+        },
+        {
+          "name": "GET /fares/series",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fares/series?airlines=azul,latam&origin=VCP&destination=GRU&date_from=2026-08-01&date_to=2026-08-31&range=month",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fares",
+                "series"
+              ],
+              "query": [
+                {
+                  "key": "airlines",
+                  "value": "azul,latam",
+                  "description": "Airlines separadas por vírgula"
+                },
+                {
+                  "key": "origin",
+                  "value": "VCP",
+                  "description": "IATA de origem"
+                },
+                {
+                  "key": "destination",
+                  "value": "GRU",
+                  "description": "IATA de destino"
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-08-01",
+                  "description": "Início da janela de ida (YYYY-MM-DD)"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-08-31",
+                  "description": "Fim da janela de ida (YYYY-MM-DD)"
+                },
+                {
+                  "key": "inbound_from",
+                  "value": "",
+                  "description": "Início da janela de volta. Presente = rotina de par, e a série passa a ser de TOTAIS do par",
+                  "disabled": true
+                },
+                {
+                  "key": "inbound_to",
+                  "value": "",
+                  "description": "Fim da janela de volta",
+                  "disabled": true
+                },
+                {
+                  "key": "range",
+                  "value": "month",
+                  "description": "day (24h, bucket de 1h) | month (30d, bucket de 1d) | 6m (180d, bucket de 7d). Default: month"
+                }
+              ]
+            },
+            "description": "Série do MENOR preço ao longo do tempo, para o gráfico do RoutineCard. Cada bucket traz o mínimo entre os segmentos de fare_price_history que o ATRAVESSAM — platô cobre toda a faixa que valeu, e buraco de coleta volta com samples=0 e mínimo nulo, em vez de virar linha reta. Uma moeda só por série (a do segmento mais recente). Requer JWT."
+          }
         }
       ]
     },
