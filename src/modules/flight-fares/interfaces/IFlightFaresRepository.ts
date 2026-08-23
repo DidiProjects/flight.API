@@ -111,6 +111,13 @@ export interface PriceByDate {
   best_hyb_cash: number | null
 }
 
+/** Balance of a routine-scoped delete: what went, and what stayed because another routine sees it. */
+export interface DeleteFaresResult {
+  deleted: number
+  /** Outbound rows of this routine that another routine also covers. */
+  shared: number
+}
+
 export interface IFlightFaresRepository {
   insertMany(jobId: string, requestId: string, fares: Omit<FlightFareRow, 'id' | 'scraping_job_id' | 'request_id' | 'scraped_at'>[]): Promise<number>
   getLatestByRoute(airline: string, origin: string, destination: string, dateFrom: string, dateTo: string, returnDate: string | null, maxAgeHours?: number): Promise<LatestFaresByDate[]>
@@ -125,6 +132,13 @@ export interface IFlightFaresRepository {
   getKnownCurrency(airlines: string[], origin: string, destination: string): Promise<string | null>
   aggregateToDailyBucket(bucketDate: string): Promise<number>
   cleanupOlderThan(days: number): Promise<number>
+  /**
+   * Drops the collections that ONLY this routine reaches, run by run.
+   *
+   * The card price comes straight from `flight_fares`, so a reset that leaves
+   * the fares in place clears the history and keeps showing the old best price.
+   */
+  deleteExclusiveToRoutine(routineId: string): Promise<DeleteFaresResult>
 }
 
 /** A fare row collected in a PAIR (round-trip) search. */

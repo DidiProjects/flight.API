@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
-import { CurrentBest, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
+import { belongsToRoutine } from '../scraping-jobs/ScrapingJobRepository'
+import { CurrentBest, DeleteFaresResult, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
 /** A route with no collection in 30 days: no baseline, so the card gives no verdict. */
 const EMPTY_HISTORY: PriceHistory = {
@@ -777,5 +778,45 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       DELETE FROM flight_fares WHERE scraped_at < NOW() - ($1 || ' days')::interval
     `, [days])
     return rowCount ?? 0
+  }
+
+  async deleteExclusiveToRoutine(routineId: string): Promise<DeleteFaresResult> {
+    // The unit is the RUN, not the row: a return leg carries the swapped route
+    // and its own date, so `belongsToRoutine` never matches it. Deciding by the
+    // outbound and taking the whole request_id with it is what keeps a pair from
+    // being cut in half — the return would survive its outbound and go on
+    // pricing a pair that no longer exists.
+    const { rowCount } = await this.db.query(
+      `DELETE FROM flight_fares
+        WHERE request_id IN (
+          SELECT o.request_id FROM flight_fares o
+           WHERE o.request_id IS NOT NULL
+             AND NOT o.is_return
+             AND ${belongsToRoutine('o', '= $1')}
+             AND NOT ${belongsToRoutine('o', '<> $1')}
+        )`,
+      [routineId],
+    )
+
+    // Collections older than the request_id column have nothing to group them by,
+    // so they go one row at a time — outbound only, by the same rule.
+    const { rowCount: legacy } = await this.db.query(
+      `DELETE FROM flight_fares f
+        WHERE f.request_id IS NULL
+          AND NOT f.is_return
+          AND ${belongsToRoutine('f', '= $1')}
+          AND NOT ${belongsToRoutine('f', '<> $1')}`,
+      [routineId],
+    )
+
+    const { rows } = await this.db.query<{ shared: string }>(
+      `SELECT count(*) AS shared
+         FROM flight_fares f
+        WHERE NOT f.is_return
+          AND ${belongsToRoutine('f', '= $1')}`,
+      [routineId],
+    )
+
+    return { deleted: (rowCount ?? 0) + (legacy ?? 0), shared: Number(rows[0]?.shared ?? 0) }
   }
 }
