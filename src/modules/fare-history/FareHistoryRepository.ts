@@ -218,22 +218,24 @@ export class FareHistoryRepository implements IFareHistoryRepository {
           AND i.outbound_date BETWEEN $4 AND $5
           ${tripFilter}
       ),
-      -- One currency only. Averaging across markets is what put R$7,627 and £730
-      -- into the same number before (015); the chosen one is the most recent,
-      -- because it is the one the card is labelling right now.
-      cur AS (
-        SELECT h.currency
-        FROM fare_price_history h
-        JOIN itins i ON i.id = h.itinerary_id
-        ORDER BY h.last_seen_at DESC
-        LIMIT 1
-      ),
+      -- Money in Real, with the rate frozen at collection (017) — the same ruler
+      -- the card's total and the 30-day baseline already use.
+      --
+      -- It used to read the collected currency and keep only ONE of them (015,
+      -- against averaging R$7,627 with £730). That fixed the average and broke the
+      -- box: the chart drew the series in GBP while the "Mín./Média 30 dias" beside
+      -- it came from getPairSummary, in BRL, and both were labelled with the
+      -- series' £ — a Real number wearing a pound sign, and a line an order of
+      -- magnitude away from the stats next to it.
+      --
+      -- In Real there is no currency to elect and no sample to discard. Points stay
+      -- in points: PTS is not an exchange currency.
       segs AS (
-        SELECT h.id, h.amount_cash, h.amount_pts, h.amount_hyb_pts, h.amount_hyb_cash, h.observed_from, h.last_seen_at
+        SELECT h.id, h.amount_cash_brl AS amount_cash, h.amount_pts, h.amount_hyb_pts,
+               h.amount_hyb_cash_brl AS amount_hyb_cash, h.observed_from, h.last_seen_at
         FROM fare_price_history h
         JOIN itins i ON i.id = h.itinerary_id
-        WHERE h.currency = (SELECT currency FROM cur)
-          AND h.last_seen_at >= (SELECT from_ts FROM bounds)
+        WHERE h.last_seen_at >= (SELECT from_ts FROM bounds)
       ),
       buckets AS (
         SELECT gs AS bucket_start
@@ -241,7 +243,7 @@ export class FareHistoryRepository implements IFareHistoryRepository {
       )
       SELECT
         b.bucket_start,
-        (SELECT currency FROM cur) AS currency,
+        'BRL'                      AS currency,
         MIN(s.amount_cash)         AS min_cash,
         MIN(s.amount_pts)          AS min_pts,
         MIN(s.amount_hyb_pts)      AS min_hyb_pts,

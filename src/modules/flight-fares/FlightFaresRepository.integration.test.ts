@@ -527,6 +527,67 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   // parado, enquanto outras cinco datas eram atualizadas a cada hora. Rodar a
   // rotina de novo não corrigia — a linha velha seguia ganhando o MIN, porque a
   // única validade era de 30 dias.
+  /**
+   * O par já somava em Real desde a 017. A só-ida ficou para trás: elegia a moeda
+   * mais frequente da janela e descartava o resto, então o card exibia GBP numa
+   * rotina e R$ na de baixo, e o gráfico ficava numa escala e a base de 30 dias
+   * noutra. O dashboard agora é todo em Real.
+   */
+  describe('a régua da só-ida é em Real', () => {
+    const emLibra = (flight: string, gbp: number, brl: number) =>
+      fare(flight, gbp, { currency: 'GBP', fare_cash_brl: brl, fx_rate: brl / gbp })
+
+    it('coleta em libra sai como BRL, com o valor convertido na coleta', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [emLibra('BA247', 511, 3847.83)])
+
+      const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-12', '2026-07-12')
+
+      expect(current.currency).toBe('BRL')
+      expect(Number(current.best_cash)).toBeCloseTo(3847.83, 2)
+    })
+
+    it('duas moedas na janela: ninguém é descartado e o menor é o menor em Real', async () => {
+      // GBP 511 = R$3.847,83 não é mais barato que R$1.200 só por 511 < 1200 — era
+      // exatamente esse o risco de comparar números de mercados diferentes.
+      await repo.insertMany(JOB_ID, REQ_1, [
+        emLibra('BA247', 511, 3847.83),
+        fare('AD4188', 1200, { flight_date: '2026-07-13' }),
+      ])
+
+      const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-12', '2026-07-13')
+
+      expect(current.currency).toBe('BRL')
+      expect(Number(current.best_cash)).toBe(1200)
+    })
+
+    it('a base de 30 dias segue a mesma régua', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [
+        emLibra('BA247', 511, 3847.83),
+        fare('AD4188', 1200, { flight_date: '2026-07-13' }),
+      ])
+
+      const summary = await repo.getSummary(['azul'], 'CNF', 'VCP', '2026-07-12', '2026-07-13')
+
+      expect(summary.currency).toBe('BRL')
+      // A data em libra continua na média: antes ela sumia da régua inteira.
+      expect(Number(summary.min_cash_30d)).toBe(1200)
+      expect(Number(summary.avg_cash_30d)).toBeCloseTo((3847.83 + 1200) / 2, 2)
+    })
+
+    it('tarifa sem cotação confiável fica fora da régua, não entra crua', async () => {
+      // fare_cash_brl NULL = linha anterior à 017, ou sem cotação no momento.
+      // Deixar o valor original entrar somaria libra com Real na mesma coluna.
+      await repo.insertMany(JOB_ID, REQ_1, [
+        fare('BA247', 511, { currency: 'GBP', fare_cash_brl: null, fx_rate: null }),
+        fare('AD4188', 1200, { flight_date: '2026-07-13' }),
+      ])
+
+      const current = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-12', '2026-07-13')
+
+      expect(Number(current.best_cash)).toBe(1200)
+    })
+  })
+
   describe('frescor e idade do preço', () => {
     it('coleta fora da janela sai do melhor preço', async () => {
       await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
