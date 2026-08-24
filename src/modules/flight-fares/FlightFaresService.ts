@@ -55,11 +55,11 @@ export class FlightFaresService implements IFlightFaresService {
   /**
    * The journeys of the best pair, from the parts the query already returns.
    *
-   * The currency is the same on both: measured in the bank, no pair mixes
-   * currencies — an RT search is priced in the market of departure and both legs
-   * come out together. The field exists per journey anyway, so the front never has
-   * to inherit a currency from a level above (that is how outbound and return came
-   * out labelled the same).
+   * Both carry BRL: every money figure the dashboard reads is now the Real frozen
+   * at collection (017), pair and one-way alike. The field stays per journey so the
+   * front never inherits a currency from a level above — that is how outbound and
+   * return came out labelled the same, and how a Real number ended up wearing the
+   * pound sign of the chart series next to it.
    */
   /**
    * NUMERIC comes back from pg as a STRING.

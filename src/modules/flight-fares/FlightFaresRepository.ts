@@ -406,7 +406,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         ORDER BY flight_date, scraped_at DESC
       )
       , coletado AS (
-        SELECT f.currency, f.fare_cash, f.fare_pts
+        -- Em Real (017), a mesma régua do par e do preço atual. A moeda mais
+        -- frequente elegia um mercado e descartava o resto da janela.
+        SELECT f.fare_cash_brl AS fare_cash, f.fare_pts
         FROM flight_fares f
         INNER JOIN latest_per_date lpd
           ON f.flight_date = lpd.flight_date
@@ -415,20 +417,15 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         WHERE f.airline = ANY($1::text[])
           AND f.origin = $2 AND f.destination = $3
           AND f.return_date IS NULL
-      ),
-      -- Uma moeda só na régua: a mais frequente da janela. "MAX(currency)"
-      -- misturava BRL com GBP na mesma média e rotulava com o vencedor do
-      -- alfabeto.
-      moeda AS (SELECT mode() WITHIN GROUP (ORDER BY currency) AS c FROM coletado)
+      )
       SELECT
-        (SELECT c FROM moeda)                                           AS currency,
+        'BRL'                                                           AS currency,
         AVG(fare_cash)                                                  AS avg_cash_30d,
         MIN(fare_cash)                                                  AS min_cash_30d,
         PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY fare_cash)          AS p20_cash_30d,
         AVG(fare_pts)                                                   AS avg_pts_30d,
         MIN(fare_pts)                                                   AS min_pts_30d
       FROM coletado
-      WHERE currency = (SELECT c FROM moeda)
     `, [airlines, origin, destination, dateFrom, dateTo])
     return rows[0] ?? EMPTY_HISTORY
   }
@@ -599,7 +596,14 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         ORDER BY flight_date, scraped_at DESC
       )
       , coletado AS (
-        SELECT f.currency, f.fare_cash, f.fare_pts, f.fare_hyb_pts, f.fare_hyb_cash, lpd.scraped_at
+        -- Em Real com a taxa congelada na coleta (017), a mesma régua do par. A
+        -- moeda mais frequente (mode()) elegia um mercado e DESCARTAVA o outro:
+        -- numa rotina multi-companhia que coletou em GBP e BRL, metade das datas
+        -- sumia da régua sem deixar rastro. Em Real todas cabem na mesma coluna.
+        -- fare_cash_brl NULL (linha anterior à 017, ou sem cotação confiável)
+        -- sai sozinha do MIN, que ignora NULL.
+        SELECT f.fare_cash_brl AS fare_cash, f.fare_pts, f.fare_hyb_pts,
+               f.fare_hyb_cash_brl AS fare_hyb_cash, lpd.scraped_at
         FROM flight_fares f
         INNER JOIN latest_per_date lpd
           ON f.flight_date = lpd.flight_date
@@ -607,13 +611,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
            = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
         WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
           AND f.return_date IS NULL
-      ),
-      -- O MENOR preço só é comparável dentro de uma moeda: com BRL e GBP na
-      -- mesma coluna, "MIN" escolheria a libra por 730 ser menor que 4.900.
-      moeda AS (SELECT mode() WITHIN GROUP (ORDER BY currency) AS c FROM coletado)
-      , na_moeda AS (SELECT * FROM coletado WHERE currency = (SELECT c FROM moeda))
+      )
       SELECT
-        (SELECT c FROM moeda) AS currency,
+        'BRL'                 AS currency,
         MIN(fare_cash)        AS best_cash,
         MIN(fare_pts)         AS best_pts,
         MIN(fare_hyb_pts)     AS best_hyb_pts,
@@ -621,12 +621,12 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         -- Idade DO PREÇO exibido, não da coleta mais recente da grade. O card
         -- diz "verificado há x"; com MAX(scraped_at) ele carimbava a tarifa
         -- vencedora com a hora de OUTRA data que acabara de ser coletada.
-        (SELECT scraped_at FROM na_moeda WHERE fare_cash     IS NOT NULL ORDER BY fare_cash,     scraped_at DESC LIMIT 1) AS best_cash_at,
-        (SELECT scraped_at FROM na_moeda WHERE fare_pts      IS NOT NULL ORDER BY fare_pts,      scraped_at DESC LIMIT 1) AS best_pts_at,
-        (SELECT scraped_at FROM na_moeda WHERE fare_hyb_pts  IS NOT NULL ORDER BY fare_hyb_pts,  scraped_at DESC LIMIT 1) AS best_hyb_pts_at,
-        (SELECT scraped_at FROM na_moeda WHERE fare_hyb_cash IS NOT NULL ORDER BY fare_hyb_cash, scraped_at DESC LIMIT 1) AS best_hyb_cash_at,
+        (SELECT scraped_at FROM coletado WHERE fare_cash     IS NOT NULL ORDER BY fare_cash,     scraped_at DESC LIMIT 1) AS best_cash_at,
+        (SELECT scraped_at FROM coletado WHERE fare_pts      IS NOT NULL ORDER BY fare_pts,      scraped_at DESC LIMIT 1) AS best_pts_at,
+        (SELECT scraped_at FROM coletado WHERE fare_hyb_pts  IS NOT NULL ORDER BY fare_hyb_pts,  scraped_at DESC LIMIT 1) AS best_hyb_pts_at,
+        (SELECT scraped_at FROM coletado WHERE fare_hyb_cash IS NOT NULL ORDER BY fare_hyb_cash, scraped_at DESC LIMIT 1) AS best_hyb_cash_at,
         MAX(scraped_at)       AS scraped_at
-      FROM na_moeda
+      FROM coletado
     `, [airlines, origin, destination, dateFrom, dateTo, maxAgeHours])
 
     return rows[0] ?? {

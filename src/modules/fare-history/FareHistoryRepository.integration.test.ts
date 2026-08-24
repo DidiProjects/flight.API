@@ -297,23 +297,33 @@ describeIt('FareHistoryRepository (integração / Postgres real)', () => {
     }
 
     /** Writes a segment directly: getSeries reads history, it does not build it. */
-    async function seedSegment(cash: number, fromHoursAgo: number, toHoursAgo: number): Promise<void> {
+    /**
+     * `brl` apart from `cash` on purpose: the series reads the Real frozen at
+     * collection, and passing a different collected currency is what proves it —
+     * a GBP segment has to land on the chart already converted.
+     */
+    async function seedSegment(
+      cash: number,
+      fromHoursAgo: number,
+      toHoursAgo: number,
+      money: { currency?: string; brl?: number } = {},
+    ): Promise<void> {
       const { rows } = await pool.query(
         `INSERT INTO fare_itineraries
            (airline, trip_type, origin, destination, outbound_flight_number, outbound_date,
             inbound_flight_number, inbound_date, currency)
-         VALUES ('azul','round_trip','GRU','CNF',$1,'2027-01-09','AD200','2027-01-15','BRL')
+         VALUES ('azul','round_trip','GRU','CNF',$1,'2027-01-09','AD200','2027-01-15',$2)
          ON CONFLICT (airline, trip_type, origin, destination, outbound_flight_number,
                       outbound_date, inbound_flight_number, inbound_date)
          DO UPDATE SET currency = EXCLUDED.currency
          RETURNING id`,
-        [`AD${100 + cash}`],
+        [`AD${100 + cash}`, money.currency ?? 'BRL'],
       )
       await pool.query(
         `INSERT INTO fare_price_history
-           (itinerary_id, currency, amount_cash, observed_from, last_seen_at)
-         VALUES ($1,'BRL',$2, NOW() - ($3 || ' hours')::interval, NOW() - ($4 || ' hours')::interval)`,
-        [rows[0].id, cash, fromHoursAgo, toHoursAgo],
+           (itinerary_id, currency, amount_cash, amount_cash_brl, observed_from, last_seen_at)
+         VALUES ($1,$2,$3,$4, NOW() - ($5 || ' hours')::interval, NOW() - ($6 || ' hours')::interval)`,
+        [rows[0].id, money.currency ?? 'BRL', cash, money.brl ?? cash, fromHoursAgo, toHoursAgo],
       )
     }
 
@@ -351,6 +361,34 @@ describeIt('FareHistoryRepository (integração / Postgres real)', () => {
       expect(filled.some((b) => b.samples === 2)).toBe(true)
     })
 
+    it('série em Real mesmo quando a companhia cobrou em outra moeda', async () => {
+      // A libra na coleta, o Real no gráfico: é a mesma régua do total do card e
+      // da base de 30 dias. Antes a série vinha na moeda coletada e as estatísticas
+      // ao lado vinham em Real — mesmo rótulo, escalas diferentes na mesma caixa.
+      await seedSegment(700, 5, 1, { currency: 'GBP', brl: 5271 })
+
+      const series = await repo.getSeries(ROUTE, 'day')
+
+      expect(series.currency).toBe('BRL')
+      const filled = series.buckets.filter((b) => b.samples > 0)
+      expect(filled.length).toBeGreaterThan(0)
+      expect(filled.every((b) => b.min_cash === '5271.00')).toBe(true)
+    })
+
+    it('mercados diferentes convivem na mesma régua, nenhum é descartado', async () => {
+      // A moeda mais frequente vencia e o resto da janela sumia sem deixar rastro.
+      // Em Real os dois cabem, e o menor é o menor DE VERDADE: GBP 700 = R$5.271
+      // não é mais barato que R$4.000 só por 700 < 4000.
+      await seedSegment(700, 5, 1, { currency: 'GBP', brl: 5271 })
+      await seedSegment(4000, 5, 1)
+
+      const series = await repo.getSeries(ROUTE, 'day')
+
+      const filled = series.buckets.filter((b) => b.samples > 0)
+      expect(filled.every((b) => b.min_cash === '4000.00')).toBe(true)
+      expect(filled.some((b) => b.samples === 2)).toBe(true)
+    })
+
     it('rotina de par não enxerga itinerário de ida simples da mesma rota', async () => {
       await seedSegment(700, 5, 1)
       const { rows } = await pool.query(
@@ -359,8 +397,9 @@ describeIt('FareHistoryRepository (integração / Postgres real)', () => {
          VALUES ('azul','one_way','GRU','CNF','AD999','2027-01-09','BRL') RETURNING id`,
       )
       await pool.query(
-        `INSERT INTO fare_price_history (itinerary_id, currency, amount_cash, observed_from, last_seen_at)
-         VALUES ($1,'BRL',100, NOW() - INTERVAL '5 hours', NOW() - INTERVAL '1 hour')`,
+        `INSERT INTO fare_price_history
+           (itinerary_id, currency, amount_cash, amount_cash_brl, observed_from, last_seen_at)
+         VALUES ($1,'BRL',100,100, NOW() - INTERVAL '5 hours', NOW() - INTERVAL '1 hour')`,
         [rows[0].id],
       )
 
