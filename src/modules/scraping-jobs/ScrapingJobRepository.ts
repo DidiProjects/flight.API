@@ -225,10 +225,28 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `)
   }
 
+  /**
+   * `last_heartbeat_at = NULL` is the whole point of this line.
+   *
+   * The column is the worker's lease. A row that already ran carries the
+   * heartbeat of THAT run, and `reclaimExpiredJobs` reads it as a lease expired
+   * ages ago — so the job was taken back seconds after being dispatched, the
+   * worker got a cancel mid-scrape, and the late callback landed as an orphan
+   * that leaves the job untouched: no retry counted, no backoff applied, the
+   * whole cycle again in five minutes. Measured on 2026-08-23 in development and
+   * seen in production on the 24th, where a failing BA route retried for hours
+   * without ever reaching `dead`.
+   *
+   * With it NULL, the reclaim falls to the grace path (`running_since` older
+   * than the grace), which is the window the worker has to send its first
+   * heartbeat — and its snapshot already includes queued jobs, so a job waiting
+   * in the scraper queue keeps its lease renewed.
+   */
   async claimNextJob(airline: string): Promise<ScrapingJobRow | null> {
     const { rows } = await this.db.query<ScrapingJobRow>(`
       UPDATE scraping_jobs
-      SET status = 'running', running_since = NOW(), started_at = NULL, updated_at = NOW()
+      SET status = 'running', running_since = NOW(), started_at = NULL,
+          last_heartbeat_at = NULL, updated_at = NOW()
       WHERE id = (
         SELECT id FROM scraping_jobs
         WHERE airline = $1
@@ -245,10 +263,12 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rows[0] ?? null
   }
 
+  /** Same lease reset as `claimNextJob` — see the note there. */
   async claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null> {
     const { rows } = await this.db.query<ScrapingJobRow>(`
       UPDATE scraping_jobs
-      SET status = 'running', running_since = NOW(), started_at = NULL, updated_at = NOW()
+      SET status = 'running', running_since = NOW(), started_at = NULL,
+          last_heartbeat_at = NULL, updated_at = NOW()
       WHERE id = (
         SELECT sj.id FROM scraping_jobs sj
         JOIN routines r ON r.id = $1
@@ -331,7 +351,8 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     await this.db.query(`
       UPDATE scraping_jobs
       SET status = 'success', last_success_at = NOW(), running_since = NULL,
-          request_id = NULL, retry_count = 0, last_error = NULL, next_run_at = $2, updated_at = NOW()
+          request_id = NULL, last_heartbeat_at = NULL, retry_count = 0, last_error = NULL,
+          next_run_at = $2, updated_at = NOW()
       WHERE id = $1
     `, [id, nextRunAt])
   }
@@ -340,7 +361,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     await this.db.query(`
       UPDATE scraping_jobs
       SET status = 'failed', last_failure_at = NOW(), last_error = $2,
-          running_since = NULL, request_id = NULL,
+          running_since = NULL, request_id = NULL, last_heartbeat_at = NULL,
           retry_count = retry_count + 1, next_run_at = $3, updated_at = NOW()
       WHERE id = $1
     `, [id, error, nextRunAt])
@@ -359,7 +380,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     await this.db.query(`
       UPDATE scraping_jobs
       SET status = 'failed', last_failure_at = NOW(), last_error = $2,
-          running_since = NULL, request_id = NULL,
+          running_since = NULL, request_id = NULL, last_heartbeat_at = NULL,
           retry_count = LEAST(retry_count + 1, GREATEST(max_retries - 1, 0)),
           next_run_at = $3, updated_at = NOW()
       WHERE id = $1
@@ -370,7 +391,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     await this.db.query(`
       UPDATE scraping_jobs
       SET status = 'dead', last_failure_at = NOW(), last_error = $2,
-          running_since = NULL, request_id = NULL,
+          running_since = NULL, request_id = NULL, last_heartbeat_at = NULL,
           retry_count = retry_count + 1, updated_at = NOW()
       WHERE id = $1
     `, [id, error])
@@ -392,7 +413,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     await this.db.query(`
       UPDATE scraping_jobs
       SET status = 'pending', running_since = NULL, request_id = NULL,
-          cancel_requested_at = NULL, next_run_at = $2, updated_at = NOW()
+          last_heartbeat_at = NULL, cancel_requested_at = NULL, next_run_at = $2, updated_at = NOW()
       WHERE request_id = $1
     `, [requestId, nextRunAt])
   }
