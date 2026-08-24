@@ -46,7 +46,7 @@ const RESOLVEU_A_VOLTA = `(
  * `dead` (or a retry count at the ceiling) means the scraper gave up on that
  * date: the last fare it brought can no longer be confirmed, and leaving it in
  * the MIN keeps a price on screen that nothing will ever correct. The freshness
- * window would drop it too, 48 hours later — this drops it the moment we know.
+ * window would drop it too, a day later — this drops it the moment we know.
  *
  * `alias` is the fare row in the interpolating query.
  */

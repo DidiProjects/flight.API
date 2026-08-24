@@ -548,7 +548,7 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
       expect(Number(best.best_cash)).toBe(500)
     })
 
-    it('janela é parâmetro: 6h derruba o que 48h aceitava', async () => {
+    it('janela é parâmetro: 6h derruba o que 24h aceitava', async () => {
       await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
       await repo.insertMany(JOB_ID, REQ_2, [fare('AD2', 900.00, { flight_date: '2026-07-13' })])
       await envelhecer(REQ_1, 12)

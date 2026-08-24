@@ -68,7 +68,7 @@ Recebe o callback da `scraping.API` (autenticado por `X-API-Key`/`FLIGHT_API_KEY
 
 ## Avaliação (`src/services/evaluation/EvaluationService.ts`)
 
-Para cada rotina ativa **com o modo `target`** em `notification_modes`: busca a tarifa mais recente de todas as companhias no grid de datas, ignorando tarifas mais velhas que 48h (`MAX_FARE_AGE_HOURS`). Reduz a **melhor tarifa dentro do alvo por data** (`cash`/`pts`/`hyb` com a margem; companhias colapsadas — vale o menor preço da data).
+Para cada rotina ativa **com o modo `target`** em `notification_modes`: busca a tarifa mais recente de todas as companhias no grid de datas, ignorando tarifas mais velhas que 24h (`MAX_FARE_AGE_HOURS`). Reduz a **melhor tarifa dentro do alvo por data** (`cash`/`pts`/`hyb` com a margem; companhias colapsadas — vale o menor preço da data).
 
 O anti-repetição é um **watermark por célula** `(rotina, data, tipo)` na tabela `target_alert_state`: o alerta de uma data só dispara **na primeira vez que ela entra no alvo, ou quando o melhor preço daquela data cai abaixo do `notified_amount` já alertado**. A gravação é um upsert monotônico-descendente com `RETURNING` (`recordNotified`) — o banco devolve só as datas que de fato avançaram, então ciclos sobrepostos não disparam em dobro (sem cooldown por tempo). Todas as datas que avançaram num ciclo vão num **único e-mail** (um card por data, headline = a mais barata; `dispatchAlert` recebe `LatestFaresByDate[]`). Acima do watermark por data existe um **piso da rotina**: o e-mail só sai quando a oferta mais barata do ciclo bate o menor valor já alertado em QUALQUER data, e bate por pelo menos **1%** (`minImprovement`). Data nova que entra no alvo no mesmo preço grava o watermark e não notifica — sem isso, alargar a janela de uma rotina rendia um e-mail por data coletada, todos com o mesmo preço (medido em 2026-08-23: nove e-mails). Toda comparação de dinheiro passa por `utils/money.ts`, em centavos inteiros: o total do par é somado em ponto flutuante e o piso vem de `NUMERIC(12,2)`, então `1178.54 + 1188.61` perdia para `2367.15` por 4.5e-13 e cada preço igual parecia recorde novo. Watermarks de datas passadas são limpos na manutenção diária (`cleanupAlertState`). A `notification_frequency` governa apenas a cadência do digest `scheduled`, não o alerta `target`.
 
@@ -82,7 +82,7 @@ O flight.API é o **hub** entre o worker de scraping e o painel Admin. Detalhes 
 - **SSE → admin** (`sseHub.ts`): `GET /flight/admin/stream` (JWT admin por query param, pois `EventSource` não envia header). 1º evento `job.snapshot`; depois fan-out em memória de `job.upsert`/`job.event`/`job.removed`. Ring-buffer + `Last-Event-ID` para reconexão sem buracos.
 - **Controle REST** (`modules/admin`): `GET /admin/jobs`, `GET /admin/jobs/:requestId/events`, `POST /admin/jobs/:requestId/cancel`.
 - **Frescor do preço atual** (`config/fares.ts`): tarifa coletada há mais de
-  `MAX_FARE_AGE_HOURS` (48h) não entra no preço do card nem no calendário, e uma
+  `MAX_FARE_AGE_HOURS` (24h) não entra no preço do card nem no calendário, e uma
   data cujo job está `dead` (ou com `retry_count` no teto) sai na hora, sem
   esperar a janela. A mesma janela vale para o ciclo de avaliação — o card não
   pode exibir preço que o alerta recusaria. Antes disso a única validade era de

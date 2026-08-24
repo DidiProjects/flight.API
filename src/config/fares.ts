@@ -9,8 +9,11 @@
  * had been refreshed in the last hour, and re-running the routine could not fix
  * it — the old row simply kept winning the MIN.
  *
- * 48 hours is the window the evaluation cycle already used to decide what may
- * fire an alert. Sharing it is the point: the card must not show a price the
- * alert would refuse to act on.
+ * 24 hours: comfortably above the longest re-scraping interval (12h), so a date
+ * that is collecting normally never falls out, and short enough that a stalled
+ * one disappears within a day instead of lingering.
+ *
+ * Shared with the evaluation cycle on purpose — the card must not show a price
+ * the alert would refuse to act on.
  */
-export const MAX_FARE_AGE_HOURS = 48
+export const MAX_FARE_AGE_HOURS = 24
