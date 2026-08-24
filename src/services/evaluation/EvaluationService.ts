@@ -13,12 +13,13 @@ import { logger } from '../../utils/logger'
 import { isValidRoundTripPair } from '../../utils/roundtrip'
 import { IncompleteRoundTripError } from '../../utils/errors'
 import { isCheaperBy, sumMoney } from '../../utils/money'
+// Fares older than this are stale and raise no alert. Shared with the card and
+// the calendar: what is too old to alert on is too old to show as the current
+// price. Well above the longest re-scraping interval, so a legitimate alert is
+// never suppressed.
+import { MAX_FARE_AGE_HOURS } from '../../config/fares'
 
 const log = logger.child({ service: 'evaluation' })
-
-// Fares older than this are stale and raise no alert. Well above the longest
-// re-scraping interval (12h) so legitimate alerts are never suppressed.
-const MAX_FARE_AGE_HOURS = 48
 
 /** The winning pair of an outbound date, with the original composition of both legs. */
 interface PairChoice {
