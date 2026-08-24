@@ -125,6 +125,22 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
         scraped_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW()
       )
     `)
+    // The current-price queries exclude dates whose job died. Without this table
+    // in the test schema, `search_path` would fall back to public and the
+    // predicate would be answered by the development bank.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${SCHEMA}.scraping_jobs (
+        id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+        airline     VARCHAR(20) NOT NULL,
+        origin      VARCHAR(10) NOT NULL,
+        destination VARCHAR(10) NOT NULL,
+        flight_date DATE        NOT NULL,
+        return_date DATE,
+        status      VARCHAR(20) NOT NULL DEFAULT 'pending',
+        retry_count INT         NOT NULL DEFAULT 0,
+        max_retries INT         NOT NULL DEFAULT 3
+      )
+    `)
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_flight_fares_no_dup
         ON ${SCHEMA}.flight_fares(request_id, flight_date, is_return, flight_number, paired_outbound_flight)
@@ -142,8 +158,20 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
   })
 
   beforeEach(async () => {
-    await pool.query(`TRUNCATE ${SCHEMA}.flight_fares`)
+    await pool.query(`TRUNCATE ${SCHEMA}.flight_fares, ${SCHEMA}.scraping_jobs`)
   })
+
+  /** Backdates a collection, to age a snapshot without waiting for the clock. */
+  const envelhecer = (requestId: string, horas: number) =>
+    pool.query(
+      `UPDATE ${SCHEMA}.flight_fares SET scraped_at = NOW() - ($2 || ' hours')::interval WHERE request_id = $1`,
+      [requestId, horas])
+
+  const matarJob = (flightDate: string) =>
+    pool.query(
+      `INSERT INTO ${SCHEMA}.scraping_jobs (airline, origin, destination, flight_date, status, retry_count)
+       VALUES ('azul','CNF','VCP',$1,'dead',3)`,
+      [flightDate])
 
   async function countRows(): Promise<number> {
     const { rows } = await pool.query<{ c: string }>(`SELECT count(*)::text AS c FROM ${SCHEMA}.flight_fares`)
@@ -492,5 +520,80 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
 
     expect(Number(pair.best_cash)).toBe(931.73)
     expect(Number(oneWay.best_cash)).toBe(100)
+  })
+
+  // ── frescor do preço atual ────────────────────────────────────────────────
+  // Medido em 2026-08-24: o card mostrava a tarifa de uma data cuja coleta havia
+  // parado, enquanto outras cinco datas eram atualizadas a cada hora. Rodar a
+  // rotina de novo não corrigia — a linha velha seguia ganhando o MIN, porque a
+  // única validade era de 30 dias.
+  describe('frescor e idade do preço', () => {
+    it('coleta fora da janela sai do melhor preço', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
+      await repo.insertMany(JOB_ID, REQ_2, [fare('AD2', 900.00, { flight_date: '2026-07-13' })])
+      await envelhecer(REQ_1, 60) // a mais barata, mas velha
+
+      const best = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(Number(best.best_cash)).toBe(900)
+    })
+
+    it('dentro da janela, a mais barata continua valendo', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
+      await repo.insertMany(JOB_ID, REQ_2, [fare('AD2', 900.00, { flight_date: '2026-07-13' })])
+      await envelhecer(REQ_1, 12)
+
+      const best = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(Number(best.best_cash)).toBe(500)
+    })
+
+    it('janela é parâmetro: 6h derruba o que 24h aceitava', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
+      await repo.insertMany(JOB_ID, REQ_2, [fare('AD2', 900.00, { flight_date: '2026-07-13' })])
+      await envelhecer(REQ_1, 12)
+
+      const best = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-01', '2026-07-31', undefined, 6)
+
+      expect(Number(best.best_cash)).toBe(900)
+    })
+
+    it('data com job morto sai na hora, sem esperar a janela', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
+      await repo.insertMany(JOB_ID, REQ_2, [fare('AD2', 900.00, { flight_date: '2026-07-13' })])
+      await matarJob('2026-07-12')
+
+      const best = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(Number(best.best_cash)).toBe(900)
+    })
+
+    // O card carimba "verificado há x" com este campo. Com MAX(scraped_at) ele
+    // usava a hora de OUTRA data, a que tinha acabado de ser coletada.
+    it('best_cash_at é a hora da tarifa vencedora, não a da coleta mais recente', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
+      await repo.insertMany(JOB_ID, REQ_2, [fare('AD2', 900.00, { flight_date: '2026-07-13' })])
+      await envelhecer(REQ_1, 10)
+
+      const best = await repo.getCurrentBest(['azul'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(Number(best.best_cash)).toBe(500)
+      const idadeH = (Date.now() - new Date(best.best_cash_at!).getTime()) / 3_600_000
+      expect(idadeH).toBeGreaterThan(9)
+      expect(idadeH).toBeLessThan(11)
+      // scraped_at continua sendo o retrato mais novo da grade
+      const gradeH = (Date.now() - new Date(best.scraped_at!).getTime()) / 3_600_000
+      expect(gradeH).toBeLessThan(1)
+    })
+
+    it('calendário usa a mesma janela do card', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 500.00, { flight_date: '2026-07-12' })])
+      await repo.insertMany(JOB_ID, REQ_2, [fare('AD2', 900.00, { flight_date: '2026-07-13' })])
+      await envelhecer(REQ_1, 60)
+
+      const datas = await repo.getPriceByDate(['azul'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(datas.map((d) => toDateStr(d.flight_date))).toEqual(['2026-07-13'])
+    })
   })
 })
