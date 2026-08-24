@@ -1,4 +1,5 @@
 import { Pool } from 'pg'
+import { MAX_FARE_AGE_HOURS } from '../../config/fares'
 import { belongsToRoutine } from '../scraping-jobs/ScrapingJobRepository'
 import { CurrentBest, DeleteFaresResult, FlightFareRow, IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
@@ -38,6 +39,27 @@ const RESOLVEU_A_VOLTA = `(
             AND NOT (i.origin = o.origin AND i.destination = o.destination)
         )
       )`
+
+/**
+ * A date whose job can no longer be refreshed is out of the current price.
+ *
+ * `dead` (or a retry count at the ceiling) means the scraper gave up on that
+ * date: the last fare it brought can no longer be confirmed, and leaving it in
+ * the MIN keeps a price on screen that nothing will ever correct. The freshness
+ * window would drop it too, 48 hours later — this drops it the moment we know.
+ *
+ * `alias` is the fare row in the interpolating query.
+ */
+const JOB_AINDA_VIVO = (alias: string) => `
+  NOT EXISTS (
+    SELECT 1 FROM scraping_jobs j
+     WHERE j.airline     = ${alias}.airline
+       AND j.origin      = ${alias}.origin
+       AND j.destination = ${alias}.destination
+       AND j.flight_date = ${alias}.flight_date
+       AND j.return_date IS NOT DISTINCT FROM ${alias}.return_date
+       AND (j.status = 'dead' OR j.retry_count >= j.max_retries)
+  )`
 
 export class FlightFaresRepository implements IFlightFaresRepository {
   constructor(private readonly db: Pool) {}
@@ -419,6 +441,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     outFrom: string,
     outTo: string,
     inbound: { from: string; to: string },
+    maxAgeHours: number = MAX_FARE_AGE_HOURS,
   ): Promise<CurrentBest> {
     const { rows } = await this.db.query<CurrentBest>(`
       WITH latest_pair AS (
@@ -433,8 +456,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND flight_date BETWEEN $4 AND $5
           AND return_date BETWEEN $6 AND $7
           AND origin = $2 AND destination = $3
-          AND scraped_at >= NOW() - INTERVAL '30 days'
+          AND scraped_at >= NOW() - ($8 || ' hours')::interval
           AND ${RESOLVEU_A_VOLTA}
+          AND ${JOB_AINDA_VIVO('o')}
         ORDER BY flight_date, return_date, scraped_at DESC
       ),
       -- Uma linha por COMBINAÇÃO (ida, volta-mais-barata-daquela-ida), não por
@@ -493,10 +517,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       -- As parcelas têm de vir da MESMA combinação que ganhou cada dimensão.
       -- Pegar o menor out e o menor in separadamente descreveria um par que a
       -- companhia não vendeu — a volta barata pode pertencer a outra ida.
-      win_cash     AS (SELECT out_cash,     in_cash     FROM per_combo WHERE total_cash     IS NOT NULL ORDER BY total_cash     LIMIT 1),
-      win_pts      AS (SELECT out_pts,      in_pts      FROM per_combo WHERE total_pts      IS NOT NULL ORDER BY total_pts      LIMIT 1),
-      win_hyb_pts  AS (SELECT out_hyb_pts,  in_hyb_pts  FROM per_combo WHERE total_hyb_pts  IS NOT NULL ORDER BY total_hyb_pts  LIMIT 1),
-      win_hyb_cash AS (SELECT out_hyb_cash, in_hyb_cash FROM per_combo WHERE total_hyb_cash IS NOT NULL ORDER BY total_hyb_cash LIMIT 1)
+      win_cash     AS (SELECT out_cash,     in_cash,     scraped_at FROM per_combo WHERE total_cash     IS NOT NULL ORDER BY total_cash,     scraped_at DESC LIMIT 1),
+      win_pts      AS (SELECT out_pts,      in_pts,      scraped_at FROM per_combo WHERE total_pts      IS NOT NULL ORDER BY total_pts,      scraped_at DESC LIMIT 1),
+      win_hyb_pts  AS (SELECT out_hyb_pts,  in_hyb_pts,  scraped_at FROM per_combo WHERE total_hyb_pts  IS NOT NULL ORDER BY total_hyb_pts,  scraped_at DESC LIMIT 1),
+      win_hyb_cash AS (SELECT out_hyb_cash, in_hyb_cash, scraped_at FROM per_combo WHERE total_hyb_cash IS NOT NULL ORDER BY total_hyb_cash, scraped_at DESC LIMIT 1)
       SELECT
         -- Total de par é sempre em Real (017): a conversão já aconteceu na
         -- coleta, então não há moeda a eleger entre as pernas.
@@ -513,6 +537,11 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         (SELECT in_hyb_pts   FROM win_hyb_pts)  AS best_hyb_pts_inbound,
         (SELECT out_hyb_cash FROM win_hyb_cash) AS best_hyb_cash_outbound,
         (SELECT in_hyb_cash  FROM win_hyb_cash) AS best_hyb_cash_inbound,
+        -- Idade do TOTAL exibido: a do par que venceu cada dimensão.
+        (SELECT scraped_at FROM win_cash)     AS best_cash_at,
+        (SELECT scraped_at FROM win_pts)      AS best_pts_at,
+        (SELECT scraped_at FROM win_hyb_pts)  AS best_hyb_pts_at,
+        (SELECT scraped_at FROM win_hyb_cash) AS best_hyb_cash_at,
         MAX(scraped_at)     AS scraped_at,
         -- Só quando NENHUMA dimensão fechou total e existe ida com volta
         -- indefinida: aí o "sem total" tem motivo conhecido, e a rotina exibe
@@ -521,11 +550,12 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND MIN(total_hyb_pts) IS NULL AND MIN(total_hyb_cash) IS NULL
          AND BOOL_OR(inbound_unavailable)) AS inbound_unavailable
       FROM per_combo
-    `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to])
+    `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to, maxAgeHours])
 
     return rows[0] ?? {
       currency: null, best_cash: null, best_pts: null,
       best_hyb_pts: null, best_hyb_cash: null, scraped_at: null,
+      best_cash_at: null, best_pts_at: null, best_hyb_pts_at: null, best_hyb_cash_at: null,
       inbound_unavailable: false,
       best_cash_outbound: null, best_cash_inbound: null,
       best_pts_outbound: null, best_pts_inbound: null,
@@ -549,20 +579,23 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     dateFrom: string,
     dateTo: string,
     inbound?: { from: string; to: string },
+    maxAgeHours: number = MAX_FARE_AGE_HOURS,
   ): Promise<CurrentBest> {
-    if (inbound) return this.getCurrentBestPair(airlines, origin, destination, dateFrom, dateTo, inbound)
+    if (inbound) return this.getCurrentBestPair(airlines, origin, destination, dateFrom, dateTo, inbound, maxAgeHours)
 
     const { rows } = await this.db.query<CurrentBest>(`
       WITH latest_per_date AS (
         SELECT DISTINCT ON (flight_date)
           flight_date, request_id, scraping_job_id, scraped_at
-        FROM flight_fares
+        FROM flight_fares f
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
           AND is_return = false
           AND return_date IS NULL
-          AND scraped_at >= NOW() - INTERVAL '30 days'
+          -- Frescor, não retenção: passado disso o preço deixa de ser "o atual".
+          AND scraped_at >= NOW() - ($6 || ' hours')::interval
+          AND ${JOB_AINDA_VIVO('f')}
         ORDER BY flight_date, scraped_at DESC
       )
       , coletado AS (
@@ -578,16 +611,23 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       -- O MENOR preço só é comparável dentro de uma moeda: com BRL e GBP na
       -- mesma coluna, "MIN" escolheria a libra por 730 ser menor que 4.900.
       moeda AS (SELECT mode() WITHIN GROUP (ORDER BY currency) AS c FROM coletado)
+      , na_moeda AS (SELECT * FROM coletado WHERE currency = (SELECT c FROM moeda))
       SELECT
         (SELECT c FROM moeda) AS currency,
         MIN(fare_cash)        AS best_cash,
         MIN(fare_pts)         AS best_pts,
         MIN(fare_hyb_pts)     AS best_hyb_pts,
         MIN(fare_hyb_cash)    AS best_hyb_cash,
+        -- Idade DO PREÇO exibido, não da coleta mais recente da grade. O card
+        -- diz "verificado há x"; com MAX(scraped_at) ele carimbava a tarifa
+        -- vencedora com a hora de OUTRA data que acabara de ser coletada.
+        (SELECT scraped_at FROM na_moeda WHERE fare_cash     IS NOT NULL ORDER BY fare_cash,     scraped_at DESC LIMIT 1) AS best_cash_at,
+        (SELECT scraped_at FROM na_moeda WHERE fare_pts      IS NOT NULL ORDER BY fare_pts,      scraped_at DESC LIMIT 1) AS best_pts_at,
+        (SELECT scraped_at FROM na_moeda WHERE fare_hyb_pts  IS NOT NULL ORDER BY fare_hyb_pts,  scraped_at DESC LIMIT 1) AS best_hyb_pts_at,
+        (SELECT scraped_at FROM na_moeda WHERE fare_hyb_cash IS NOT NULL ORDER BY fare_hyb_cash, scraped_at DESC LIMIT 1) AS best_hyb_cash_at,
         MAX(scraped_at)       AS scraped_at
-      FROM coletado
-      WHERE currency = (SELECT c FROM moeda)
-    `, [airlines, origin, destination, dateFrom, dateTo])
+      FROM na_moeda
+    `, [airlines, origin, destination, dateFrom, dateTo, maxAgeHours])
 
     return rows[0] ?? {
       currency: null,
@@ -596,6 +636,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       best_hyb_pts: null,
       best_hyb_cash: null,
       scraped_at: null,
+      best_cash_at: null,
+      best_pts_at: null,
+      best_hyb_pts_at: null,
+      best_hyb_cash_at: null,
     }
   }
 
@@ -616,6 +660,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     outFrom: string,
     outTo: string,
     inbound: { from: string; to: string },
+    maxAgeHours: number = MAX_FARE_AGE_HOURS,
   ): Promise<PriceByDate[]> {
     const { rows } = await this.db.query<PriceByDate>(`
       WITH latest_pair AS (
@@ -628,8 +673,11 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND return_date IS NOT NULL
           AND flight_date BETWEEN $4 AND $5
           AND return_date BETWEEN $6 AND $7
-          AND scraped_at >= NOW() - INTERVAL '30 days'
+          -- A mesma janela do card: calendário mostrando data que o card já
+          -- descartou é contradição entre duas telas do mesmo preço.
+          AND scraped_at >= NOW() - ($8 || ' hours')::interval
           AND ${RESOLVEU_A_VOLTA}
+          AND ${JOB_AINDA_VIVO('o')}
         ORDER BY flight_date, return_date, scraped_at DESC
       ),
       -- Uma linha por combinação (ida, volta-mais-barata-daquela-ida): a volta é
@@ -673,7 +721,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       FROM per_combo
       GROUP BY flight_date
       ORDER BY flight_date
-    `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to])
+    `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to, maxAgeHours])
     return rows
   }
 
@@ -684,20 +732,22 @@ export class FlightFaresRepository implements IFlightFaresRepository {
     dateFrom: string,
     dateTo: string,
     inbound?: { from: string; to: string },
+    maxAgeHours: number = MAX_FARE_AGE_HOURS,
   ): Promise<PriceByDate[]> {
-    if (inbound) return this.getPairPriceByDate(airlines, origin, destination, dateFrom, dateTo, inbound)
+    if (inbound) return this.getPairPriceByDate(airlines, origin, destination, dateFrom, dateTo, inbound, maxAgeHours)
 
     const { rows } = await this.db.query<PriceByDate>(`
       WITH latest_per_date AS (
         SELECT DISTINCT ON (flight_date)
           flight_date, request_id, scraping_job_id
-        FROM flight_fares
+        FROM flight_fares f
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
           AND flight_date BETWEEN $4 AND $5
           AND is_return = false
           AND return_date IS NULL
-          AND scraped_at >= NOW() - INTERVAL '30 days'
+          AND scraped_at >= NOW() - ($6 || ' hours')::interval
+          AND ${JOB_AINDA_VIVO('f')}
         ORDER BY flight_date, scraped_at DESC
       )
       SELECT
@@ -715,7 +765,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         AND f.return_date IS NULL
       GROUP BY f.flight_date
       ORDER BY f.flight_date
-    `, [airlines, origin, destination, dateFrom, dateTo])
+    `, [airlines, origin, destination, dateFrom, dateTo, maxAgeHours])
     return rows
   }
 

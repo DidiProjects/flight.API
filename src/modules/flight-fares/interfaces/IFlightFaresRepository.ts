@@ -77,7 +77,23 @@ export interface CurrentBest {
   best_pts: number | null
   best_hyb_pts: number | null
   best_hyb_cash: number | null
+  /**
+   * Newest collection of the whole grid. Kept for callers that mean "when did we
+   * last look", which is NOT the same question as how old the shown price is.
+   */
   scraped_at: Date | null
+  /**
+   * When the fare behind each best price was collected.
+   *
+   * The card says "verificado há x": with a single `scraped_at` for the grid, a
+   * price from a date that stopped collecting was stamped with the hour of
+   * ANOTHER date that had just been refreshed. One timestamp per dimension
+   * because the card picks the dimension by the routine's priority.
+   */
+  best_cash_at: Date | null
+  best_pts_at: Date | null
+  best_hyb_pts_at: Date | null
+  best_hyb_cash_at: Date | null
   /**
    * Round-trip with no total because the return is undefined (a known airline
    * limitation). Tells "the trip has no total" from "nothing was collected" — the
@@ -125,9 +141,10 @@ export interface IFlightFaresRepository {
   getPriceHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
   /** With `inbound`, the baseline is the distribution of pair TOTALS; without, of loose fares. */
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceHistory>
-  getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<CurrentBest>
+  /** `maxAgeHours` is the freshness window: older collections are not "the current price". */
+  getCurrentBest(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }, maxAgeHours?: number): Promise<CurrentBest>
   /** With `inbound`, each OUTBOUND date carries the lowest pair total of that day. */
-  getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceByDate[]>
+  getPriceByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }, maxAgeHours?: number): Promise<PriceByDate[]>
   /** Currency already seen on fares collected for the route/airlines (primary source for the routine). */
   getKnownCurrency(airlines: string[], origin: string, destination: string): Promise<string | null>
   aggregateToDailyBucket(bucketDate: string): Promise<number>

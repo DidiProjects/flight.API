@@ -1233,7 +1233,7 @@
                 }
               ]
             },
-            "description": "Melhor preço por DATA (snapshot mais recente de cada data) na janela — usado pelo FareCalendar (heatmap de datas) do RoutineCard. Requer JWT."
+            "description": "Melhor preço por DATA (snapshot mais recente de cada data, coletado nas últimas 48h e com job vivo) na janela — usado pelo FareCalendar (heatmap de datas) do RoutineCard. Requer JWT."
           }
         },
         {
