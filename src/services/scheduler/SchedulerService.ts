@@ -40,12 +40,44 @@ function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
 }
 
+/**
+ * Cadence by distance to departure.
+ *
+ * These bands used to be 1h/3h/6h, and the 1h was a number nobody had measured.
+ * It asked for more collections than the scrapers can do: with 3 routines and 2
+ * airlines, 22 jobs per airline wanting an hourly run against a lane that
+ * sustains ~7/h (BA 2.6 min median round trip plus its forced 5 min gap; LATAM
+ * 8.6 min median; both serialised by the per-airline cap of 1). Every job ran
+ * permanently overdue — BA by 34 h on average, 68 h at worst — and the observed
+ * cadence settled at 3.5 h. A schedule nobody can meet is not a schedule: with
+ * every job always due, `ORDER BY priority DESC, next_run_at ASC` has nothing
+ * left to order by.
+ *
+ * Two measurements say the hour bought nothing anyway:
+ *
+ *  · The share of collections that come back with a DIFFERENT best price is flat
+ *    against the gap between them — 52% under 1 h, 50% at 2-4 h, 51% at 8 h or
+ *    more. Price movement at this scale is not driven by elapsed time, so
+ *    sampling 8× more often does not observe 8× more of it.
+ *  · Of 123 observed drops of 5% or more, 80.5% were still there on the next
+ *    collection, a median of 12 h later. A real drop does not evaporate in an
+ *    hour.
+ *
+ * At 4 h the same 22 jobs need 5.5 runs/h per airline, inside the ~7 the lane
+ * gives, and the two heavy airlines together occupy ~1.5 of the scraper's 2
+ * concurrent slots — which is what makes room for a third airline without
+ * buying any capacity.
+ *
+ * `spreadWindow` in ScrapingJobRepository mirrors these bands to spread the date
+ * grid on creation. Changing one without the other puts the whole grid back on
+ * the same instant.
+ */
 function calcNextRunAt(flightDate: string): Date {
   const days = daysBetween(new Date(), new Date(flightDate))
   const intervalMs =
-    days <= 45 ? 1 * 60 * 60 * 1000 :
-    days <= 90 ? 3 * 60 * 60 * 1000 :
-                 6 * 60 * 60 * 1000
+    days <= 45 ?  4 * 60 * 60 * 1000 :
+    days <= 90 ?  8 * 60 * 60 * 1000 :
+                 12 * 60 * 60 * 1000
   // ±20% jitter desynchronises date grids that would reschedule at the same
   // instant, avoiding a thundering herd on every cadence cycle.
   const jitter = (Math.random() * 2 - 1) * intervalMs * 0.2

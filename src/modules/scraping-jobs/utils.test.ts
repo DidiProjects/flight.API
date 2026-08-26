@@ -22,22 +22,22 @@ describe('calcNextRunAt', () => {
     expect(diffMs).toBeLessThanOrEqual(baseMs * 1.2)
   }
 
-  it('≤45 dias → ~1 hora (±20%)', () => {
+  it('≤45 dias → ~4 horas (±20%)', () => {
     vi.useFakeTimers()
     const result = calcNextRunAt(addDaysToNow(30))
-    expectWithinJitter(result.getTime() - Date.now(), 1 * 60 * 60 * 1000)
+    expectWithinJitter(result.getTime() - Date.now(), 4 * 60 * 60 * 1000)
   })
 
-  it('46–90 dias → ~3 horas (±20%)', () => {
+  it('46–90 dias → ~8 horas (±20%)', () => {
     vi.useFakeTimers()
     const result = calcNextRunAt(addDaysToNow(60))
-    expectWithinJitter(result.getTime() - Date.now(), 3 * 60 * 60 * 1000)
+    expectWithinJitter(result.getTime() - Date.now(), 8 * 60 * 60 * 1000)
   })
 
-  it('>90 dias → ~6 horas (±20%)', () => {
+  it('>90 dias → ~12 horas (±20%)', () => {
     vi.useFakeTimers()
     const result = calcNextRunAt(addDaysToNow(120))
-    expectWithinJitter(result.getTime() - Date.now(), 6 * 60 * 60 * 1000)
+    expectWithinJitter(result.getTime() - Date.now(), 12 * 60 * 60 * 1000)
   })
 })
 

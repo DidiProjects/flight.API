@@ -63,11 +63,12 @@ const OWNER_EMAILS_BY_ROUTE = `
 
 // Spread window for next_run_at on creation/revival, matched to the proximity
 // cadence — it distributes the date grid across the cycle instead of having them
-// all come due together.
+// all come due together. Mirrors calcNextRunAt: the two must move together, or
+// the grid is spread over a window that no longer matches its own cadence.
 const spreadWindow = (col: string) => `(CASE
-  WHEN ${col} - CURRENT_DATE <= 45 THEN interval '1 hour'
-  WHEN ${col} - CURRENT_DATE <= 90 THEN interval '3 hours'
-  ELSE interval '6 hours'
+  WHEN ${col} - CURRENT_DATE <= 45 THEN interval '4 hours'
+  WHEN ${col} - CURRENT_DATE <= 90 THEN interval '8 hours'
+  ELSE interval '12 hours'
 END)`
 const SPREAD_WINDOW = spreadWindow('flight_date')
 const SPREAD_WINDOW_CONFLICT = spreadWindow('scraping_jobs.flight_date')
