@@ -392,8 +392,11 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     const { rows } = await this.db.query<PriceHistory>(`
       WITH latest_per_date AS (
-        SELECT DISTINCT ON (flight_date)
-          flight_date, request_id, scraping_job_id
+        -- Companhia na chave: a régua compara o preço de hoje com a distribuição
+        -- de 30 dias, e uma régua feita só de quem raspou por último em cada dia
+        -- não descreve a rota — descreve o rodízio do despacho.
+        SELECT DISTINCT ON (airline, flight_date)
+          airline, flight_date, request_id, scraping_job_id
         FROM flight_fares
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
@@ -403,7 +406,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           -- contaminaria a régua da rotina one-way.
           AND return_date IS NULL
           AND scraped_at >= NOW() - INTERVAL '30 days'
-        ORDER BY flight_date, scraped_at DESC
+        ORDER BY airline, flight_date, scraped_at DESC
       )
       , coletado AS (
         -- Em Real (017), a mesma régua do par e do preço atual. A moeda mais
@@ -411,7 +414,8 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         SELECT f.fare_cash_brl AS fare_cash, f.fare_pts
         FROM flight_fares f
         INNER JOIN latest_per_date lpd
-          ON f.flight_date = lpd.flight_date
+          ON f.airline = lpd.airline
+         AND f.flight_date = lpd.flight_date
          AND COALESCE(f.request_id::text, f.scraping_job_id::text)
            = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
         WHERE f.airline = ANY($1::text[])
@@ -444,8 +448,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       WITH latest_pair AS (
         -- Datas do par pela perna de IDA; a de volta tem flight_date igual à
         -- data dela. O par é identificado pelo request_id da busca.
-        SELECT DISTINCT ON (flight_date, return_date)
-          flight_date AS outbound_date, return_date, request_id, scraped_at
+        -- A companhia entra na chave: sem ela, cada par de datas ficava com a
+        -- coleta mais recente de UMA companhia e as demais sumiam do total.
+        SELECT DISTINCT ON (airline, flight_date, return_date)
+          airline, flight_date AS outbound_date, return_date, request_id, scraped_at
         FROM flight_fares o
         WHERE airline = ANY($1::text[])
           AND return_date IS NOT NULL
@@ -456,7 +462,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND scraped_at >= NOW() - ($8 || ' hours')::interval
           AND ${RESOLVEU_A_VOLTA}
           AND ${JOB_AINDA_VIVO('o')}
-        ORDER BY flight_date, return_date, scraped_at DESC
+        ORDER BY airline, flight_date, return_date, scraped_at DESC
       ),
       -- Uma linha por COMBINAÇÃO (ida, volta-mais-barata-daquela-ida), não por
       -- par de datas: a volta é precificada no contexto da ida, então somar o
@@ -492,7 +498,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND o.flight_date = lp.outbound_date
          AND o.return_date = lp.return_date
          AND NOT o.is_return
-         AND o.airline = ANY($1::text[])
+         AND o.airline = lp.airline
         -- LEFT JOIN de propósito: ida cuja volta é indefinida (login do TudoAzul)
         -- fica com total NULL e a rotina exibe "-", em vez de mostrar o preço da
         -- ida como se fosse o da viagem.
@@ -582,8 +588,13 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     const { rows } = await this.db.query<CurrentBest>(`
       WITH latest_per_date AS (
-        SELECT DISTINCT ON (flight_date)
-          flight_date, request_id, scraping_job_id, scraped_at
+        -- Uma coleta por (COMPANHIA, data). Sem a companhia na chave, o
+        -- DISTINCT ON atravessava as companhias: por data sobrava a coleta mais
+        -- recente de UMA delas e o join por request_id descartava as outras. O
+        -- card mostrava o preço de quem raspou por último, trocando conforme as
+        -- coletas caíam, e discordava do e-mail — que colapsa por preço.
+        SELECT DISTINCT ON (airline, flight_date)
+          airline, flight_date, request_id, scraping_job_id, scraped_at
         FROM flight_fares f
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
@@ -593,7 +604,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           -- Frescor, não retenção: passado disso o preço deixa de ser "o atual".
           AND scraped_at >= NOW() - ($6 || ' hours')::interval
           AND ${JOB_AINDA_VIVO('f')}
-        ORDER BY flight_date, scraped_at DESC
+        ORDER BY airline, flight_date, scraped_at DESC
       )
       , coletado AS (
         -- Em Real com a taxa congelada na coleta (017), a mesma régua do par. A
@@ -606,7 +617,8 @@ export class FlightFaresRepository implements IFlightFaresRepository {
                f.fare_hyb_cash_brl AS fare_hyb_cash, lpd.scraped_at
         FROM flight_fares f
         INNER JOIN latest_per_date lpd
-          ON f.flight_date = lpd.flight_date
+          ON f.airline = lpd.airline
+         AND f.flight_date = lpd.flight_date
          AND COALESCE(f.request_id::text, f.scraping_job_id::text)
            = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
         WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
@@ -664,8 +676,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
   ): Promise<PriceByDate[]> {
     const { rows } = await this.db.query<PriceByDate>(`
       WITH latest_pair AS (
-        SELECT DISTINCT ON (flight_date, return_date)
-          flight_date AS outbound_date, return_date, request_id
+        -- Companhia na chave, como no card (ver getCurrentBestPair).
+        SELECT DISTINCT ON (airline, flight_date, return_date)
+          airline, flight_date AS outbound_date, return_date, request_id
         FROM flight_fares o
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
@@ -678,7 +691,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND scraped_at >= NOW() - ($8 || ' hours')::interval
           AND ${RESOLVEU_A_VOLTA}
           AND ${JOB_AINDA_VIVO('o')}
-        ORDER BY flight_date, return_date, scraped_at DESC
+        ORDER BY airline, flight_date, return_date, scraped_at DESC
       ),
       -- Uma linha por combinação (ida, volta-mais-barata-daquela-ida): a volta é
       -- precificada no contexto da ida, então cruzar a ida barata com a volta
@@ -700,7 +713,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND o.flight_date = lp.outbound_date
          AND o.return_date = lp.return_date
          AND NOT o.is_return
-         AND o.airline = ANY($1::text[])
+         AND o.airline = lp.airline
         INNER JOIN flight_fares i
           ON i.request_id  = lp.request_id
          AND i.return_date = lp.return_date
@@ -738,8 +751,9 @@ export class FlightFaresRepository implements IFlightFaresRepository {
 
     const { rows } = await this.db.query<PriceByDate>(`
       WITH latest_per_date AS (
-        SELECT DISTINCT ON (flight_date)
-          flight_date, request_id, scraping_job_id
+        -- Companhia na chave, como no card (ver getCurrentBest).
+        SELECT DISTINCT ON (airline, flight_date)
+          airline, flight_date, request_id, scraping_job_id
         FROM flight_fares f
         WHERE airline = ANY($1::text[])
           AND origin = $2 AND destination = $3
@@ -748,17 +762,21 @@ export class FlightFaresRepository implements IFlightFaresRepository {
           AND return_date IS NULL
           AND scraped_at >= NOW() - ($6 || ' hours')::interval
           AND ${JOB_AINDA_VIVO('f')}
-        ORDER BY flight_date, scraped_at DESC
+        ORDER BY airline, flight_date, scraped_at DESC
       )
       SELECT
         f.flight_date,
-        MIN(f.fare_cash)     AS best_cash,
-        MIN(f.fare_pts)      AS best_pts,
-        MIN(f.fare_hyb_pts)  AS best_hyb_pts,
-        MIN(f.fare_hyb_cash) AS best_hyb_cash
+        -- Em Real, como o card e a variante de par. Ficou de fora do "todo valor
+        -- em Real" e só doía com uma companhia; com duas, o MIN elegeria £730
+        -- contra R$4.900 por ser o número menor.
+        MIN(f.fare_cash_brl)      AS best_cash,
+        MIN(f.fare_pts)           AS best_pts,
+        MIN(f.fare_hyb_pts)       AS best_hyb_pts,
+        MIN(f.fare_hyb_cash_brl)  AS best_hyb_cash
       FROM flight_fares f
       INNER JOIN latest_per_date lpd
-        ON f.flight_date = lpd.flight_date
+        ON f.airline = lpd.airline
+       AND f.flight_date = lpd.flight_date
        AND COALESCE(f.request_id::text, f.scraping_job_id::text)
          = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
