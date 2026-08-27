@@ -39,6 +39,19 @@ Repositório não fala com a rede. Quem abre socket é service.
   `outcome`, e era ele que pausava a LATAM por uma hora por causa de um "likely
   bot/IP block" que o próprio scraper escrevia. `SITE_ERROR` só atrasa o job, e
   nunca escala para `dead`.
+- **Sem worker no hub, despachar é pior que não despachar.** O lease depende do
+  heartbeat que chega pelo WS: worker desconectado significa job reivindicado
+  como `lost` 60s depois e re-despachado, enquanto o scraper ainda segura a
+  cópia anterior na fila dele. Medido em 2026-08-27, com o processo do scraper
+  no ar e o WS caído: fila em 41 com concorrência 2, `lease_reclaim {lost: 4}`
+  em todo tick e 57 callbacks órfãos. A guarda é `hasWorkers()` no início do
+  laço de despacho — antes do claim, que já marca `running`.
+- **Callback órfão de erro aplica a mesma política de falha.** O cooldown que
+  pausa a companhia inteira vive em `applyFailurePolicy`; quando o caminho órfão
+  só fechava a `analysis_run`, uma Azul bloqueada era liberada e perguntada de
+  novo no ciclo seguinte. A pausa é por COMPANHIA e não precisa do job — a
+  companhia está no payload. O que é por job (retry, `next_run_at`) continua
+  exigindo um job que ainda seja o daquela corrida.
 - **Job só é reivindicável com `retry_count < max_retries`.** Qualquer marcação
   que empurre o contador até o teto sem matar o job o deixa preso para sempre —
   ver `markSiteError`, que para em `max_retries - 1` por isso.
