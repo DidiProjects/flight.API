@@ -222,6 +222,16 @@ export class SchedulerService implements ISchedulerService {
   }
 
   private async dispatchForAirlines(budget: number): Promise<void> {
+    // Nobody on the other end of the hub: dispatching now produces a job with no
+    // heartbeat, which the lease reclaims 60s later and dispatches again, while the
+    // scraper still holds the first copy in its queue. The guard is skipped when
+    // realtime is off by configuration — there the hub is not the truth about the
+    // worker, and the HTTP dispatch is all there is.
+    if (this.env.REALTIME_ENABLED !== 'false' && !this.cancelDispatcher.hasWorkers()) {
+      log.warn('dispatch paused: nenhum worker conectado ao hub')
+      return
+    }
+
     const cap = this.env.SCRAPE_MAX_IN_FLIGHT
     const perAirline = this.env.SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE
     let inFlight = await this.scrapingJobRepo.countInFlight()
