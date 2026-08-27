@@ -245,6 +245,62 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
   })
 
+  /**
+   * The failures of 2026-08-27: the worker had no WS, every job lost its lease and was
+   * re-dispatched, and EVERY callback came back orphaned. The block cooldown lives on
+   * this path, so Azul was blocked, released and asked again, cycle after cycle.
+   */
+  it('callback órfão de bloqueio — pausa a companhia mesmo sem job identificado', async () => {
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.findById).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.pauseAirlineForBlock).mockResolvedValue(4)
+
+    await svc.processCallback(makeCallback({
+      airline: 'azul',
+      error:   'Access Denied',
+      flights: [],
+      outcome: { state: 'BLOCKED', reason: 'marcador de anti-bot na página' },
+    }))
+
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledWith('azul', expect.any(Date), 'Access Denied')
+    expect(mockAnalysisRunsRepo.markFinished).toHaveBeenCalledWith(
+      expect.any(String), expect.objectContaining({ status: 'blocked' }),
+    )
+  })
+
+  it('callback órfão de erro — o job reidratado leva o backoff, não fica intocado', async () => {
+    const job = makeJob({ status: 'pending', request_id: null, retry_count: 1, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.findById).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      routineId: job.id,
+      error:     'timeout',
+      flights:   [],
+    }))
+
+    expect(mockScrapingJobRepo.markFailed).toHaveBeenCalledWith(job.id, 'timeout', expect.any(Date))
+  })
+
+  it('callback órfão de erro com job já re-despachado — não sobrescreve a corrida nova', async () => {
+    const job = makeJob({ status: 'running', request_id: 'req-novo-despacho' })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
+    vi.mocked(mockScrapingJobRepo.findById).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      routineId: job.id,
+      requestId: 'req-00000-0000-0000-0000-0000000000aa',
+      error:     'timeout',
+      flights:   [],
+    }))
+
+    expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
+    expect(mockAnalysisRunsRepo.markFinished).toHaveBeenCalledWith(
+      expect.any(String), expect.objectContaining({ status: 'failed' }),
+    )
+  })
+
   it('callback órfão de sucesso — reidrata job por id, salva fares e marca sucesso', async () => {
     const job = makeJob({ status: 'pending', request_id: null, flight_date: '2026-07-01' })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(null)
