@@ -1,5 +1,5 @@
 import { IScrapeService } from './interfaces/IScrapeService'
-import { IScrapingJobRepository } from '../scraping-jobs/interfaces/IScrapingJobRepository'
+import { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
@@ -138,37 +138,7 @@ export class ScrapeService implements IScrapeService {
     }
 
     if (data.error && data.flights.length === 0) {
-      // IP/bot block: pause the whole airline for a cooldown. Do NOT escalate to
-      // dead — the block is not the job's fault.
-      if (isAirlineBlocked(data)) {
-        const until = new Date(Date.now() + BLOCK_COOLDOWN_MS)
-        const paused = await this.scrapingJobRepo.pauseAirlineForBlock(job.airline, until, data.error)
-        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'blocked', errorMessage: data.error })
-        log.warn({ jobId: job.id, airline: job.airline, paused, until, evidence: data.outcome?.evidence }, 'scraping_airline_blocked: airline paused')
-        return
-      }
-
-      // Site failure: only this job waits, and it waits longer than on an ordinary
-      // failure — hammering a search that does not respond every minute does not
-      // make it respond.
-      if (isSiteError(data)) {
-        const nextRunAt = calcSiteErrorNextRunAt(job.retry_count)
-        await this.scrapingJobRepo.markSiteError(job.id, data.error, nextRunAt)
-        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: data.error })
-        log.warn({ jobId: job.id, airline: job.airline, nextRunAt, reason: data.outcome?.reason }, 'scraping_job_site_error')
-        return
-      }
-
-      const nextRunAt = calcBackoffNextRunAt(job.retry_count)
-      if (job.retry_count + 1 >= job.max_retries) {
-        await this.scrapingJobRepo.markDead(job.id, data.error)
-        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'dead', errorMessage: data.error })
-        log.error({ jobId: job.id, error: data.error }, 'scraping_job_dead')
-      } else {
-        await this.scrapingJobRepo.markFailed(job.id, data.error, nextRunAt)
-        await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: data.error })
-        log.warn({ jobId: job.id, retryCount: job.retry_count + 1 }, 'scraping_job_failed')
-      }
+      await this.applyFailurePolicy(data, job, { orphan: false })
       return
     }
 
@@ -183,6 +153,68 @@ export class ScrapeService implements IScrapeService {
     log.info({ jobId: job.id, faresCount: count }, 'scraping_job_success')
   }
 
+  /**
+   * What a failed collection does to the job that produced it.
+   *
+   * Shared with the orphan path on purpose. It used to live only here, and an orphan
+   * error callback closed the `analysis_run` and returned — so the reaction the failure
+   * called for never happened. On 2026-08-27 that turned a blocked Azul into a loop: the
+   * cooldown that pauses the airline is applied HERE, the callback always arrived
+   * orphaned, and the next cycle asked the same blocked site again.
+   */
+  private async applyFailurePolicy(
+    data: ScrapeCallback,
+    job: ScrapingJobRow | null,
+    { orphan }: { orphan: boolean },
+  ): Promise<void> {
+    const error = data.error ?? 'falha sem mensagem'
+
+    // IP/bot block: pause the whole airline for a cooldown. Do NOT escalate to
+    // dead — the block is not the job's fault.
+    //
+    // The pause is by AIRLINE, so it does not depend on identifying the job: an orphan
+    // block is the same block, and the airline is in the payload.
+    if (isAirlineBlocked(data)) {
+      const until = new Date(Date.now() + BLOCK_COOLDOWN_MS)
+      const paused = await this.scrapingJobRepo.pauseAirlineForBlock(data.airline, until, error)
+      await this.analysisRunsRepo.markFinished(data.requestId, { status: 'blocked', errorMessage: error })
+      log.warn({ jobId: job?.id, airline: data.airline, paused, until, orphan, evidence: data.outcome?.evidence }, 'scraping_airline_blocked: airline paused')
+      return
+    }
+
+    // From here on the reaction is job-scoped (retry counter, next_run_at), so it needs
+    // a job that is still the one this run belongs to. A job already re-dispatched under
+    // another request_id must not have its state overwritten by the previous corrida.
+    const jobMovedOn = job != null && job.status === 'running' && job.request_id !== data.requestId
+    if (!job || jobMovedOn) {
+      await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: error })
+      log.warn({ requestId: data.requestId, jobId: job?.id, jobMovedOn }, 'orphan callback (erro): run fechada, job seguiu em outra corrida')
+      return
+    }
+
+    // Site failure: only this job waits, and it waits longer than on an ordinary
+    // failure — hammering a search that does not respond every minute does not
+    // make it respond.
+    if (isSiteError(data)) {
+      const nextRunAt = calcSiteErrorNextRunAt(job.retry_count)
+      await this.scrapingJobRepo.markSiteError(job.id, error, nextRunAt)
+      await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: error })
+      log.warn({ jobId: job.id, airline: job.airline, nextRunAt, orphan, reason: data.outcome?.reason }, 'scraping_job_site_error')
+      return
+    }
+
+    const nextRunAt = calcBackoffNextRunAt(job.retry_count)
+    if (job.retry_count + 1 >= job.max_retries) {
+      await this.scrapingJobRepo.markDead(job.id, error)
+      await this.analysisRunsRepo.markFinished(data.requestId, { status: 'dead', errorMessage: error })
+      log.error({ jobId: job.id, orphan, error }, 'scraping_job_dead')
+    } else {
+      await this.scrapingJobRepo.markFailed(job.id, error, nextRunAt)
+      await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: error })
+      log.warn({ jobId: job.id, orphan, retryCount: job.retry_count + 1 }, 'scraping_job_failed')
+    }
+  }
+
   // A callback whose request_id matches no job: the job was already recovered
   // (timeout) and re-dispatched, or this is a duplicate/late delivery. The
   // payload carries the scraping_job id in `routineId`, so we try to rehydrate
@@ -192,13 +224,10 @@ export class ScrapeService implements IScrapeService {
       ? await this.scrapingJobRepo.findById(data.routineId)
       : null
 
-    // Error with no flights: closes the run only; the job is untouched (it moved on).
+    // Error with no flights: same policy as an identified callback. It is orphan in the
+    // bookkeeping, not in what it says about the airline and about the job.
     if (data.error && data.flights.length === 0) {
-      await this.analysisRunsRepo.markFinished(data.requestId, {
-        status:       isAirlineBlocked(data) ? 'blocked' : 'failed',
-        errorMessage: data.error,
-      })
-      log.warn({ requestId: data.requestId, jobId: job?.id }, 'orphan callback (erro): run fechada, job intocado')
+      await this.applyFailurePolicy(data, job, { orphan: true })
       return
     }
 
