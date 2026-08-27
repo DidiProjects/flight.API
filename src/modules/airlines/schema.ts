@@ -10,3 +10,8 @@ export const updateFareTypesSchema = z.object({
   hasPts: z.boolean(),
   hasHyb: z.boolean(),
 })
+
+export const routeQuerySchema = z.object({
+  origin:      z.string().length(3).toUpperCase(),
+  destination: z.string().length(3).toUpperCase(),
+})
