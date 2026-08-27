@@ -19,7 +19,21 @@ export interface CancelDispatch {
   result?: CancelResult
 }
 
-export interface ICancelDispatcher {
+/**
+ * Is there a worker on the other end of the hub?
+ *
+ * The scheduler needs this before dispatching. A worker that is not connected also
+ * sends no heartbeat, so every job handed to it is reclaimed as `lost` 60s later and
+ * dispatched again — while the previous one is still sitting in the scraper's queue.
+ * Measured on 2026-08-27, with the scraper process up but its WS down: the queue
+ * reached 41 with a concurrency of 2, flight.API logged 57 orphan callbacks, and no
+ * failure ever reached the job that caused it.
+ */
+export interface IWorkerPresence {
+  hasWorkers(): boolean
+}
+
+export interface ICancelDispatcher extends IWorkerPresence {
   requestCancel(requestId: string): Promise<CancelDispatch>
 }
 

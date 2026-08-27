@@ -556,6 +556,33 @@
           }
         },
         {
+          "name": "GET /airlines/recommended",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/airlines/recommended?origin=MAD&destination=BCN",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "airlines",
+                "recommended"
+              ],
+              "query": [
+                {
+                  "key": "origin",
+                  "value": "MAD"
+                },
+                {
+                  "key": "destination",
+                  "value": "BCN"
+                }
+              ]
+            },
+            "description": "Companhias ativas para um trajeto, recomendadas primeiro.\n\nDevolve TODAS as ativas, cada uma com `recommended` e `reason`:\n- `serves_route` — atende as duas pontas E tem direito de tráfego numa delas\n- `outside_market` — atende as duas pontas, mas sem direito de tráfego (cabotagem)\n- `no_route` — não atende uma das pontas\n\nMAD->BCN é o exemplo que motivou o mapa: só a Ryanair pode vender um doméstico espanhol, apesar de LATAM e BA listarem os dois aeroportos."
+          }
+        },
+        {
           "name": "GET /airlines/admin",
           "request": {
             "method": "GET",

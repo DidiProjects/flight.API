@@ -657,4 +657,98 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
       expect(datas.map((d) => toDateStr(d.flight_date))).toEqual(['2026-07-13'])
     })
   })
+
+  /**
+   * Rotina com mais de uma companhia.
+   *
+   * O `DISTINCT ON (flight_date)` das leituras não tinha a companhia na chave:
+   * por data sobrava a coleta MAIS RECENTE de uma companhia só, e o join por
+   * request_id descartava as outras. Com uma companhia é invisível; com duas, a
+   * tela mostra o preço de quem raspou por último e troca a cada coleta.
+   *
+   * Todo caso aqui põe a tarifa CARA na coleta mais nova de propósito: é o
+   * arranjo em que a chave errada e a chave certa dão respostas diferentes.
+   */
+  describe('multi-companhia', () => {
+    const JOB_LA = '00000000-0000-0000-0000-0000000000bb'
+    const REQ_3  = '33333333-3333-3333-3333-333333333333'
+
+    /** Tarifa da LATAM na mesma rota — a companhia é o que muda. */
+    const latam = (flight: string, cash: number, over: Partial<FareInput> = {}) =>
+      fare(flight, cash, { airline: 'latam', ...over })
+
+    it('card pega a MAIS BARATA entre companhias, não a coletada por último', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 900.00, { flight_date: '2026-07-12' })])
+      await new Promise((r) => setTimeout(r, 15))
+      await repo.insertMany(JOB_LA, REQ_3, [latam('LA1', 1500.00, { flight_date: '2026-07-12' })])
+
+      const best = await repo.getCurrentBest(['azul', 'latam'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(Number(best.best_cash)).toBe(900)
+    })
+
+    it('calendário pega a MAIS BARATA entre companhias, por data', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 900.00, { flight_date: '2026-07-12' })])
+      await new Promise((r) => setTimeout(r, 15))
+      await repo.insertMany(JOB_LA, REQ_3, [latam('LA1', 1500.00, { flight_date: '2026-07-12' })])
+
+      const datas = await repo.getPriceByDate(['azul', 'latam'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(datas).toHaveLength(1)
+      expect(Number(datas[0].best_cash)).toBe(900)
+    })
+
+    // A régua de 30 dias diz se o preço de hoje é bom. Feita só de quem raspou
+    // por último em cada dia, ela descreve o rodízio do despacho, não a rota.
+    it('régua de 30 dias enxerga as duas companhias', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 400.00, { flight_date: '2026-07-12' })])
+      await new Promise((r) => setTimeout(r, 15))
+      await repo.insertMany(JOB_LA, REQ_3, [latam('LA1', 1600.00, { flight_date: '2026-07-12' })])
+
+      const resumo = await repo.getSummary(['azul', 'latam'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(Number(resumo.min_cash_30d)).toBe(400)
+      expect(Number(resumo.avg_cash_30d)).toBe(1000)
+    })
+
+    // O calendário one-way somava em fare_cash, na moeda coletada, enquanto o
+    // card e o calendário de par já somavam em Real. Com duas companhias em
+    // mercados diferentes o MIN elegia a libra por ser o número menor.
+    it('calendário compara em Real, não no número coletado', async () => {
+      // A BA é a coleta MAIS NOVA de propósito: assim ela é a que sobrevivia à
+      // chave sem companhia, e o teste separa as duas correções de uma vez —
+      // com a chave errada devolvia £730 como se fosse o menor preço.
+      await repo.insertMany(JOB_LA, REQ_3, [latam('LA1', 4900.00)])
+      await new Promise((r) => setTimeout(r, 15))
+      // BA em libra: £730, e os R$ 5.110 que 017 congela na coleta.
+      await repo.insertMany(JOB_ID, REQ_1, [fare('BA1', 730.00, {
+        airline: 'britishairways', currency: 'GBP',
+        fare_cash_brl: 5110.00, fx_rate: 7,
+      })])
+
+      const datas = await repo.getPriceByDate(['britishairways', 'latam'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(datas).toHaveLength(1)
+      expect(Number(datas[0].best_cash)).toBe(4900)
+    })
+
+    it('total do par pega a companhia mais barata, não a mais recente', async () => {
+      const OUT = '2026-07-12'
+      const RET = '2026-07-20'
+      await repo.insertMany(JOB_ID, REQ_1, [
+        pairLeg({ flight: 'AD1', cash: 400, outDate: OUT, retDate: RET, isReturn: false }),
+        pairLeg({ flight: 'AD9', cash: 300, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'AD1' }),
+      ])
+      await new Promise((r) => setTimeout(r, 15))
+      await repo.insertMany(JOB_LA, REQ_3, [
+        { ...pairLeg({ flight: 'LA1', cash: 900, outDate: OUT, retDate: RET, isReturn: false }), airline: 'latam' },
+        { ...pairLeg({ flight: 'LA9', cash: 800, outDate: OUT, retDate: RET, isReturn: true, pairedTo: 'LA1' }), airline: 'latam' },
+      ])
+
+      const best = await repo.getCurrentBest(
+        ['azul', 'latam'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
+
+      expect(Number(best.best_cash)).toBe(700)
+    })
+  })
 })

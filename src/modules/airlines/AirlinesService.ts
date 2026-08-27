@@ -1,6 +1,6 @@
 import { AirlineRow } from '../../types'
 import { IAirlinesService } from './interfaces/IAirlinesService'
-import { IAirlinesRepository } from './interfaces/IAirlinesRepository'
+import { AirlineRecommendation, IAirlinesRepository } from './interfaces/IAirlinesRepository'
 import { IRoutinesRepository } from '../routines/interfaces/IRoutinesRepository'
 import { BadRequestError, ConflictError, NotFoundError } from '../../utils/errors'
 
@@ -16,6 +16,11 @@ export class AirlinesService implements IAirlinesService {
 
   async listAll(): Promise<AirlineRow[]> {
     return this.airlinesRepo.findAll()
+  }
+
+  async listForRoute(origin: string, destination: string): Promise<AirlineRecommendation[]> {
+    if (origin === destination) throw new BadRequestError('Origem e destino não podem ser iguais')
+    return this.airlinesRepo.findRecommendedForRoute(origin, destination)
   }
 
   async create(code: string, name: string): Promise<AirlineRow> {

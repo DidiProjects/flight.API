@@ -408,19 +408,21 @@ export class EvaluationService implements IEvaluationService {
           // a pair the airline never offered (and that is where the discount lives).
           const mine = this.inboundsFor(out, inbound)
           if (mine.length === 0) {
-            // The pair has inbounds, but none for this outbound. If the limitation
-            // is known, tolerate silently; otherwise it is corrupted data.
-            if (out.inbound_unavailable) {
-              log.info(
-                { routineId: routine.id, airline, pair: key, outboundFlight: out.flight_number },
-                'evaluation: ida com volta indefinida — sem total, sem alerta',
-              )
-            } else {
-              log.error(
-                { err: new IncompleteRoundTripError(routine.id, airline, 'inbound'), routineId: routine.id, airline, pair: key, outboundFlight: out.flight_number },
-                'evaluation: ida sem nenhuma volta vinculada — ida descartada do ciclo',
-              )
-            }
+            // An outbound with no returns of its own inside a run that HAS returns is
+            // the expected shape of a partial collection, not corrupted data: the 1-to-N
+            // loop opens the returns outbound by outbound and gives up on the ones it
+            // cannot reach (circuit breaker, time budget, `MAX_RT_OUTBOUNDS`), leaving
+            // the outbounds it already collected in place.
+            //
+            // Reported as an error, it filled the log every 5-minute cycle for as long as
+            // the fares stayed inside the freshness window — 4 stack traces per cycle for
+            // LATAM GRU→LHR on 2026-08-27, describing a working design. The reaction is
+            // the same either way (no return, no pair, no price), so what changes here is
+            // only what the log claims happened.
+            log.info(
+              { routineId: routine.id, airline, pair: key, outboundFlight: out.flight_number, known: out.inbound_unavailable },
+              'evaluation: ida sem volta vinculada nesta corrida — sem total, sem alerta',
+            )
             continue
           }
 

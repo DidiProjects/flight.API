@@ -143,8 +143,11 @@ function makeScraperClientMock(): IScraperClient & { dispatch: ReturnType<typeof
   return { dispatch: vi.fn().mockResolvedValue(undefined) }
 }
 
-function makeCancelDispatcherMock() {
-  return { requestCancel: vi.fn().mockResolvedValue({ delivery: 'no_worker' }) }
+function makeCancelDispatcherMock(hasWorkers = true) {
+  return {
+    requestCancel: vi.fn().mockResolvedValue({ delivery: 'no_worker' }),
+    hasWorkers: vi.fn().mockReturnValue(hasWorkers),
+  }
 }
 
 function makeSvc(
@@ -218,6 +221,22 @@ describe('SchedulerService — dispatch loop', () => {
     await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
 
     expect(scraperClient.dispatch).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * 2026-08-27: the scraper process was up and answering HTTP, but its WS to the hub
+   * was down. flight.API dispatched, got no heartbeat, reclaimed the lease 60s later
+   * and dispatched again — 57 orphan callbacks and a 41-deep queue on a worker with a
+   * concurrency of 2. Nothing in the loop was asking whether anyone was listening.
+   */
+  it('não despacha enquanto nenhum worker estiver conectado ao hub', async () => {
+    const scrapingJobRepo = makeScrapingJobRepoMock(makeJob())
+    const { svc, scraperClient } = makeSvc(scrapingJobRepo, makeScraperClientMock(), makeCancelDispatcherMock(false))
+
+    await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
+
+    expect(scrapingJobRepo.claimNextJob).not.toHaveBeenCalled()
+    expect(scraperClient.dispatch).not.toHaveBeenCalled()
   })
 
   it('não reivindica job de companhia que já está com uma sessão em voo', async () => {
