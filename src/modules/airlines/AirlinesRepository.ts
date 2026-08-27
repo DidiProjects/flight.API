@@ -1,6 +1,6 @@
 import { Pool } from 'pg'
 import { AirlineRow } from '../../types'
-import { IAirlinesRepository } from './interfaces/IAirlinesRepository'
+import { AirlineRecommendation, IAirlinesRepository } from './interfaces/IAirlinesRepository'
 
 export class AirlinesRepository implements IAirlinesRepository {
   constructor(private readonly db: Pool) {}
@@ -23,6 +23,45 @@ export class AirlinesRepository implements IAirlinesRepository {
     const { rows } = await this.db.query<AirlineRow>(
       `SELECT ${this.cols} FROM airlines WHERE active = true ORDER BY name`,
     )
+    return rows
+  }
+
+  async findRecommendedForRoute(origin: string, destination: string): Promise<AirlineRecommendation[]> {
+    const { rows } = await this.db.query<AirlineRecommendation>(`
+      WITH ponta AS (
+        -- As duas pontas, com o país de cada uma na visão DAQUELA companhia.
+        -- lower() dos dois lados: a caixa de country_code da GOL está em
+        -- MAIÚSCULA e o resto em minúscula, e sem isso ela some do filtro.
+        SELECT a.code,
+               lower(o.country_code) AS pais_origem,
+               lower(d.country_code) AS pais_destino
+        FROM airlines a
+        JOIN airports o ON o.airline_code = a.code AND o.airport_code = $1
+        JOIN airports d ON d.airline_code = a.code AND d.airport_code = $2
+      )
+      SELECT ${this.cols.split(', ').map((c) => `a.${c}`).join(', ')},
+             (p.code IS NOT NULL AND EXISTS (
+                SELECT 1 FROM airline_markets am
+                  JOIN market_countries mc ON mc.market_code = am.market_code
+                WHERE am.airline_code = a.code
+                  AND mc.country_code IN (p.pais_origem, p.pais_destino)
+             )) AS recommended,
+             CASE
+               WHEN p.code IS NULL THEN 'no_route'
+               WHEN EXISTS (
+                 SELECT 1 FROM airline_markets am
+                   JOIN market_countries mc ON mc.market_code = am.market_code
+                 WHERE am.airline_code = a.code
+                   AND mc.country_code IN (p.pais_origem, p.pais_destino)
+               ) THEN 'serves_route'
+               ELSE 'outside_market'
+             END AS reason
+      FROM airlines a
+      LEFT JOIN ponta p ON p.code = a.code
+      WHERE a.active = true
+      -- Recomendadas primeiro; o FRONT não reordena nem reimplementa a regra.
+      ORDER BY recommended DESC, a.name
+    `, [origin.toUpperCase(), destination.toUpperCase()])
     return rows
   }
 

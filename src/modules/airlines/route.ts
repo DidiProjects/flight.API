@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { IAirlinesService } from './interfaces/IAirlinesService'
 import { IAirportsService } from '../airports/interfaces/IAirportsService'
-import { createAirlineSchema, updateFareTypesSchema } from './schema'
+import { createAirlineSchema, routeQuerySchema, updateFareTypesSchema } from './schema'
 import { coverageAdminBodySchema } from '../airports/schema'
 
 export function airlinesRoute(airlinesSvc: IAirlinesService, airportsSvc: IAirportsService) {
@@ -11,6 +11,18 @@ export function airlinesRoute(airlinesSvc: IAirlinesService, airportsSvc: IAirpo
       { preHandler: [app.authenticate, app.requirePasswordChanged] },
       async (_req, reply) => {
         reply.send(await airlinesSvc.listActive())
+      },
+    )
+
+    // Quais companhias fazem sentido para um trajeto. Devolve TODAS as ativas,
+    // cada uma com `recommended` e o motivo: o mapa de mercado decide o padrão
+    // do formulário, nunca o teto do que o usuário pode escolher.
+    app.get(
+      '/recommended',
+      { preHandler: [app.authenticate, app.requirePasswordChanged] },
+      async (req, reply) => {
+        const { origin, destination } = routeQuerySchema.parse(req.query)
+        reply.send(await airlinesSvc.listForRoute(origin, destination))
       },
     )
 
