@@ -95,6 +95,17 @@ export interface CurrentBest {
   best_hyb_pts_at: Date | null
   best_hyb_cash_at: Date | null
   /**
+   * Quem venceu, e quem estava na disputa.
+   *
+   * Com uma companhia por rotina os dois campos eram óbvios e não existiam. Com
+   * várias, o card que mostra só o menor número esconde a informação que decide
+   * a compra — em qual site comprar. `analysed_airlines` traz as que tinham
+   * tarifa fresca na janela, não as que a rotina pediu: companhia que não
+   * respondeu não foi analisada, e dizer que foi é mentir sobre a cobertura.
+   */
+  best_cash_airline: string | null
+  analysed_airlines: string[]
+  /**
    * Round-trip with no total because the return is undefined (a known airline
    * limitation). Tells "the trip has no total" from "nothing was collected" — the
    * outbound exists, it is just not the price of the trip.

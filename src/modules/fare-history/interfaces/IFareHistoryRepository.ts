@@ -44,10 +44,28 @@ export interface FareHistoryBucket {
   samples: number
 }
 
+/** The series of ONE airline, for the chart to draw a curve per competitor. */
+export interface FareHistoryAirlineSeries {
+  airline: string
+  buckets: FareHistoryBucket[]
+}
+
 export interface FareHistorySeries {
   /** Currency of the most recent segment — the one the card is showing. */
   currency: string | null
+  /**
+   * The best price across every airline, bucket by bucket. Stays the headline
+   * curve: it is the number the routine is judged by.
+   */
   buckets: FareHistoryBucket[]
+  /**
+   * One curve per airline that had a price in the window.
+   *
+   * Comes from the same pass as `buckets`, with GROUPING SETS, so the total and
+   * the parts can never disagree — computing them in two queries is how a
+   * headline stops matching the curves under it.
+   */
+  byAirline: FareHistoryAirlineSeries[]
 }
 
 /** Route and windows of a routine. With `inbound`, the series is of pair TOTALS. */

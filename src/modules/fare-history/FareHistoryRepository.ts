@@ -206,12 +206,12 @@ export class FareHistoryRepository implements IFareHistoryRepository {
       : `AND i.trip_type = 'one_way'`
     if (query.inbound) params.push(query.inbound.from, query.inbound.to)
 
-    const { rows } = await this.db.query<FareHistoryBucket & { currency: string | null }>(`
+    const { rows } = await this.db.query<FareHistoryBucket & { currency: string | null; airline: string | null }>(`
       WITH bounds AS (
         SELECT date_trunc('hour', NOW()) - $6::interval AS from_ts, NOW() AS to_ts
       ),
       itins AS (
-        SELECT i.id
+        SELECT i.id, i.airline
         FROM fare_itineraries i
         WHERE i.airline = ANY($1::text[])
           AND i.origin = $2 AND i.destination = $3
@@ -231,7 +231,7 @@ export class FareHistoryRepository implements IFareHistoryRepository {
       -- In Real there is no currency to elect and no sample to discard. Points stay
       -- in points: PTS is not an exchange currency.
       segs AS (
-        SELECT h.id, h.amount_cash_brl AS amount_cash, h.amount_pts, h.amount_hyb_pts,
+        SELECT h.id, i.airline, h.amount_cash_brl AS amount_cash, h.amount_pts, h.amount_hyb_pts,
                h.amount_hyb_cash_brl AS amount_hyb_cash, h.observed_from, h.last_seen_at
         FROM fare_price_history h
         JOIN itins i ON i.id = h.itinerary_id
@@ -243,6 +243,7 @@ export class FareHistoryRepository implements IFareHistoryRepository {
       )
       SELECT
         b.bucket_start,
+        s.airline,
         'BRL'                      AS currency,
         MIN(s.amount_cash)         AS min_cash,
         MIN(s.amount_pts)          AS min_pts,
@@ -256,20 +257,38 @@ export class FareHistoryRepository implements IFareHistoryRepository {
       LEFT JOIN segs s
         ON  s.observed_from <  b.bucket_start + $7::interval
         AND s.last_seen_at  >= b.bucket_start
-      GROUP BY b.bucket_start
-      ORDER BY b.bucket_start
+      -- GROUPING SETS: o total (airline NULL) e a curva de cada companhia saem da
+      -- MESMA varredura. Em duas queries o destaque e as curvas embaixo dele
+      -- podem discordar, que é exatamente o que o card não pode fazer.
+      GROUP BY GROUPING SETS ((b.bucket_start), (b.bucket_start, s.airline))
+      ORDER BY b.bucket_start, s.airline NULLS FIRST
     `, params)
+
+    const toBucket = (r: FareHistoryBucket): FareHistoryBucket => ({
+      bucket_start: r.bucket_start,
+      min_cash: r.min_cash,
+      min_pts: r.min_pts,
+      min_hyb_pts: r.min_hyb_pts,
+      min_hyb_cash: r.min_hyb_cash,
+      samples: r.samples,
+    })
+
+    // airline NULL = a linha do agregado geral; as demais são as curvas.
+    const geral = rows.filter((r) => r.airline == null)
+    const porCia = new Map<string, FareHistoryBucket[]>()
+    for (const r of rows) {
+      if (r.airline == null) continue
+      const lista = porCia.get(r.airline) ?? []
+      lista.push(toBucket(r))
+      porCia.set(r.airline, lista)
+    }
 
     return {
       currency: rows[0]?.currency ?? null,
-      buckets: rows.map((r) => ({
-        bucket_start: r.bucket_start,
-        min_cash: r.min_cash,
-        min_pts: r.min_pts,
-        min_hyb_pts: r.min_hyb_pts,
-        min_hyb_cash: r.min_hyb_cash,
-        samples: r.samples,
-      })),
+      buckets: geral.map(toBucket),
+      byAirline: [...porCia.entries()]
+        .map(([airline, buckets]) => ({ airline, buckets }))
+        .sort((a, b) => a.airline.localeCompare(b.airline)),
     }
   }
 

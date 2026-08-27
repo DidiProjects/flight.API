@@ -471,6 +471,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       per_combo AS (
         SELECT
           lp.scraped_at,
+          o.airline,
           o.currency,
           o.inbound_unavailable,
           -- Bundle da companhia manda; sem ele, ida + a volta mais barata DELA.
@@ -520,7 +521,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       -- As parcelas têm de vir da MESMA combinação que ganhou cada dimensão.
       -- Pegar o menor out e o menor in separadamente descreveria um par que a
       -- companhia não vendeu — a volta barata pode pertencer a outra ida.
-      win_cash     AS (SELECT out_cash,     in_cash,     scraped_at FROM per_combo WHERE total_cash     IS NOT NULL ORDER BY total_cash,     scraped_at DESC LIMIT 1),
+      win_cash     AS (SELECT out_cash,     in_cash,     scraped_at, airline FROM per_combo WHERE total_cash     IS NOT NULL ORDER BY total_cash,     scraped_at DESC LIMIT 1),
       win_pts      AS (SELECT out_pts,      in_pts,      scraped_at FROM per_combo WHERE total_pts      IS NOT NULL ORDER BY total_pts,      scraped_at DESC LIMIT 1),
       win_hyb_pts  AS (SELECT out_hyb_pts,  in_hyb_pts,  scraped_at FROM per_combo WHERE total_hyb_pts  IS NOT NULL ORDER BY total_hyb_pts,  scraped_at DESC LIMIT 1),
       win_hyb_cash AS (SELECT out_hyb_cash, in_hyb_cash, scraped_at FROM per_combo WHERE total_hyb_cash IS NOT NULL ORDER BY total_hyb_cash, scraped_at DESC LIMIT 1)
@@ -545,6 +546,8 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         (SELECT scraped_at FROM win_pts)      AS best_pts_at,
         (SELECT scraped_at FROM win_hyb_pts)  AS best_hyb_pts_at,
         (SELECT scraped_at FROM win_hyb_cash) AS best_hyb_cash_at,
+        (SELECT airline FROM win_cash) AS best_cash_airline,
+        COALESCE(ARRAY(SELECT DISTINCT airline FROM per_combo ORDER BY airline), '{}') AS analysed_airlines,
         MAX(scraped_at)     AS scraped_at,
         -- Só quando NENHUMA dimensão fechou total e existe ida com volta
         -- indefinida: aí o "sem total" tem motivo conhecido, e a rotina exibe
@@ -559,6 +562,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       currency: null, best_cash: null, best_pts: null,
       best_hyb_pts: null, best_hyb_cash: null, scraped_at: null,
       best_cash_at: null, best_pts_at: null, best_hyb_pts_at: null, best_hyb_cash_at: null,
+      best_cash_airline: null, analysed_airlines: [],
       inbound_unavailable: false,
       best_cash_outbound: null, best_cash_inbound: null,
       best_pts_outbound: null, best_pts_inbound: null,
@@ -613,7 +617,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         -- sumia da régua sem deixar rastro. Em Real todas cabem na mesma coluna.
         -- fare_cash_brl NULL (linha anterior à 017, ou sem cotação confiável)
         -- sai sozinha do MIN, que ignora NULL.
-        SELECT f.fare_cash_brl AS fare_cash, f.fare_pts, f.fare_hyb_pts,
+        SELECT f.airline, f.fare_cash_brl AS fare_cash, f.fare_pts, f.fare_hyb_pts,
                f.fare_hyb_cash_brl AS fare_hyb_cash, lpd.scraped_at
         FROM flight_fares f
         INNER JOIN latest_per_date lpd
@@ -637,12 +641,19 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         (SELECT scraped_at FROM coletado WHERE fare_pts      IS NOT NULL ORDER BY fare_pts,      scraped_at DESC LIMIT 1) AS best_pts_at,
         (SELECT scraped_at FROM coletado WHERE fare_hyb_pts  IS NOT NULL ORDER BY fare_hyb_pts,  scraped_at DESC LIMIT 1) AS best_hyb_pts_at,
         (SELECT scraped_at FROM coletado WHERE fare_hyb_cash IS NOT NULL ORDER BY fare_hyb_cash, scraped_at DESC LIMIT 1) AS best_hyb_cash_at,
+        -- Em qual site comprar. Mesma ordenação do best_cash: o desempate por
+        -- scraped_at DESC garante que preço empatado escolhe a coleta mais nova.
+        (SELECT airline FROM coletado WHERE fare_cash IS NOT NULL ORDER BY fare_cash, scraped_at DESC LIMIT 1) AS best_cash_airline,
+        -- Quem de fato respondeu na janela, não quem a rotina pediu.
+        COALESCE(ARRAY(SELECT DISTINCT airline FROM coletado ORDER BY airline), '{}') AS analysed_airlines,
         MAX(scraped_at)       AS scraped_at
       FROM coletado
     `, [airlines, origin, destination, dateFrom, dateTo, maxAgeHours])
 
     return rows[0] ?? {
       currency: null,
+      best_cash_airline: null,
+      analysed_airlines: [],
       best_cash: null,
       best_pts: null,
       best_hyb_pts: null,

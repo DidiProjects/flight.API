@@ -327,6 +327,73 @@ describeIt('FareHistoryRepository (integração / Postgres real)', () => {
       )
     }
 
+    /** Mesmo segmento, outra companhia — para o gráfico ter mais de uma curva. */
+    async function seedSegmentDe(
+      airline: string, cash: number, fromHoursAgo: number, toHoursAgo: number,
+    ): Promise<void> {
+      const { rows } = await pool.query(
+        `INSERT INTO fare_itineraries
+           (airline, trip_type, origin, destination, outbound_flight_number, outbound_date,
+            inbound_flight_number, inbound_date, currency)
+         VALUES ($1,'round_trip','GRU','CNF',$2,'2027-01-09','XX200','2027-01-15','BRL')
+         ON CONFLICT (airline, trip_type, origin, destination, outbound_flight_number,
+                      outbound_date, inbound_flight_number, inbound_date)
+         DO UPDATE SET currency = EXCLUDED.currency
+         RETURNING id`,
+        [airline, `${airline.slice(0, 2).toUpperCase()}${cash}`],
+      )
+      await pool.query(
+        `INSERT INTO fare_price_history
+           (itinerary_id, currency, amount_cash, amount_cash_brl, observed_from, last_seen_at)
+         VALUES ($1,'BRL',$2,$2, NOW() - ($3 || ' hours')::interval, NOW() - ($4 || ' hours')::interval)`,
+        [rows[0].id, cash, fromHoursAgo, toHoursAgo],
+      )
+    }
+
+    // O gráfico passa de uma linha para N. O total e as curvas saem da mesma
+    // varredura (GROUPING SETS) justamente para não poderem discordar.
+    describe('uma curva por companhia', () => {
+      const MULTI = { ...ROUTE, airlines: ['azul', 'latam'] }
+
+      it('devolve uma série por companhia, e o destaque continua sendo o melhor', async () => {
+        await seedSegmentDe('azul', 700, 5, 1)
+        await seedSegmentDe('latam', 900, 5, 1)
+
+        const series = await repo.getSeries(MULTI, 'day')
+
+        expect(series.byAirline.map((s) => s.airline)).toEqual(['azul', 'latam'])
+        const melhor = series.buckets.filter((b) => b.samples > 0)
+        expect(melhor.every((b) => b.min_cash === '700.00')).toBe(true)
+        const curvaLatam = series.byAirline.find((s) => s.airline === 'latam')!
+        expect(curvaLatam.buckets.filter((b) => b.samples > 0).every((b) => b.min_cash === '900.00')).toBe(true)
+      })
+
+      it('o total nunca fica acima da curva mais barata, bucket a bucket', async () => {
+        await seedSegmentDe('azul', 700, 5, 1)
+        await seedSegmentDe('latam', 400, 3, 1)
+
+        const series = await repo.getSeries(MULTI, 'day')
+
+        for (const b of series.buckets.filter((x) => x.samples > 0)) {
+          const cias = series.byAirline
+            .map((s) => s.buckets.find((x) => +new Date(x.bucket_start) === +new Date(b.bucket_start)))
+            .filter((x) => x != null && x.samples > 0)
+            .map((x) => Number(x!.min_cash))
+          expect(Number(b.min_cash)).toBe(Math.min(...cias))
+        }
+      })
+
+      it('com uma companhia só, a curva dela é a única e bate com o total', async () => {
+        await seedSegmentDe('azul', 700, 5, 1)
+
+        const series = await repo.getSeries(MULTI, 'day')
+
+        expect(series.byAirline.map((s) => s.airline)).toEqual(['azul'])
+        expect(series.byAirline[0].buckets.filter((b) => b.samples > 0).map((b) => b.min_cash))
+          .toEqual(series.buckets.filter((b) => b.samples > 0).map((b) => b.min_cash))
+      })
+    })
+
     it('um platô cobre todos os buckets que atravessou, não só o de origem', async () => {
       await seedSegment(700, 5, 1)
 

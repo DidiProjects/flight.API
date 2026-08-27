@@ -732,6 +732,31 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
       expect(Number(datas[0].best_cash)).toBe(4900)
     })
 
+    // O card mostra um número só. Com várias companhias, esconder QUEM cobrou
+    // esconde a informação que decide a compra: em qual site comprar.
+    it('card diz qual companhia venceu e quais foram analisadas', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 900.00, { flight_date: '2026-07-12' })])
+      await new Promise((r) => setTimeout(r, 15))
+      await repo.insertMany(JOB_LA, REQ_3, [latam('LA1', 1500.00, { flight_date: '2026-07-12' })])
+
+      const best = await repo.getCurrentBest(['azul', 'latam'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(Number(best.best_cash)).toBe(900)
+      expect(best.best_cash_airline).toBe('azul')
+      expect([...best.analysed_airlines].sort()).toEqual(['azul', 'latam'])
+    })
+
+    // Companhia que não respondeu não foi analisada. Dizer que foi é mentir
+    // sobre a cobertura no lugar onde o usuário confere se olhamos por ele.
+    it('analysed_airlines lista quem respondeu, não quem a rotina pediu', async () => {
+      await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 900.00, { flight_date: '2026-07-12' })])
+
+      const best = await repo.getCurrentBest(
+        ['azul', 'latam', 'britishairways'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
+
+      expect(best.analysed_airlines).toEqual(['azul'])
+    })
+
     it('total do par pega a companhia mais barata, não a mais recente', async () => {
       const OUT = '2026-07-12'
       const RET = '2026-07-20'
@@ -749,6 +774,8 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
         ['azul', 'latam'], 'CNF', 'VCP', OUT, OUT, { from: RET, to: RET })
 
       expect(Number(best.best_cash)).toBe(700)
+      expect(best.best_cash_airline).toBe('azul')
+      expect([...best.analysed_airlines].sort()).toEqual(['azul', 'latam'])
     })
   })
 })
