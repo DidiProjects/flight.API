@@ -233,6 +233,61 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.markFailed).toHaveBeenCalledOnce()
   })
 
+  it('bloqueio SEM texto de erro pausa a companhia e não conta como coleta', async () => {
+    // The real shape of a block: it paints a screen, it does not raise. The scraper
+    // reports it in `outcome` and sends no `error` — and while the gate asked only for
+    // `error`, this callback reached markSuccess with zero fares.
+    const job = makeJob({ retry_count: 0, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockScrapingJobRepo.pauseAirlineForBlock).mockResolvedValue(2)
+
+    await svc.processCallback(makeCallback({
+      flights: [],
+      outcome: { state: 'BLOCKED', reason: 'resposta da borda do CDN, não da origem' },
+    }))
+
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markSuccess).not.toHaveBeenCalled()
+    expect(mockAnalysisRunsRepo.markFinished).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'blocked' }),
+    )
+  })
+
+  it('o motivo do outcome vira a mensagem quando não há texto de erro', async () => {
+    const job = makeJob({ retry_count: 0, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      flights: [],
+      outcome: { state: 'LAYOUT_CHANGED', reason: 'sem marcador nenhum' },
+    }))
+
+    expect(mockScrapingJobRepo.markFailed).toHaveBeenCalledWith(
+      job.id,
+      'LAYOUT_CHANGED: sem marcador nenhum',
+      expect.any(Date),
+    )
+  })
+
+  it('EMPTY continua sendo sucesso: não há voo, e retentar queimaria a data', async () => {
+    // Deliberate. A date the airline says has no flight would walk the backoff to `dead`
+    // and be dropped from the current price. The false EMPTY is fixed in the scraper,
+    // which now classifies the anti-bot screen as BLOCKED.
+    const job = makeJob({ retry_count: 0, max_retries: 3 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockFlightFaresRepo.insertMany).mockResolvedValue(0)
+
+    await svc.processCallback(makeCallback({
+      flights: [],
+      outcome: { state: 'EMPTY', reason: 'a companhia declarou que não há voos' },
+    }))
+
+    expect(mockScrapingJobRepo.markSuccess).toHaveBeenCalledOnce()
+    expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).not.toHaveBeenCalled()
+  })
+
   it('webhook de erro — retry_count >= max_retries — chama markDead', async () => {
     const job = makeJob({ retry_count: 2, max_retries: 3 })
     vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
