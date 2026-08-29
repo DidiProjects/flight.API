@@ -34,6 +34,28 @@ function isAirlineBlocked(data: ScrapeCallback): boolean {
 }
 
 /**
+ * States that describe a collection that did NOT happen, even with no `error`.
+ *
+ * A block does not raise an exception — it paints a screen — so the scraper reports it
+ * in `outcome` and sends no `error`. While the failure gate asked only for `error`, a
+ * BLOCKED callback walked straight into `markSuccess`: the airline was never paused,
+ * `next_run_at` was pushed forward and the run was filed as a collection with zero
+ * fares. Measured on 2026-08-29: 3 of 7 runs of the same GRU→LHR pair.
+ *
+ * `EMPTY` is deliberately out. It is the airline saying there is no flight, and turning
+ * it into a failure burns a date that will never have one through retry into `dead`.
+ * The false EMPTY is fixed where it is born — the scraper now classifies the Akamai
+ * screen as BLOCKED.
+ */
+const ESTADOS_DE_FALHA = ['BLOCKED', 'SITE_ERROR', 'LAYOUT_CHANGED'] as const
+
+function coletaFalhou(data: ScrapeCallback): boolean {
+  if (data.flights.length > 0) return false
+  if (data.error) return true
+  return data.outcome != null && (ESTADOS_DE_FALHA as readonly string[]).includes(data.outcome.state)
+}
+
+/**
  * The airline declared a failure of its own (its search did not respond, or it
  * showed its own error page). Not a block — it pauses nobody — and not the
  * job's fault, so it does not escalate to 'dead'.
@@ -137,7 +159,7 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
-    if (data.error && data.flights.length === 0) {
+    if (coletaFalhou(data)) {
       await this.applyFailurePolicy(data, job, { orphan: false })
       return
     }
@@ -167,7 +189,11 @@ export class ScrapeService implements IScrapeService {
     job: ScrapingJobRow | null,
     { orphan }: { orphan: boolean },
   ): Promise<void> {
-    const error = data.error ?? 'falha sem mensagem'
+    // A failure reported only through `outcome` carries no `error` text. Falling back to
+    // "falha sem mensagem" would file the state that explains it — and its evidence —
+    // into nothing, on exactly the callbacks this policy now exists to catch.
+    const error = data.error
+      ?? (data.outcome ? `${data.outcome.state}: ${data.outcome.reason ?? 'sem motivo declarado'}` : 'falha sem mensagem')
 
     // IP/bot block: pause the whole airline for a cooldown. Do NOT escalate to
     // dead — the block is not the job's fault.
@@ -224,9 +250,9 @@ export class ScrapeService implements IScrapeService {
       ? await this.scrapingJobRepo.findById(data.routineId)
       : null
 
-    // Error with no flights: same policy as an identified callback. It is orphan in the
+    // Failure with no flights: same policy as an identified callback. It is orphan in the
     // bookkeeping, not in what it says about the airline and about the job.
-    if (data.error && data.flights.length === 0) {
+    if (coletaFalhou(data)) {
       await this.applyFailurePolicy(data, job, { orphan: true })
       return
     }
