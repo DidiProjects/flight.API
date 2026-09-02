@@ -85,6 +85,7 @@ const notifSvc = new NotificationsService(
   notifLogRepo,
   unsubTokensRepo,
   emailSvc,
+  fxSvc,
   env,
 )
 

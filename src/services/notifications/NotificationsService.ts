@@ -6,6 +6,7 @@ import { IFlightFaresRepository, LatestFaresByDate, PairFareRow, PriceHistory } 
 import { IUnsubscribeTokensRepository } from '../../modules/unsubscribe/interfaces/IUnsubscribeTokensRepository'
 import { IUsersRepository } from '../../modules/users/interfaces/IUsersRepository'
 import { IEmailService, AirlineOfferPair, AlertTotal, DailyBestRoutineSection, OfferBlock } from '../email/interfaces/IEmailService'
+import { IFxRateService } from '../fx/interfaces/IFxRateService'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 import { toDateStr } from '../evaluation/EvaluationService'
@@ -20,6 +21,7 @@ export class NotificationsService implements INotificationsService {
     private readonly notifLogRepo: INotificationLogRepository,
     private readonly unsubTokensRepo: IUnsubscribeTokensRepository,
     private readonly emailSvc: IEmailService,
+    private readonly fx: IFxRateService,
     private readonly env: Env,
   ) {}
 
@@ -162,34 +164,38 @@ export class NotificationsService implements INotificationsService {
             toDateStr(routine.outbound_start), toDateStr(routine.outbound_end),
             toDateStr(routine.inbound_start!), toDateStr(routine.inbound_end!),
           )
+          // Group by RUN: both legs of the pair come from the same RT search and share
+          // request_id. Grouping by flight_date put them in DIFFERENT groups — the
+          // inbound carries ITS own date (11-20|11-20 against the outbound's
+          // 11-10|11-20) — so every group had one leg, `inb` was always null, and the
+          // routine left the summary as "no fares found". The evaluation cycle fixed
+          // this and the summary never received the fix.
           const byPair = new Map<string, PairFareRow[]>()
           for (const r of rows) {
-            const key = `${toDateStr(r.flight_date)}|${toDateStr(r.return_date)}`
-            const list = byPair.get(key)
+            const list = byPair.get(r.request_id)
             if (list) list.push(r)
-            else byPair.set(key, [r])
+            else byPair.set(r.request_id, [r])
           }
           for (const legs of byPair.values()) {
-            const out = this.bestFare(legs.filter((l) => !l.is_return), routine.priority)
-            const inb = this.bestFare(legs.filter((l) => l.is_return), routine.priority)
+            // Both legs converted BEFORE choosing the cheapest and before summing.
+            // The pair whose outbound is charged in Real and whose return is charged
+            // in pounds is the ordinary shape of a Brazil↔London routine, not corrupt
+            // data — and it was being discarded whole.
+            const out = await this.bestFareBrl(legs.filter((l) => !l.is_return), routine)
+            const inb = await this.bestFareBrl(legs.filter((l) => l.is_return), routine)
             if (!out || !inb) continue
-            if ((out.currency ?? null) !== (inb.currency ?? null)) continue
-
-            const outV = this.fareAmount(out, routine.priority)
-            const inV = this.fareAmount(inb, routine.priority)
-            if (outV == null || inV == null) continue
 
             const bundleRaw =
-              routine.priority === 'cash' ? (out as PairFareRow).bundle_cash :
-              routine.priority === 'pts'  ? (out as PairFareRow).bundle_pts :
-              (out as PairFareRow).bundle_hyb_pts
-            const total = bundleRaw == null ? outV + inV : Number(bundleRaw)
+              routine.priority === 'cash' ? out.fare.bundle_cash :
+              routine.priority === 'pts'  ? out.fare.bundle_pts :
+              out.fare.bundle_hyb_pts
+            const total = bundleRaw == null ? out.value + inb.value : Number(bundleRaw)
 
             if (bestPairTotal == null || total < bestPairTotal) {
               bestPairTotal = total
-              bestPairInbound = inb
+              bestPairInbound = inb.fare
               allOutbound.length = 0
-              allOutbound.push(out)
+              allOutbound.push(out.fare)
             }
           }
         }
@@ -337,6 +343,45 @@ export class NotificationsService implements INotificationsService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Cheapest leg, compared in Real.
+   *
+   * `bestFare` picks by the raw amount the airline charged, which only holds while
+   * every leg is in the same currency: £730 beats R$4,900 for being the smaller
+   * number. On a round trip the summary now sees both markets, so the choice — and
+   * the sum that follows — happen after conversion.
+   *
+   * Points do not convert: `PTS` is a loyalty unit, not a currency. `null` when
+   * there is no trustworthy rate, the same rule the evaluation cycle applies —
+   * a summary built on a doubtful number is worse than a summary without the line.
+   */
+  private async bestFareBrl<T extends LatestFaresByDate>(
+    fares: T[],
+    routine: RoutineRow,
+  ): Promise<{ fare: T; value: number } | null> {
+    let best: { fare: T; value: number } | null = null
+
+    for (const fare of fares) {
+      const raw = this.fareAmount(fare, routine.priority)
+      if (raw == null) continue
+
+      let value = raw
+      if (routine.priority === 'cash') {
+        if (fare.currency == null) continue
+        const conv = await this.fx.toBrl(raw, fare.currency)
+        if (conv == null) {
+          log.warn({ routineId: routine.id, currency: fare.currency }, 'resumo: sem cotação — perna fora do resumo')
+          continue
+        }
+        value = conv.amount
+      }
+
+      if (best == null || value < best.value) best = { fare, value }
+    }
+
+    return best
+  }
 
   private bestFare(fares: LatestFaresByDate[], priority: string): LatestFaresByDate | null {
     const withValue = fares.filter((f) => this.fareAmount(f, priority) !== null)
