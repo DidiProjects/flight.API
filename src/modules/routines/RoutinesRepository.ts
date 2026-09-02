@@ -10,6 +10,34 @@ const ROUTINE_COLS = `
   r.margin, r.priority, r.notification_modes, r.notification_frequency, r.scheduled_time,
   r.cc_emails, r.is_active, r.created_at, r.updated_at`
 
+/**
+ * `RoutineRow` declares numbers; `pg` hands NUMERIC over as a STRING.
+ *
+ * Until this existed, the row lied about itself and the lie survived typecheck.
+ * `const t = 1 + routine.margin` with margin `"0.100"` CONCATENATES — `t` becomes
+ * `"10.100"` — and the target ceiling `target_cash * t` came out ten times too high:
+ * a routine aiming at R$7,000 with a 10% margin alerted on anything up to R$70,700.
+ * Measured in production on 2026-08-31: an LHR→GRU pair of R$8,374.95 (£558 + £636,
+ * converted) was e-mailed as if it were within target.
+ *
+ * The coercion lives at the repository boundary, not at each comparison: every
+ * consumer of the row deserves the type it was promised, and a second reader of
+ * `margin` would otherwise reintroduce the same defect. `null` stays `null` —
+ * an absent target is not zero.
+ */
+function hydrate(row: RoutineRow): RoutineRow {
+  const num = (v: unknown): number | null => (v == null ? null : Number(v))
+  return {
+    ...row,
+    passengers:      Number(row.passengers),
+    margin:          Number(row.margin),
+    target_cash:     num(row.target_cash),
+    target_pts:      num(row.target_pts),
+    target_hyb_pts:  num(row.target_hyb_pts),
+    target_hyb_cash: num(row.target_hyb_cash),
+  }
+}
+
 /** Build a SELECT that includes the aggregated airlines array */
 function selectWithAirlines(whereClause: string, groupBy = 'r.id'): string {
   return `
@@ -29,7 +57,7 @@ export class RoutinesRepository implements IRoutinesRepository {
       `${selectWithAirlines('WHERE r.user_id = $1')} ORDER BY r.created_at DESC`,
       [userId],
     )
-    return rows
+    return rows.map(hydrate)
   }
 
   async findById(id: string, userId: string): Promise<RoutineRow | null> {
@@ -37,7 +65,7 @@ export class RoutinesRepository implements IRoutinesRepository {
       selectWithAirlines('WHERE r.id = $1 AND r.user_id = $2'),
       [id, userId],
     )
-    return rows[0] ?? null
+    return rows[0] ? hydrate(rows[0]) : null
   }
 
   async findByIdAdmin(id: string): Promise<RoutineRow | null> {
@@ -45,7 +73,7 @@ export class RoutinesRepository implements IRoutinesRepository {
       selectWithAirlines('WHERE r.id = $1'),
       [id],
     )
-    return rows[0] ?? null
+    return rows[0] ? hydrate(rows[0]) : null
   }
 
   async countByUser(userId: string): Promise<number> {
@@ -71,14 +99,14 @@ export class RoutinesRepository implements IRoutinesRepository {
          WHERE rpr.request_id IS NULL OR rpr.requested_at < now() - INTERVAL '1 hour'
        ) > 0`,
     )
-    return rows
+    return rows.map(hydrate)
   }
 
   async findAllActive(): Promise<RoutineRow[]> {
     const { rows } = await this.db.query<RoutineRow>(
       selectWithAirlines('WHERE r.is_active = true'),
     )
-    return rows
+    return rows.map(hydrate)
   }
 
   async findActiveForScheduled(currentTime: string): Promise<RoutineRow[]> {
@@ -91,7 +119,7 @@ export class RoutinesRepository implements IRoutinesRepository {
          AND to_char(r.scheduled_time, 'HH24:MI') <= $1`)}`,
       [currentTime],
     )
-    return rows
+    return rows.map(hydrate)
   }
 
   async create(data: CreateRoutineData): Promise<RoutineRow> {
