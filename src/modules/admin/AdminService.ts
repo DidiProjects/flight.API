@@ -8,6 +8,7 @@ import type { INotificationsService } from '../../services/notifications/interfa
 import type { INotificationLogRepository } from '../../services/notifications/interfaces/INotificationLogRepository'
 import type { IEvaluationService } from '../../services/evaluation/interfaces/IEvaluationService'
 import type { ICancelDispatcher } from '../../realtime/workerGateway'
+import { IScrapingBatchRepository } from '../scraping-batches/interfaces/IScrapingBatchRepository'
 import { calcNextRunAt } from '../../services/scheduler/SchedulerService'
 import { NotFoundError } from '../../utils/errors'
 
@@ -51,6 +52,7 @@ export class AdminService implements IAdminService {
     private readonly scrapingJobRepo: IScrapingJobRepository,
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
     private readonly cancelDispatcher: ICancelDispatcher,
+    private readonly batchRepo: IScrapingBatchRepository,
     private readonly routinesRepo: IRoutinesRepository,
     private readonly notifLogRepo: INotificationLogRepository,
     private readonly notifSvc: INotificationsService,
@@ -72,16 +74,26 @@ export class AdminService implements IAdminService {
     return this.analysisRunsRepo.listEventsByJobId(jobId)
   }
 
+  /**
+   * Cancels ONE analysis. Still per item with batches: cancelling an item takes it out
+   * of the batch and the session carries on with the rest.
+   *
+   * What batching adds is the bookkeeping — the batch now expects one item less.
+   * Without the decrement `received_count` would never reach `item_count`, and a single
+   * cancelled item would hold a whole route open until the time backstop fired.
+   */
   async cancelJob(requestId: string, userId: string): Promise<CancelJobResult> {
     await this.scrapingJobRepo.setCancelRequested(requestId)
     await this.analysisRunsRepo.setCancelledBy(requestId, userId)
+
+    const job = await this.scrapingJobRepo.findByRequestId(requestId)
+    if (job?.batch_id) await this.batchRepo.dropItem(job.batch_id)
 
     const dispatch = await this.cancelDispatcher.requestCancel(requestId)
     if (dispatch.delivery === 'dispatched') {
       return { accepted: true, delivery: 'dispatched' }
     }
 
-    const job = await this.scrapingJobRepo.findByRequestId(requestId)
     await this.analysisRunsRepo.markCancelled(requestId)
     if (job) await this.scrapingJobRepo.releaseCancelled(requestId, calcNextRunAt(job.flight_date))
     return { accepted: true, delivery: 'recovered' }

@@ -20,6 +20,13 @@ export interface AirlineRow {
   has_hyb: boolean
   /** Can search round-trip in a single session (prerequisite for round_trip). */
   has_roundtrip: boolean
+  /**
+   * How many items fit in ONE browser session of this airline. 1 = a session per
+   * item, which is the behaviour that preceded batching. The per-item cost is
+   * structural and differs between airlines (Ryanair needs no 1-to-N loop; LATAM
+   * still makes an extra points pass), so this rises one airline at a time.
+   */
+  batch_size: number
 }
 
 export interface CcEmail {

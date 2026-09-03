@@ -20,6 +20,8 @@ export interface ScrapingJobRow {
   request_id: string | null
   cancel_requested_at: Date | null
   orphaned_at: Date | null
+  /** Live batch holding this item; NULL = outside a batch. */
+  batch_id: string | null
   created_at: Date
   updated_at: Date
 }
@@ -28,6 +30,13 @@ export interface AdminJobRow extends ScrapingJobRow {
   user_emails: string[]
   run_started_at: Date | null
   run_finished_at: Date | null
+}
+
+export interface SettleBatchItemOptions {
+  /** Counts one retry against the item. False for block, supersede and never-attempted. */
+  penalise: boolean
+  nextRunAt: Date
+  error?: string | null
 }
 
 /** Balance of the reset: what went back to zero and what was preserved, and why. */
@@ -44,8 +53,6 @@ export interface IScrapingJobRepository {
   upsertFromRoutine(routineId: string): Promise<void>
   expireOldJobs(): Promise<number>
   updatePriorities(): Promise<void>
-  claimNextJob(airline: string): Promise<ScrapingJobRow | null>
-  claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null>
   countInFlight(): Promise<number>
   countInFlightByAirline(airline: string): Promise<number>
   deferJob(id: string, nextRunAt: Date): Promise<void>
@@ -56,6 +63,17 @@ export interface IScrapingJobRepository {
   markFailed(id: string, error: string, nextRunAt: Date): Promise<void>
   markDead(id: string, error: string): Promise<void>
   markSiteError(id: string, error: string, nextRunAt: Date): Promise<void>
+  /**
+   * An item of a LIVE batch failed. Records the error and frees the lease, but touches
+   * neither `retry_count` nor `next_run_at` and keeps `batch_id`: what happens to a
+   * failed item is decided when the batch closes, together with its siblings. That is
+   * "an operation in a batch is always handled as a batch" — without it the item would
+   * come back on its own a minute later (`calcBackoffNextRunAt`, 60s base) and spend a
+   * whole browser session on one item.
+   */
+  holdForBatch(id: string, error: string): Promise<void>
+  /** Releases an item from a closed batch, with or without counting a retry. */
+  settleBatchItem(id: string, opts: SettleBatchItemOptions): Promise<void>
   pauseAirlineForBlock(airline: string, until: Date, error: string): Promise<number>
   reclaimExpiredJobs(leaseTimeoutSec: number, graceSec: number, maxRunMin: number): Promise<{ lost: string[]; hung: string[] }>
   findByRequestId(requestId: string): Promise<ScrapingJobRow | null>

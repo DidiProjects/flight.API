@@ -76,10 +76,10 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     upsertFromRoutine:   vi.fn().mockResolvedValue(undefined),
     expireOldJobs:       vi.fn().mockResolvedValue(0),
     updatePriorities:    vi.fn().mockResolvedValue(undefined),
-    claimNextJob:        vi.fn().mockResolvedValue(job),
-    claimNextJobForRoutine: vi.fn().mockResolvedValueOnce(job).mockResolvedValue(null),
     countInFlight:       vi.fn().mockResolvedValue(0),
     countInFlightByAirline: vi.fn().mockResolvedValue(0),
+    holdForBatch:        vi.fn().mockResolvedValue(undefined),
+    settleBatchItem:     vi.fn().mockResolvedValue(undefined),
     deferJob:            vi.fn().mockResolvedValue(undefined),
     markRunning:         vi.fn().mockResolvedValue(undefined),
     markStarted:         vi.fn().mockResolvedValue(undefined),
@@ -139,13 +139,60 @@ function makeEvalMock(): IEvaluationService {
   }
 }
 
-function makeScraperClientMock(): IScraperClient & { dispatch: ReturnType<typeof vi.fn> } {
-  return { dispatch: vi.fn().mockResolvedValue(undefined) }
+function makeScraperClientMock(): IScraperClient & { dispatchBatch: ReturnType<typeof vi.fn> } {
+  return { dispatchBatch: vi.fn().mockResolvedValue(undefined) }
+}
+
+/**
+ * Batch repository whose claim yields `job` once and then nothing.
+ *
+ * A batch of ONE item is the behaviour that preceded batching, and it is the regime
+ * `airlines.batch_size = 1` puts every airline in — so these tests keep asserting the
+ * same thing they always did, through the path that replaced the single-job dispatch.
+ */
+function makeBatchRepoMock(job: ScrapingJobRow | null = null) {
+  const claimed = job
+    ? {
+        batch: {
+          id: 'batch-uuid-1', airline: job.airline, origin: job.origin,
+          destination: job.destination, status: 'dispatched', item_count: 1,
+          received_count: 0, close_reason: null, superseded_by: null, attempt: 1,
+          created_at: new Date(), closed_at: null,
+        },
+        items: [job],
+      }
+    : null
+  return {
+    claimBatch:           vi.fn().mockResolvedValueOnce(claimed).mockResolvedValue(null),
+    claimBatchForRoutine: vi.fn().mockResolvedValueOnce(claimed).mockResolvedValue(null),
+    findById:             vi.fn().mockResolvedValue(null),
+    findLiveByRoute:      vi.fn().mockResolvedValue(null),
+    findLiveForRoutine:   vi.fn().mockResolvedValue([]),
+    listItems:            vi.fn().mockResolvedValue(job ? [job] : []),
+    markRunning:          vi.fn().mockResolvedValue(undefined),
+    registerReceived:     vi.fn().mockResolvedValue(null),
+    dropItem:             vi.fn().mockResolvedValue(null),
+    markClosing:          vi.fn().mockResolvedValue(undefined),
+    close:                vi.fn().mockResolvedValue(null),
+    markSuperseded:       vi.fn().mockResolvedValue(undefined),
+    countLive:            vi.fn().mockResolvedValue(0),
+    countLiveByAirline:   vi.fn().mockResolvedValue(0),
+    findLiveOlderThan:    vi.fn().mockResolvedValue([]),
+    closeLiveByAirline:   vi.fn().mockResolvedValue([]),
+  }
+}
+
+function makeAirlinesRepoMock(batchSize = 1) {
+  return {
+    findByCode:            vi.fn().mockResolvedValue({ code: 'azul', batch_size: batchSize }),
+    batchSizesForRoutine:  vi.fn().mockResolvedValue([batchSize]),
+  }
 }
 
 function makeCancelDispatcherMock(hasWorkers = true) {
   return {
     requestCancel: vi.fn().mockResolvedValue({ delivery: 'no_worker' }),
+    requestBatchCancel: vi.fn().mockResolvedValue({ delivery: 'no_worker' }),
     hasWorkers: vi.fn().mockReturnValue(hasWorkers),
   }
 }
@@ -154,6 +201,8 @@ function makeSvc(
   scrapingJobRepo: IScrapingJobRepository,
   scraperClient = makeScraperClientMock(),
   cancelDispatcher = makeCancelDispatcherMock(),
+  batchRepo = makeBatchRepoMock(),
+  airlinesRepo = makeAirlinesRepoMock(),
 ) {
   const analysisRunsRepo = makeAnalysisRunsRepoMock()
   const fareHistoryRepo = makeFareHistoryRepoMock()
@@ -168,29 +217,33 @@ function makeSvc(
     cancelDispatcher as never,
     { getCountryCode: vi.fn().mockResolvedValue(null) } as never,
     fareHistoryRepo,
+    batchRepo as never,
+    airlinesRepo as never,
   )
-  return { svc, scraperClient, cancelDispatcher, analysisRunsRepo, fareHistoryRepo }
+  return { svc, scraperClient, cancelDispatcher, analysisRunsRepo, fareHistoryRepo, batchRepo, airlinesRepo }
 }
 
 describe('SchedulerService — dispatch loop', () => {
-  it('envia payload correto para o scraper ao despachar um job', async () => {
+  it('envia payload correto para o scraper ao despachar um lote', async () => {
     const job = makeJob()
-    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(job))
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(job), undefined, undefined, makeBatchRepoMock(job))
 
     await svc.dispatchOne(job.id)
 
-    expect(scraperClient.dispatch).toHaveBeenCalledOnce()
-    const payload = scraperClient.dispatch.mock.calls[0][0]
+    expect(scraperClient.dispatchBatch).toHaveBeenCalledOnce()
+    const payload = scraperClient.dispatchBatch.mock.calls[0][0]
+    // Rota, companhia e passageiros pertencem ao LOTE — e exatamente isso que permite
+    // abrir a sessao uma vez so. A data vive no item.
     expect(payload).toMatchObject({
-      routineId:    job.id,
-      airline:      'azul',
-      origin:       'VCP',
-      destination:  'LIS',
-      outboundStart: '2026-08-15',
-      outboundEnd:   '2026-08-15',
-      passengers:    1,
+      batchId:     'batch-uuid-1',
+      airline:     'azul',
+      origin:      'VCP',
+      destination: 'LIS',
+      passengers:  1,
     })
-    expect(payload.requestId).toMatch(
+    expect(payload.items).toHaveLength(1)
+    expect(payload.items[0]).toMatchObject({ jobId: job.id, outboundDate: '2026-08-15' })
+    expect(payload.items[0].requestId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     )
   })
@@ -198,29 +251,32 @@ describe('SchedulerService — dispatch loop', () => {
   it('chama upsertFromRoutine com o routineId correto e não chama upsertFromRoutines', async () => {
     const routineId = 'routine-uuid-123'
     const scrapingJobRepo = makeScrapingJobRepoMock(null)
-    const { svc } = makeSvc(scrapingJobRepo)
+    const { svc, batchRepo } = makeSvc(scrapingJobRepo)
 
     await svc.dispatchOne(routineId)
 
     expect(scrapingJobRepo.upsertFromRoutine).toHaveBeenCalledWith(routineId)
     expect(scrapingJobRepo.upsertFromRoutines).not.toHaveBeenCalled()
-    expect(scrapingJobRepo.claimNextJobForRoutine).toHaveBeenCalledWith(routineId)
-    expect(scrapingJobRepo.claimNextJob).not.toHaveBeenCalled()
+    expect(batchRepo.claimBatchForRoutine).toHaveBeenCalledWith(routineId, 1)
+    expect(batchRepo.claimBatch).not.toHaveBeenCalled()
     expect(scrapingJobRepo.getActiveAirlines).not.toHaveBeenCalled()
   })
 
-  it('despacha em lote até o orçamento por companhia, parando quando não há mais job', async () => {
+  it('despacha lotes até o orçamento por companhia, parando quando não há mais job', async () => {
     const job = makeJob()
-    const scrapingJobRepo = makeScrapingJobRepoMock()
-    vi.mocked(scrapingJobRepo.claimNextJob)
-      .mockResolvedValueOnce(job)
-      .mockResolvedValueOnce(job)
-      .mockResolvedValueOnce(null)
-    const { svc, scraperClient } = makeSvc(scrapingJobRepo)
+    const batchRepo = makeBatchRepoMock(job)
+    const claimed = await batchRepo.claimBatch.getMockImplementation?.()
+    void claimed
+    const um = { batch: { id: 'b1', airline: 'azul', origin: 'VCP', destination: 'LIS', status: 'dispatched', item_count: 1, received_count: 0, close_reason: null, superseded_by: null, attempt: 1, created_at: new Date(), closed_at: null }, items: [job] }
+    batchRepo.claimBatch = vi.fn()
+      .mockResolvedValueOnce(um)
+      .mockResolvedValueOnce(um)
+      .mockResolvedValue(null)
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(), undefined, undefined, batchRepo)
 
     await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
 
-    expect(scraperClient.dispatch).toHaveBeenCalledTimes(2)
+    expect(scraperClient.dispatchBatch).toHaveBeenCalledTimes(2)
   })
 
   /**
@@ -231,41 +287,43 @@ describe('SchedulerService — dispatch loop', () => {
    */
   it('não despacha enquanto nenhum worker estiver conectado ao hub', async () => {
     const scrapingJobRepo = makeScrapingJobRepoMock(makeJob())
-    const { svc, scraperClient } = makeSvc(scrapingJobRepo, makeScraperClientMock(), makeCancelDispatcherMock(false))
+    const { svc, scraperClient, batchRepo } = makeSvc(scrapingJobRepo, makeScraperClientMock(), makeCancelDispatcherMock(false))
 
     await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
 
-    expect(scrapingJobRepo.claimNextJob).not.toHaveBeenCalled()
-    expect(scraperClient.dispatch).not.toHaveBeenCalled()
+    expect(batchRepo.claimBatch).not.toHaveBeenCalled()
+    expect(scraperClient.dispatchBatch).not.toHaveBeenCalled()
   })
 
-  it('não reivindica job de companhia que já está com uma sessão em voo', async () => {
+  it('não reivindica lote de companhia que já está com uma sessão em voo', async () => {
     // Two automated sessions on the same site, from the same IP, at the same time: on
     // 2026-08-20 all nine LATAM failures had another LATAM session in parallel. The
     // check comes BEFORE the claim because claiming already marks the job as
     // 'running'.
-    const scrapingJobRepo = makeScrapingJobRepoMock(makeJob())
-    vi.mocked(scrapingJobRepo.countInFlightByAirline).mockResolvedValue(1)
-    const { svc, scraperClient } = makeSvc(scrapingJobRepo)
+    const job = makeJob()
+    const batchRepo = makeBatchRepoMock(job)
+    // O teto conta LOTES, nao itens: um lote de oito estouraria um teto por item no
+    // proprio despacho que acabou de ser autorizado.
+    batchRepo.countLiveByAirline = vi.fn().mockResolvedValue(1)
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(job), undefined, undefined, batchRepo)
 
     await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
 
-    expect(scrapingJobRepo.claimNextJob).not.toHaveBeenCalled()
-    expect(scraperClient.dispatch).not.toHaveBeenCalled()
+    expect(batchRepo.claimBatch).not.toHaveBeenCalled()
+    expect(scraperClient.dispatchBatch).not.toHaveBeenCalled()
   })
 
   it('o disparo manual para no teto por companhia, em vez de mandar a rotina inteira de uma vez', async () => {
     // The worst case measured: dispatchOne sent all four jobs of the routine one
     // second apart, and all four ended on the LATAM error page.
     const job = makeJob()
-    const scrapingJobRepo = makeScrapingJobRepoMock(job)
-    vi.mocked(scrapingJobRepo.claimNextJobForRoutine).mockResolvedValue(job)
-    vi.mocked(scrapingJobRepo.countInFlightByAirline).mockResolvedValue(1)
-    const { svc, scraperClient } = makeSvc(scrapingJobRepo)
+    const batchRepo = makeBatchRepoMock(job)
+    batchRepo.countLiveByAirline = vi.fn().mockResolvedValue(1)
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(job), undefined, undefined, batchRepo)
 
     await svc.dispatchOne('routine-uuid-123')
 
-    expect(scraperClient.dispatch).toHaveBeenCalledTimes(1)
+    expect(scraperClient.dispatchBatch).toHaveBeenCalledTimes(1)
   })
 
   it('não despacha se não houver job elegível', async () => {
@@ -273,15 +331,15 @@ describe('SchedulerService — dispatch loop', () => {
 
     await svc.dispatchOne('any-id')
 
-    expect(scraperClient.dispatch).not.toHaveBeenCalled()
+    expect(scraperClient.dispatchBatch).not.toHaveBeenCalled()
   })
 
   it('marca job como failed quando o scraper falha', async () => {
     const job = makeJob()
     const scrapingJobRepo = makeScrapingJobRepoMock(job)
     const scraperClient = makeScraperClientMock()
-    scraperClient.dispatch.mockRejectedValueOnce(new Error('scraping.API 503: unavailable'))
-    const { svc } = makeSvc(scrapingJobRepo, scraperClient)
+    scraperClient.dispatchBatch.mockRejectedValueOnce(new Error('scraping.API 503: unavailable'))
+    const { svc } = makeSvc(scrapingJobRepo, scraperClient, undefined, makeBatchRepoMock(job))
 
     await svc.dispatchOne(job.id)
 
@@ -296,8 +354,8 @@ describe('SchedulerService — dispatch loop', () => {
     const job = makeJob({ retry_count: 2, max_retries: 3 })
     const scrapingJobRepo = makeScrapingJobRepoMock(job)
     const scraperClient = makeScraperClientMock()
-    scraperClient.dispatch.mockRejectedValueOnce(new Error('scraping.API 500: error'))
-    const { svc } = makeSvc(scrapingJobRepo, scraperClient)
+    scraperClient.dispatchBatch.mockRejectedValueOnce(new Error('scraping.API 500: error'))
+    const { svc } = makeSvc(scrapingJobRepo, scraperClient, undefined, makeBatchRepoMock(job))
 
     await svc.dispatchOne(job.id)
 

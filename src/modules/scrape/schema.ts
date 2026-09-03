@@ -67,3 +67,34 @@ export const scrapeCallbackSchema = z.object({
 })
 
 export type ScrapeCallback = z.infer<typeof scrapeCallbackSchema>
+
+/**
+ * How each item of a batch ended, in the worker's own words.
+ *
+ * `not_attempted` is the reason this message exists: it is the only thing the API
+ * cannot deduce. Without it, a block on item 3 of 8 would burn `retry_count` on five
+ * items that never ran, and three nights like that would take the whole route to
+ * 'dead'.
+ */
+const batchItemResultSchema = z.object({
+  requestId: z.string().uuid(),
+  state: z.enum(['delivered', 'failed', 'not_attempted', 'cancelled']),
+  error: z.string().max(500).optional(),
+  why: z.string().max(120).optional(),
+})
+
+export const batchCallbackSchema = z.object({
+  batchId: z.string().uuid(),
+  airline: z.string().min(1),
+  closedAt: z.string(),
+  /**
+   * Why the session ended. Only `blocked` aborts a batch — a LATAM `SITE_ERROR` must
+   * not: calling the airline's own error page a block paused LATAM for an hour, three
+   * times on 2026-08-20, and with batches it would take every remaining item with it.
+   */
+  reason: z.enum(['completed', 'blocked', 'watchdog', 'superseded', 'cancelled']),
+  items: z.array(batchItemResultSchema).default([]),
+})
+
+export type BatchCallback = z.infer<typeof batchCallbackSchema>
+export type BatchItemResult = z.infer<typeof batchItemResultSchema>

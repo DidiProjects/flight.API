@@ -107,7 +107,19 @@ function makeMocks() {
     cleanupNotSeenSince:  vi.fn().mockResolvedValue(0),
   } satisfies IFareHistoryRepository as IFareHistoryRepository
 
-  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx, mockFareHistoryRepo }
+  // Sem lote vivo por padrão: os callbacks destes testes são de item solto, que é o
+  // regime de `batch_size = 1`. Os testes de lote montam o seu próprio.
+  const mockBatchRepo = {
+    findById:            vi.fn().mockResolvedValue(null),
+    closeLiveByAirline:  vi.fn().mockResolvedValue([]),
+    registerReceived:    vi.fn().mockResolvedValue(null),
+    markRunning:         vi.fn().mockResolvedValue(undefined),
+    markClosing:         vi.fn().mockResolvedValue(undefined),
+    close:               vi.fn().mockResolvedValue(null),
+    listItems:           vi.fn().mockResolvedValue([]),
+  }
+
+  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx, mockFareHistoryRepo, mockBatchRepo }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -117,6 +129,7 @@ describe('ScrapeService.processCallback', () => {
   let mockFlightFaresRepo: IFlightFaresRepository
   let mockAnalysisRunsRepo: IAnalysisRunsRepository
   let mockFareHistoryRepo: IFareHistoryRepository
+  let mockBatchRepo: ReturnType<typeof makeMocks>['mockBatchRepo']
   let svc: ScrapeService
 
   beforeEach(() => {
@@ -125,7 +138,8 @@ describe('ScrapeService.processCallback', () => {
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
     mockAnalysisRunsRepo = mocks.mockAnalysisRunsRepo
     mockFareHistoryRepo = mocks.mockFareHistoryRepo
-    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx, mockFareHistoryRepo)
+    mockBatchRepo = mocks.mockBatchRepo
+    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx, mockFareHistoryRepo, mockBatchRepo as never)
   })
 
   it('requestId desconhecido — retorna sem chamar insertMany', async () => {
