@@ -1404,6 +1404,40 @@
               }
             }
           }
+        },
+        {
+          "name": "POST /scrape/batch-results",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scrape/batch-results",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scrape",
+                "batch-results"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batchId\": \"11111111-1111-4111-8111-111111111111\",\n  \"airline\": \"britishairways\",\n  \"closedAt\": \"2026-09-03T11:10:27.000Z\",\n  \"reason\": \"completed\",\n  \"items\": [\n    {\n      \"requestId\": \"22222222-2222-4222-8222-222222222201\",\n      \"state\": \"delivered\"\n    },\n    {\n      \"requestId\": \"22222222-2222-4222-8222-222222222202\",\n      \"state\": \"failed\",\n      \"error\": \"BA: zero cards and no empty-state marker\"\n    },\n    {\n      \"requestId\": \"22222222-2222-4222-8222-222222222203\",\n      \"state\": \"not_attempted\",\n      \"why\": \"batch_deadline\"\n    }\n  ]\n}"
+            },
+            "description": "Fechamento do lote. E o que diz que o lote voltou INTEIRO, e so entao os itens que falharam ganham destino — junto, nunca um a um. `not_attempted` e o unico estado que a API nao tem como deduzir, e e ele que impede um bloqueio no item 3 de 8 de queimar retry_count em cinco itens que nunca rodaram."
+          }
         }
       ]
     },
