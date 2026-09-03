@@ -79,8 +79,20 @@ export type ScrapeCallback = z.infer<typeof scrapeCallbackSchema>
 const batchItemResultSchema = z.object({
   requestId: z.string().uuid(),
   state: z.enum(['delivered', 'failed', 'not_attempted', 'cancelled']),
-  error: z.string().max(500).optional(),
-  why: z.string().max(120).optional(),
+  /**
+   * Truncado, nunca recusado.
+   *
+   * Um `max()` aqui rejeita o fechamento inteiro por causa do tamanho de uma mensagem
+   * de erro — e fechamento recusado deixa o lote vivo para sempre, o que tranca TODOS
+   * os itens da rota fora do claim. Aconteceu na primeira corrida real, 2026-09-03: o
+   * banner de instalação do Playwright passou de 500 caracteres e o lote ficou preso
+   * em `running`, com o worker reenviando o mesmo 422 em laço.
+   *
+   * A mensagem é diagnóstico; o fechamento é integridade. Cortar a primeira para
+   * salvar a segunda é a troca certa.
+   */
+  error: z.string().transform((v) => v.slice(0, 500)).optional(),
+  why: z.string().transform((v) => v.slice(0, 120)).optional(),
 })
 
 export const batchCallbackSchema = z.object({

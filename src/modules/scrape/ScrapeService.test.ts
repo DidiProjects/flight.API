@@ -5,7 +5,7 @@ import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightF
 import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import type { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
-import type { BatchCallback, ScrapeCallback } from './schema'
+import { batchCallbackSchema, type BatchCallback, type ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -823,5 +823,50 @@ describe('ScrapeService — lote', () => {
     mockBatchRepo.findById.mockResolvedValue(null)
 
     await expect(svc.processBatchCallback(fechamento())).resolves.toBeUndefined()
+  })
+})
+
+/**
+ * Achado rodando de verdade em 2026-09-03, na primeira corrida do lote.
+ *
+ * O banner de instalação do Playwright passou de 500 caracteres, o schema recusou o
+ * fechamento inteiro com 422, e o lote ficou preso em `running` — com o worker
+ * reenviando o mesmo 422 em laço e TODOS os itens da rota trancados fora do claim.
+ *
+ * Mensagem de erro é diagnóstico; fechamento é integridade. O schema corta a primeira
+ * para salvar a segunda.
+ */
+describe('batchCallbackSchema — o fechamento nunca é recusado por tamanho', () => {
+  const base = {
+    batchId: '11111111-1111-4111-8111-111111111111',
+    airline: 'ryanair',
+    closedAt: new Date().toISOString(),
+    reason: 'completed' as const,
+  }
+
+  it('trunca um erro gigante em vez de rejeitar o fechamento', () => {
+    const parsed = batchCallbackSchema.parse({
+      ...base,
+      items: [{
+        requestId: '22222222-2222-4222-8222-222222222222',
+        state: 'failed',
+        error: 'x'.repeat(5_000),
+      }],
+    })
+
+    expect(parsed.items[0]!.error).toHaveLength(500)
+  })
+
+  it('trunca o `why` do item não tentado pelo mesmo motivo', () => {
+    const parsed = batchCallbackSchema.parse({
+      ...base,
+      items: [{
+        requestId: '22222222-2222-4222-8222-222222222222',
+        state: 'not_attempted',
+        why: 'y'.repeat(1_000),
+      }],
+    })
+
+    expect(parsed.items[0]!.why).toHaveLength(120)
   })
 })
