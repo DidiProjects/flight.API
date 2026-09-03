@@ -55,6 +55,27 @@ Repositório não fala com a rede. Quem abre socket é service.
 - **Job só é reivindicável com `retry_count < max_retries`.** Qualquer marcação
   que empurre o contador até o teto sem matar o job o deixa preso para sempre —
   ver `markSiteError`, que para em `max_retries - 1` por isso.
+- **Todo despacho é um LOTE, e item de lote vivo não é reivindicável.** O
+  predicado está em `modules/scraping-jobs/predicates.ts` e vale nos dois caminhos
+  de claim — esquecer o `claimBatchForRoutine` é como o disparo manual volta a
+  redespachar fragmento de lote. Enquanto o lote vive, o callback do item grava
+  tarifa e fecha a `analysis_run`, mas **não mexe em `next_run_at` nem em
+  `retry_count`**: quem decide o destino dos itens é o fechamento, com os irmãos
+  na mão.
+- **Bloqueio, supersede e item não tentado NUNCA contam retentativa.** Com
+  `max_retries = 3` e lote de oito, contar os três mataria uma rota inteira em
+  três noites ruins, onde hoje morre um job sozinho. `settleBatchItem` é onde essa
+  separação vive.
+- **Bloqueio precisa fechar os lotes vivos da companhia ANTES de pausá-la.**
+  `pauseAirlineForBlock` devolve todo job da companhia para `pending` com
+  `request_id` nulo, inclusive os `running`; se o lote seguisse vivo, esses itens
+  ficariam pendentes, vencidos e invisíveis ao claim — para sempre.
+- **O fechamento do lote é truncado, nunca recusado.** Um `max()` no `error`
+  rejeita o fechamento inteiro por tamanho de mensagem, e fechamento recusado
+  tranca a rota. Medido em 2026-09-03, na primeira corrida real.
+- **Teto de execução do lote fica ACIMA do watchdog do worker.** `MAX_RUN_MIN` é
+  retaguarda, não veredito: quem declara o fim de uma corrida tem que ser o lado
+  que está com a evidência do que a tela fazia.
 - **Zod 3 aqui, Zod 4 no flight.FRONT.** A forma de função no 2º argumento do
   `.refine` vale aqui e **não** vale lá — portar validação sem ajustar devolve
   "Invalid input".

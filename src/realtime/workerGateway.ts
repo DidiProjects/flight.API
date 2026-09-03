@@ -35,6 +35,16 @@ export interface IWorkerPresence {
 
 export interface ICancelDispatcher extends IWorkerPresence {
   requestCancel(requestId: string): Promise<CancelDispatch>
+  /**
+   * Cancels a whole batch.
+   *
+   * 'drain' asks the worker to finish the item it is on, deliver that item's callback
+   * and then close the session; 'now' closes it immediately. Drain is the default for
+   * supersede: killing a session mid-item throws away an anti-bot session already
+   * validated AND a half-collected item, and forces a fresh launch — the very ceremony
+   * batching exists to remove. It costs one item, typically 3-4 minutes.
+   */
+  requestBatchCancel(batchId: string, mode: 'drain' | 'now'): Promise<CancelDispatch>
 }
 
 export class WorkerGateway implements ICancelDispatcher {
@@ -70,6 +80,20 @@ export class WorkerGateway implements ICancelDispatcher {
       })
       ws.send(JSON.stringify(cmd))
     })
+  }
+
+  /**
+   * Broadcast, unlike `requestCancel`: the batch is addressed by its own id and the
+   * worker holding it is not tracked per batch. Workers that do not own it ignore the
+   * command, which is cheaper than keeping a second routing table in sync.
+   */
+  requestBatchCancel(batchId: string, mode: 'drain' | 'now'): Promise<CancelDispatch> {
+    const live = [...this.workers.values()].filter((ws) => ws.readyState === WebSocket.OPEN)
+    if (live.length === 0) return Promise.resolve({ delivery: 'no_worker' })
+
+    const cmd = envelope('batch.cancel', { batchId, mode })
+    for (const ws of live) ws.send(JSON.stringify(cmd))
+    return Promise.resolve({ delivery: 'dispatched' })
   }
 
   attach(server: Server): void {

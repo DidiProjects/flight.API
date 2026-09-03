@@ -20,9 +20,9 @@ export class AnalysisRunsRepository implements IAnalysisRunsRepository {
   async insertRunning(data: InsertRunningData): Promise<void> {
     await this.db.query(
       `INSERT INTO analysis_runs
-         (scraping_job_id, request_id, airline, origin, destination, flight_date, return_date, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')`,
-      [data.jobId, data.requestId, data.airline, data.origin, data.destination, data.flightDate, data.returnDate ?? null],
+         (scraping_job_id, request_id, airline, origin, destination, flight_date, return_date, batch_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running')`,
+      [data.jobId, data.requestId, data.airline, data.origin, data.destination, data.flightDate, data.returnDate ?? null, data.batchId ?? null],
     )
   }
 

@@ -5,7 +5,7 @@ import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightF
 import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import type { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
-import type { ScrapeCallback } from './schema'
+import { batchCallbackSchema, type BatchCallback, type ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -79,6 +79,8 @@ function makeMocks() {
     markSuccess:         vi.fn(),
     markSiteError:       vi.fn(),
     pauseAirlineForBlock: vi.fn(),
+    holdForBatch:        vi.fn(),
+    settleBatchItem:     vi.fn(),
   } satisfies Partial<IScrapingJobRepository> as unknown as IScrapingJobRepository
 
   const mockFlightFaresRepo = {
@@ -107,7 +109,19 @@ function makeMocks() {
     cleanupNotSeenSince:  vi.fn().mockResolvedValue(0),
   } satisfies IFareHistoryRepository as IFareHistoryRepository
 
-  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx, mockFareHistoryRepo }
+  // Sem lote vivo por padrão: os callbacks destes testes são de item solto, que é o
+  // regime de `batch_size = 1`. Os testes de lote montam o seu próprio.
+  const mockBatchRepo = {
+    findById:            vi.fn().mockResolvedValue(null),
+    closeLiveByAirline:  vi.fn().mockResolvedValue([]),
+    registerReceived:    vi.fn().mockResolvedValue(null),
+    markRunning:         vi.fn().mockResolvedValue(undefined),
+    markClosing:         vi.fn().mockResolvedValue(undefined),
+    close:               vi.fn().mockResolvedValue(null),
+    listItems:           vi.fn().mockResolvedValue([]),
+  }
+
+  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx, mockFareHistoryRepo, mockBatchRepo }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -117,6 +131,7 @@ describe('ScrapeService.processCallback', () => {
   let mockFlightFaresRepo: IFlightFaresRepository
   let mockAnalysisRunsRepo: IAnalysisRunsRepository
   let mockFareHistoryRepo: IFareHistoryRepository
+  let mockBatchRepo: ReturnType<typeof makeMocks>['mockBatchRepo']
   let svc: ScrapeService
 
   beforeEach(() => {
@@ -125,7 +140,8 @@ describe('ScrapeService.processCallback', () => {
     mockFlightFaresRepo = mocks.mockFlightFaresRepo
     mockAnalysisRunsRepo = mocks.mockAnalysisRunsRepo
     mockFareHistoryRepo = mocks.mockFareHistoryRepo
-    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx, mockFareHistoryRepo)
+    mockBatchRepo = mocks.mockBatchRepo
+    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx, mockFareHistoryRepo, mockBatchRepo as never)
   })
 
   it('requestId desconhecido — retorna sem chamar insertMany', async () => {
@@ -645,5 +661,212 @@ describe('ScrapeService.processCallback', () => {
     const [, , calledFares] = vi.mocked(mockFlightFaresRepo.insertMany).mock.calls[0]
     expect(calledFares).toHaveLength(1)
     expect(calledFares[0]).toMatchObject({ flight_number: 'LA3553', is_return: false })
+  })
+})
+
+// ── lote ───────────────────────────────────────────────────────────────────────
+
+/**
+ * O lote existe para uma coisa: nenhum item volta sozinho para a fila.
+ *
+ * Enquanto o lote está vivo, o callback de item grava tarifa e fecha a corrida, mas
+ * NÃO reagenda. Quem decide o destino dos itens é o fechamento — e é lá que se separa
+ * o que conta retentativa do que não conta.
+ */
+describe('ScrapeService — lote', () => {
+  const LOTE = 'batch-0000-0000-0000-000000000001'
+
+  function makeSvcComLote(over: {
+    batchStatus?: string
+    items?: ScrapingJobRow[]
+    /** Callbacks de item já recebidos. O caminho normal é o item chegar ANTES do
+     *  fechamento — os dois vão pelo mesmo canal HTTP, nessa ordem. */
+    received?: number
+  } = {}) {
+    const mocks = makeMocks()
+    const batch = {
+      id: LOTE, airline: 'azul', origin: 'VCP', destination: 'LIS',
+      status: over.batchStatus ?? 'running', item_count: 1, received_count: over.received ?? 1,
+      close_reason: null, superseded_by: null, attempt: 2,
+      created_at: new Date(), closed_at: null,
+    }
+    mocks.mockBatchRepo.findById.mockResolvedValue(batch)
+    mocks.mockBatchRepo.close.mockResolvedValue({ ...batch, status: 'completed' })
+    mocks.mockBatchRepo.listItems.mockResolvedValue(over.items ?? [])
+    const svc = new ScrapeService(
+      mocks.mockScrapingJobRepo, mocks.mockFlightFaresRepo, mocks.mockAnalysisRunsRepo,
+      mocks.mockFx, mocks.mockFareHistoryRepo, mocks.mockBatchRepo as never,
+    )
+    return { svc, ...mocks, batch }
+  }
+
+  const fechamento = (over: Partial<BatchCallback> = {}): BatchCallback => ({
+    batchId: LOTE,
+    airline: 'azul',
+    closedAt: new Date().toISOString(),
+    reason: 'completed',
+    items: [],
+    ...over,
+  })
+
+  it('falha de item em lote vivo é SEGURADA: nada de retry nem de next_run_at', async () => {
+    const job = makeJob({ batch_id: LOTE })
+    const { svc, mockScrapingJobRepo } = makeSvcComLote()
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({ flights: [], error: 'sem cards' }))
+
+    expect(mockScrapingJobRepo.holdForBatch).toHaveBeenCalledWith(job.id, expect.stringContaining('sem cards'))
+    expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
+  })
+
+  // A página de erro da LATAM não é bloqueio, e num lote ela não pode derrubar os
+  // irmãos: chamar isso de bloqueio pausou a companhia 3x em 2026-08-20.
+  it('SITE_ERROR em lote vivo também é segurado, sem pausar a companhia', async () => {
+    const job = makeJob({ batch_id: LOTE })
+    const { svc, mockScrapingJobRepo } = makeSvcComLote()
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      flights: [], outcome: { state: 'SITE_ERROR', reason: 'busca demorou' },
+    }))
+
+    expect(mockScrapingJobRepo.holdForBatch).toHaveBeenCalled()
+    expect(mockScrapingJobRepo.markSiteError).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).not.toHaveBeenCalled()
+  })
+
+  it('bloqueio fecha os lotes vivos da companhia ANTES de pausá-la', async () => {
+    const job = makeJob({ batch_id: LOTE })
+    const { svc, mockScrapingJobRepo, mockBatchRepo } = makeSvcComLote()
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({
+      flights: [], outcome: { state: 'BLOCKED', reason: 'akamai' },
+    }))
+
+    expect(mockBatchRepo.closeLiveByAirline).toHaveBeenCalledWith('azul', expect.stringContaining('bloqueio'))
+    expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalled()
+  })
+
+  it('fechamento normal: item que falhou conta retentativa, com o backoff DO LOTE', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
+    const { svc, mockScrapingJobRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({
+      items: [{ requestId: 'req-1', state: 'failed', error: 'sem cards' }],
+    }))
+
+    expect(mockScrapingJobRepo.settleBatchItem).toHaveBeenCalledWith(
+      job.id, expect.objectContaining({ penalise: true }),
+    )
+  })
+
+  // Regra 4: a análise nova cobre as mesmas datas, então retentar o que sobrou é
+  // trabalho jogado fora — e a culpa não é do item.
+  it('supersede DESCARTA os itens com erro, sem penalidade e disponíveis já', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
+    const { svc, mockScrapingJobRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({
+      reason: 'superseded',
+      items: [{ requestId: 'req-1', state: 'failed', error: 'sem cards' }],
+    }))
+
+    const [, opts] = vi.mocked(mockScrapingJobRepo.settleBatchItem).mock.calls[0]!
+    expect(opts.penalise).toBe(false)
+    expect(opts.nextRunAt.getTime()).toBeLessThanOrEqual(Date.now() + 1000)
+  })
+
+  // Sem isto, um bloqueio no item 3 de 8 queimaria retry_count em 5 itens que nunca
+  // rodaram — e três noites assim levariam a rota inteira para 'dead'.
+  it('item NUNCA TENTADO não conta retentativa', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
+    const { svc, mockScrapingJobRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({
+      reason: 'watchdog',
+      items: [{ requestId: 'req-1', state: 'not_attempted', why: 'batch_deadline' }],
+    }))
+
+    expect(mockScrapingJobRepo.settleBatchItem).toHaveBeenCalledWith(
+      job.id, expect.objectContaining({ penalise: false }),
+    )
+  })
+
+  it('bloqueio não penaliza nenhum item do lote', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
+    const { svc, mockScrapingJobRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({
+      reason: 'blocked',
+      items: [{ requestId: 'req-1', state: 'failed', error: 'akamai' }],
+    }))
+
+    expect(mockScrapingJobRepo.settleBatchItem).toHaveBeenCalledWith(
+      job.id, expect.objectContaining({ penalise: false }),
+    )
+  })
+
+  it('fechamento de lote já encerrado é ignorado (idempotente)', async () => {
+    const { svc, mockScrapingJobRepo, mockBatchRepo } = makeSvcComLote({ batchStatus: 'completed' })
+
+    await svc.processBatchCallback(fechamento())
+
+    expect(mockBatchRepo.close).not.toHaveBeenCalled()
+    expect(mockScrapingJobRepo.settleBatchItem).not.toHaveBeenCalled()
+  })
+
+  it('lote desconhecido não explode', async () => {
+    const { svc, mockBatchRepo } = makeSvcComLote()
+    mockBatchRepo.findById.mockResolvedValue(null)
+
+    await expect(svc.processBatchCallback(fechamento())).resolves.toBeUndefined()
+  })
+})
+
+/**
+ * Achado rodando de verdade em 2026-09-03, na primeira corrida do lote.
+ *
+ * O banner de instalação do Playwright passou de 500 caracteres, o schema recusou o
+ * fechamento inteiro com 422, e o lote ficou preso em `running` — com o worker
+ * reenviando o mesmo 422 em laço e TODOS os itens da rota trancados fora do claim.
+ *
+ * Mensagem de erro é diagnóstico; fechamento é integridade. O schema corta a primeira
+ * para salvar a segunda.
+ */
+describe('batchCallbackSchema — o fechamento nunca é recusado por tamanho', () => {
+  const base = {
+    batchId: '11111111-1111-4111-8111-111111111111',
+    airline: 'ryanair',
+    closedAt: new Date().toISOString(),
+    reason: 'completed' as const,
+  }
+
+  it('trunca um erro gigante em vez de rejeitar o fechamento', () => {
+    const parsed = batchCallbackSchema.parse({
+      ...base,
+      items: [{
+        requestId: '22222222-2222-4222-8222-222222222222',
+        state: 'failed',
+        error: 'x'.repeat(5_000),
+      }],
+    })
+
+    expect(parsed.items[0]!.error).toHaveLength(500)
+  })
+
+  it('trunca o `why` do item não tentado pelo mesmo motivo', () => {
+    const parsed = batchCallbackSchema.parse({
+      ...base,
+      items: [{
+        requestId: '22222222-2222-4222-8222-222222222222',
+        state: 'not_attempted',
+        why: 'y'.repeat(1_000),
+      }],
+    })
+
+    expect(parsed.items[0]!.why).toHaveLength(120)
   })
 })

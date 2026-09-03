@@ -23,13 +23,15 @@ function makeService() {
   const alertStateRepo = { deleteByRoutine: vi.fn().mockResolvedValue(3) }
   const flightFaresRepo = { deleteExclusiveToRoutine: vi.fn().mockResolvedValue({ deleted: 0, shared: 0 }) }
   const fareHistoryRepo = { deleteExclusiveToRoutine: vi.fn().mockResolvedValue({ itineraries: 0, segments: 0, shared: 0 }) }
+  const batchRepo = { dropItem: vi.fn().mockResolvedValue(null) }
   const svc = new AdminService(
     scrapingJobRepo as never, analysisRunsRepo as never, cancelDispatcher as never,
+    batchRepo as never,
     routinesRepo as never, notifLogRepo as never, notifSvc as never,
     evaluationSvc as never, alertStateRepo as never,
     flightFaresRepo as never, fareHistoryRepo as never,
   )
-  return { svc, scrapingJobRepo, analysisRunsRepo, cancelDispatcher, routinesRepo, notifLogRepo, notifSvc, evaluationSvc, alertStateRepo, flightFaresRepo, fareHistoryRepo }
+  return { svc, scrapingJobRepo, analysisRunsRepo, cancelDispatcher, batchRepo, routinesRepo, notifLogRepo, notifSvc, evaluationSvc, alertStateRepo, flightFaresRepo, fareHistoryRepo }
 }
 
 describe('AdminService.cancelJob', () => {

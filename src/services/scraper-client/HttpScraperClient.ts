@@ -1,13 +1,13 @@
 import { Env } from '../../config/env'
-import { IScraperClient, ScrapeDispatch, ScraperBusyError } from './IScraperClient'
+import { IScraperClient, ScrapeBatchDispatch, ScraperBusyError } from './IScraperClient'
 
 const DISPATCH_TIMEOUT_MS = 10_000
 
 export class HttpScraperClient implements IScraperClient {
   constructor(private readonly env: Env) {}
 
-  async dispatch(payload: ScrapeDispatch): Promise<void> {
-    const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape`, {
+  async dispatchBatch(payload: ScrapeBatchDispatch): Promise<void> {
+    const res = await fetch(`${this.env.SCRAPING_API_URL}/scrape/batch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': this.env.SCRAPING_API_KEY },
       body: JSON.stringify(payload),
