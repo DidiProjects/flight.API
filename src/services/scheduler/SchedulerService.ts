@@ -9,6 +9,8 @@ import { INotificationsService } from '../notifications/interfaces/INotification
 import { IEvaluationService } from '../evaluation/interfaces/IEvaluationService'
 import { IScraperClient, ScraperBusyError } from '../scraper-client/IScraperClient'
 import { ICancelDispatcher } from '../../realtime/workerGateway'
+import { ClaimedBatch, IScrapingBatchRepository } from '../../modules/scraping-batches/interfaces/IScrapingBatchRepository'
+import { IAirlinesRepository } from '../../modules/airlines/interfaces/IAirlinesRepository'
 import { Env } from '../../config/env'
 import { logger } from '../../utils/logger'
 
@@ -31,10 +33,22 @@ const LEASE_TIMEOUT_SEC = 90
 // A 'running' job that never showed up in any heartbeat after this grace was
 // never accepted by the worker → reclaimed with no penalty.
 const LEASE_GRACE_SEC = 60
-// Absolute execution ceiling (backstop for the scraper watchdog, which is ~18min).
-const MAX_RUN_MIN = 25
+// Absolute execution ceiling. It is the BACKSTOP of the scraper watchdog (40min for
+// a batch), never the primary: whoever declares the end of a run has to be the side
+// holding the evidence of what the screen was doing. Below the watchdog it would kill
+// a healthy batch mid-item, with a live lease, and blame the item for it.
+const MAX_RUN_MIN = 45
 // Runs with no callback are marked as failed after this (a safety net).
-const STALE_RUN_TIMEOUT_MIN = 25
+const STALE_RUN_TIMEOUT_MIN = 45
+// A batch older than this is force-closed even if the worker never reported: it is the
+// third and last closing door (the first two are the worker's explicit signal and the
+// per-item count).
+const MAX_BATCH_RUN_MIN = 50
+
+/** A pg DATE comes back as string or Date; normalise to YYYY-MM-DD. */
+function toIsoDate(v: string | Date): string {
+  return typeof v === 'string' ? v.slice(0, 10) : v.toISOString().slice(0, 10)
+}
 
 function daysBetween(a: Date, b: Date): number {
   return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
@@ -95,6 +109,8 @@ export class SchedulerService implements ISchedulerService {
     private readonly cancelDispatcher: ICancelDispatcher,
     private readonly airportsRepo: IAirportsRepository,
     private readonly fareHistoryRepo: IFareHistoryRepository,
+    private readonly batchRepo: IScrapingBatchRepository,
+    private readonly airlinesRepo: IAirlinesRepository,
   ) {}
 
   async pruneOrphans(): Promise<void> {
@@ -142,35 +158,79 @@ export class SchedulerService implements ISchedulerService {
     this.timers.add(t)
   }
 
+  /**
+   * Manual dispatch by the admin. The ONE explicit "analyse this now" in the system:
+   * `upsertFromRoutine` has no other caller, and routine create/update/remove only
+   * touch the `routines` table — their jobs converge later, through the derivation
+   * loop, with no urgency.
+   *
+   * Because it is explicit, it is also the one path allowed to supersede a live batch
+   * of the same route: the operator asked for fresh numbers, so what is left of the
+   * previous run is discarded instead of retried.
+   *
+   * It keeps ignoring the circuit breaker (explicit admin action) and keeps ignoring
+   * `is_active` — the "inactive routine collects but never alerts" asymmetry was
+   * decided on 2026-08-19 and batching is not the occasion to revisit it.
+   */
   async dispatchOne(routineId: string): Promise<void> {
     log.info({ routineId }, 'dispatchOne: manual dispatch requested')
     await this.scrapingJobRepo.upsertFromRoutine(routineId)
+    await this.supersedeLiveBatchesOfRoutine(routineId)
 
-    // A manual dispatch targets the route of the routine and covers every eligible
-    // date (up to the global in-flight ceiling). Being an explicit admin action, it
-    // ignores the per-airline circuit breaker; the first real failure (busy/error)
-    // interrupts the burst, avoiding hammering a broken airline.
     const cap = this.env.SCRAPE_MAX_IN_FLIGHT
     const perAirline = this.env.SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE
     let dispatched = 0
-    while (await this.scrapingJobRepo.countInFlight() < cap) {
-      const job = await this.scrapingJobRepo.claimNextJobForRoutine(routineId)
-      if (!job) break
-      const result = await this.dispatchClaimedJob(job)
+
+    // One batch per (airline, route) of the routine. The burst that used to fire every
+    // date at once is gone by construction: the items of a batch are walked in series
+    // inside one session. On 2026-08-20 that burst sent the routine's four jobs a
+    // second apart and all four landed on the LATAM error page.
+    while (await this.batchRepo.countLive() < cap) {
+      const size = await this.batchSizeForRoutine(routineId)
+      const claimed = await this.batchRepo.claimBatchForRoutine(routineId, size)
+      if (!claimed) break
+
+      const result = await this.dispatchBatch(claimed)
       if (result !== 'dispatched') break
       dispatched++
 
-      // The manual burst was the worst case: on 2026-08-20 it sent all four jobs of
-      // the routine at once, one second apart, and all four ended on the LATAM error
-      // page. The remaining dates go out on the next tick — on a routine with two
-      // airlines, the second one waits for that tick too.
-      if (await this.scrapingJobRepo.countInFlightByAirline(job.airline) >= perAirline) {
-        log.info({ routineId, airline: job.airline, dispatched }, 'dispatchOne: per-airline cap reached')
+      if (await this.batchRepo.countLiveByAirline(claimed.batch.airline) >= perAirline) {
+        log.info({ routineId, airline: claimed.batch.airline, dispatched }, 'dispatchOne: per-airline cap reached')
         break
       }
     }
     log.info({ routineId, dispatched }, 'dispatchOne: targeted dispatch done')
   }
+
+  /**
+   * Drops what is left of the live batches on the routes this routine covers.
+   *
+   * The batch is keyed by ROUTE, not by routine — `scraping_jobs` has no `routine_id`
+   * and deduplicates by route — so "a new analysis of the same routine" is really "a
+   * new analysis of the same route", possibly asked for through someone else's
+   * routine. Written any other way the supersede simply would not fire.
+   *
+   * The new batch is NOT dispatched here. It waits for the worker to close the old one
+   * at an item boundary: sending it now would put two sessions of the same airline on
+   * the same site from the same IP, which on 2026-08-24 came back BLOCKED for both.
+   */
+  private async supersedeLiveBatchesOfRoutine(routineId: string): Promise<void> {
+    const live = await this.batchRepo.findLiveForRoutine(routineId)
+    for (const batch of live) {
+      await this.batchRepo.markClosing(batch.id, 'superseded: nova analise pedida para a rota')
+      const delivery = await this.cancelDispatcher.requestBatchCancel(batch.id, 'drain')
+      log.info({ batchId: batch.id, airline: batch.airline, delivery }, 'batch superseded: aguardando o worker encerrar')
+    }
+  }
+
+  private async batchSizeForRoutine(routineId: string): Promise<number> {
+    const sizes = await this.airlinesRepo.batchSizesForRoutine(routineId)
+    // The claim picks the route (and therefore the airline) only after this number is
+    // chosen, so the safe pick is the smallest among the routine's airlines: an
+    // oversized batch would blow the session budget of the airline that gets claimed.
+    return sizes.length ? Math.min(...sizes) : 1
+  }
+
 
   // ---------------------------------------------------------------------------
   // Job derivation loop — runs every SCRAPE_INTERVAL_MS
@@ -224,9 +284,8 @@ export class SchedulerService implements ISchedulerService {
   private async dispatchForAirlines(budget: number): Promise<void> {
     // Nobody on the other end of the hub: dispatching now produces a job with no
     // heartbeat, which the lease reclaims 60s later and dispatches again, while the
-    // scraper still holds the first copy in its queue. The guard is skipped when
-    // realtime is off by configuration — there the hub is not the truth about the
-    // worker, and the HTTP dispatch is all there is.
+    // scraper still holds the first copy in its queue. With batches the blast radius
+    // is a whole batch, so this guard matters more, not less.
     if (this.env.REALTIME_ENABLED !== 'false' && !this.cancelDispatcher.hasWorkers()) {
       log.warn('dispatch paused: nenhum worker conectado ao hub')
       return
@@ -234,7 +293,9 @@ export class SchedulerService implements ISchedulerService {
 
     const cap = this.env.SCRAPE_MAX_IN_FLIGHT
     const perAirline = this.env.SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE
-    let inFlight = await this.scrapingJobRepo.countInFlight()
+    // Counts BATCHES, not items: a batch of eight would blow an item-based ceiling on
+    // the very dispatch that had just been allowed.
+    let inFlight = await this.batchRepo.countLive()
     const airlines = await this.scrapingJobRepo.getActiveAirlines()
     for (const airline of airlines) {
       for (let i = 0; i < budget; i++) {
@@ -246,14 +307,12 @@ export class SchedulerService implements ISchedulerService {
           log.warn({ airline }, 'circuit_breaker_open: skipping airline')
           break
         }
-        // Before the claim: claiming already marks the job as 'running', and giving
-        // it back after finding it does not fit is expensive and moves next_run_at.
-        const naCompanhia = await this.scrapingJobRepo.countInFlightByAirline(airline)
+        const naCompanhia = await this.batchRepo.countLiveByAirline(airline)
         if (naCompanhia >= perAirline) {
           log.info({ airline, naCompanhia, perAirline }, 'dispatch skipped: per-airline cap reached')
           break
         }
-        const result = await this.dispatchNextJob(airline)
+        const result = await this.dispatchNextBatch(airline)
         if (result === 'dispatched') inFlight++
         else if (result === 'busy') {
           log.warn('dispatch paused: scraper queue full (503)')
@@ -263,83 +322,112 @@ export class SchedulerService implements ISchedulerService {
     }
   }
 
-  private async dispatchNextJob(airline: string): Promise<'dispatched' | 'empty' | 'busy' | 'error'> {
-    const job = await this.scrapingJobRepo.claimNextJob(airline)
-    if (!job) return 'empty'
-    return this.dispatchClaimedJob(job)
+  private async dispatchNextBatch(airline: string): Promise<'dispatched' | 'empty' | 'busy' | 'error'> {
+    const size = (await this.airlinesRepo.findByCode(airline))?.batch_size ?? 1
+    const claimed = await this.batchRepo.claimBatch(airline, size)
+    if (!claimed) return 'empty'
+    return this.dispatchBatch(claimed)
   }
 
-  private async dispatchClaimedJob(job: ScrapingJobRow): Promise<'dispatched' | 'busy' | 'error'> {
-    const requestId = randomUUID()
-    const flightDate = typeof job.flight_date === 'string'
-      ? job.flight_date.slice(0, 10)
-      : (job.flight_date as unknown as Date).toISOString().slice(0, 10)
+  /**
+   * Sends one batch to the scraper and opens an analysis_run per item.
+   *
+   * A batch of ONE item is byte for byte the previous behaviour — same per-item
+   * payload, same callback, same scheduling. That is what lets `airlines.batch_size`
+   * default to 1 and the whole ecosystem migrate onto this path before any airline
+   * actually collects more than one item per session.
+   */
+  private async dispatchBatch(claimed: ClaimedBatch): Promise<'dispatched' | 'busy' | 'error'> {
+    const { batch, items } = claimed
 
     const [originCountry, destinationCountry] = await Promise.all([
-      this.airportsRepo.getCountryCode(job.origin),
-      this.airportsRepo.getCountryCode(job.destination),
+      this.airportsRepo.getCountryCode(batch.origin),
+      this.airportsRepo.getCountryCode(batch.destination),
     ])
 
-    // Pair job: sends both dates so the scraper does ONE round-trip search, which
-    // is the only way the bundle discount shows up.
-    const returnDate = job.return_date == null
-      ? null
-      : typeof job.return_date === 'string'
-        ? job.return_date.slice(0, 10)
-        : (job.return_date as unknown as Date).toISOString().slice(0, 10)
+    const prepared = items.map((job) => ({
+      job,
+      requestId:  randomUUID(),
+      flightDate: toIsoDate(job.flight_date),
+      returnDate: job.return_date == null ? null : toIsoDate(job.return_date),
+    }))
 
     const payload = {
-      requestId,
-      routineId:     job.id,
-      airline:       job.airline,
-      origin:        job.origin,
-      destination:   job.destination,
-      outboundStart: flightDate,
-      outboundEnd:   flightDate,
-      returnStart:   returnDate ?? undefined,
-      returnEnd:     returnDate ?? undefined,
-      passengers:    1,
+      batchId:     batch.id,
+      airline:     batch.airline,
+      origin:      batch.origin,
+      destination: batch.destination,
+      passengers:  1,
       originCountry:      originCountry ?? undefined,
       destinationCountry: destinationCountry ?? undefined,
+      deadlineMs:  this.env.SCRAPE_BATCH_DEADLINE_MS,
+      items: prepared.map((p) => ({
+        requestId:    p.requestId,
+        jobId:        p.job.id,
+        outboundDate: p.flightDate,
+        returnDate:   p.returnDate ?? undefined,
+      })),
     }
 
-    const runData = { jobId: job.id, requestId, airline: job.airline, origin: job.origin, destination: job.destination, flightDate, returnDate }
-
     try {
-      await this.scraperClient.dispatch(payload)
+      await this.scraperClient.dispatchBatch(payload)
     } catch (err) {
-      // Queue full: holds the job (pending) with no penalty and stops the dispatch.
+      // Queue full: holds every item (pending) with no penalty and stops the dispatch.
+      // The batch is closed so its items go back to the pool — leaving it live would
+      // lock the whole route out of the claim predicate.
       if (err instanceof ScraperBusyError) {
-        await this.scrapingJobRepo.deferJob(job.id, new Date(Date.now() + err.retryAfterMs))
-        log.info({ jobId: job.id, retryAfterMs: err.retryAfterMs }, 'dispatch deferred: scraper queue full')
+        await this.releaseBatchWithoutPenalty(
+          batch.id, new Date(Date.now() + err.retryAfterMs), 'scraper queue full (503)',
+        )
+        log.info({ batchId: batch.id, retryAfterMs: err.retryAfterMs }, 'dispatch deferred: scraper queue full')
         return 'busy'
       }
-      // Real dispatch failure: records the attempt and applies backoff/dead.
-      this.recordFailure(job.airline)
-      await this.analysisRunsRepo.insertRunning(runData)
-      if (job.retry_count + 1 >= job.max_retries) {
-        await this.scrapingJobRepo.markDead(job.id, String(err))
-        await this.analysisRunsRepo.markFinished(requestId, { status: 'dead', errorMessage: String(err) })
-        log.error({ jobId: job.id, airline: job.airline, err }, 'scraping_job_dead: max retries reached on dispatch')
-      } else {
-        await this.scrapingJobRepo.markFailed(job.id, String(err), calcBackoffNextRunAt(job.retry_count))
-        await this.analysisRunsRepo.markFinished(requestId, { status: 'failed', errorMessage: String(err) })
-        log.error({ jobId: job.id, airline: job.airline, err }, 'scraping.API request failed')
+
+      // Real dispatch failure: the batch never reached the worker, so the penalty is
+      // recorded per item exactly as the single-job path used to do.
+      this.recordFailure(batch.airline)
+      await this.batchRepo.close(batch.id, 'aborted', `falha no despacho: ${String(err)}`)
+      for (const p of prepared) {
+        await this.analysisRunsRepo.insertRunning({
+          jobId: p.job.id, requestId: p.requestId, batchId: batch.id,
+          airline: batch.airline, origin: batch.origin, destination: batch.destination,
+          flightDate: p.flightDate, returnDate: p.returnDate,
+        })
+        if (p.job.retry_count + 1 >= p.job.max_retries) {
+          await this.scrapingJobRepo.markDead(p.job.id, String(err))
+          await this.analysisRunsRepo.markFinished(p.requestId, { status: 'dead', errorMessage: String(err) })
+        } else {
+          await this.scrapingJobRepo.markFailed(p.job.id, String(err), calcBackoffNextRunAt(p.job.retry_count))
+          await this.analysisRunsRepo.markFinished(p.requestId, { status: 'failed', errorMessage: String(err) })
+        }
       }
+      log.error({ batchId: batch.id, airline: batch.airline, err }, 'scraping_batch_dispatch_failed')
       return 'error'
     }
 
-    // 202 accepted: only now does the job "exist" for the scraper — ties request_id and run.
-    await this.scrapingJobRepo.markRunning(job.id, requestId)
-    await this.analysisRunsRepo.insertRunning(runData)
-    this.recordSuccess(job.airline)
+    // 202 accepted: only now do the items "exist" for the scraper.
+    for (const p of prepared) {
+      await this.scrapingJobRepo.markRunning(p.job.id, p.requestId)
+      await this.analysisRunsRepo.insertRunning({
+        jobId: p.job.id, requestId: p.requestId, batchId: batch.id,
+        airline: batch.airline, origin: batch.origin, destination: batch.destination,
+        flightDate: p.flightDate, returnDate: p.returnDate,
+      })
+    }
+    this.recordSuccess(batch.airline)
     log.info({
-      jobId: job.id, airline: job.airline, origin: job.origin,
-      destination: job.destination, flight_date: job.flight_date, requestId,
-    }, 'scraping_job_dispatched')
+      batchId: batch.id, airline: batch.airline, origin: batch.origin,
+      destination: batch.destination, items: prepared.length,
+    }, 'scraping_batch_dispatched')
     return 'dispatched'
   }
 
+  /** Gives a batch back with no blame on its items: not their fault, no retry counted. */
+  private async releaseBatchWithoutPenalty(batchId: string, nextRunAt: Date, reason: string): Promise<void> {
+    const items = await this.batchRepo.listItems(batchId)
+    await this.batchRepo.close(batchId, 'aborted', reason)
+    for (const job of items) await this.scrapingJobRepo.deferJob(job.id, nextRunAt)
+  }
   // ---------------------------------------------------------------------------
   // Heartbeat — runs every 2 minutes
   // ---------------------------------------------------------------------------
@@ -380,8 +468,34 @@ export class SchedulerService implements ISchedulerService {
     }
     if (lost.length || hung.length) log.info({ lost: lost.length, hung: hung.length }, 'lease_reclaim')
 
+    await this.expireStaleBatches()
+
     const staleRuns = await this.analysisRunsRepo.failStaleRunning(STALE_RUN_TIMEOUT_MIN)
     if (staleRuns > 0) log.info({ staleRuns }, 'heartbeat: stale analysis_runs failed')
+  }
+
+  /**
+   * The third and last closing door of a batch.
+   *
+   * The first two are the worker's explicit signal and the per-item count. Both need
+   * the worker to be alive; this one does not, and it is what keeps a route from being
+   * locked out of the claim predicate forever when the worker dies mid-batch.
+   *
+   * Items that never reported are given back with NO penalty: the lease reclaim above
+   * has already put them back to 'pending', and a worker that vanished is not the
+   * item's fault.
+   */
+  private async expireStaleBatches(): Promise<void> {
+    const stale = await this.batchRepo.findLiveOlderThan(MAX_BATCH_RUN_MIN)
+    for (const batch of stale) {
+      const items = await this.batchRepo.listItems(batch.id)
+      await this.batchRepo.close(batch.id, 'expired', `lote sem fechamento apos ${MAX_BATCH_RUN_MIN}min`)
+      for (const job of items) {
+        if (job.status === 'running') continue // o reclaim de lease ja cuidou
+        await this.scrapingJobRepo.deferJob(job.id, calcBackoffNextRunAt(batch.attempt - 1))
+      }
+      log.warn({ batchId: batch.id, airline: batch.airline, items: items.length }, 'scraping_batch_expired')
+    }
   }
 
   // ---------------------------------------------------------------------------

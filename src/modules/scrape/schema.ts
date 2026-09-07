@@ -67,3 +67,46 @@ export const scrapeCallbackSchema = z.object({
 })
 
 export type ScrapeCallback = z.infer<typeof scrapeCallbackSchema>
+
+/**
+ * How each item of a batch ended, in the worker's own words.
+ *
+ * `not_attempted` is the reason this message exists: it is the only thing the API
+ * cannot deduce. Without it, a block on item 3 of 8 would burn `retry_count` on five
+ * items that never ran, and three nights like that would take the whole route to
+ * 'dead'.
+ */
+const batchItemResultSchema = z.object({
+  requestId: z.string().uuid(),
+  state: z.enum(['delivered', 'failed', 'not_attempted', 'cancelled']),
+  /**
+   * Truncado, nunca recusado.
+   *
+   * Um `max()` aqui rejeita o fechamento inteiro por causa do tamanho de uma mensagem
+   * de erro — e fechamento recusado deixa o lote vivo para sempre, o que tranca TODOS
+   * os itens da rota fora do claim. Aconteceu na primeira corrida real, 2026-09-03: o
+   * banner de instalação do Playwright passou de 500 caracteres e o lote ficou preso
+   * em `running`, com o worker reenviando o mesmo 422 em laço.
+   *
+   * A mensagem é diagnóstico; o fechamento é integridade. Cortar a primeira para
+   * salvar a segunda é a troca certa.
+   */
+  error: z.string().transform((v) => v.slice(0, 500)).optional(),
+  why: z.string().transform((v) => v.slice(0, 120)).optional(),
+})
+
+export const batchCallbackSchema = z.object({
+  batchId: z.string().uuid(),
+  airline: z.string().min(1),
+  closedAt: z.string(),
+  /**
+   * Why the session ended. Only `blocked` aborts a batch — a LATAM `SITE_ERROR` must
+   * not: calling the airline's own error page a block paused LATAM for an hour, three
+   * times on 2026-08-20, and with batches it would take every remaining item with it.
+   */
+  reason: z.enum(['completed', 'blocked', 'watchdog', 'superseded', 'cancelled']),
+  items: z.array(batchItemResultSchema).default([]),
+})
+
+export type BatchCallback = z.infer<typeof batchCallbackSchema>
+export type BatchItemResult = z.infer<typeof batchItemResultSchema>

@@ -45,6 +45,8 @@ export interface InsertRunningData {
   flightDate: string
   /** Filled when the run was a round-trip search. */
   returnDate?: string | null
+  /** Batch this run was dispatched in; NULL for runs outside a batch. */
+  batchId?: string | null
 }
 
 export interface MarkFinishedData {

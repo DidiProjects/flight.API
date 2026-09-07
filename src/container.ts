@@ -27,6 +27,7 @@ import { UsersService }         from './modules/users/UsersService'
 import { AirlinesService }      from './modules/airlines/AirlinesService'
 import { RoutinesService }      from './modules/routines/RoutinesService'
 import { ScrapeService }        from './modules/scrape/ScrapeService'
+import { ScrapingBatchRepository } from './modules/scraping-batches/ScrapingBatchRepository'
 import { UnsubscribeService }   from './modules/unsubscribe/UnsubscribeService'
 import { SchedulerService }     from './services/scheduler/SchedulerService'
 import { AirportsService }      from './modules/airports/AirportsService'
@@ -54,6 +55,7 @@ const unsubTokensRepo  = new UnsubscribeTokensRepository(pool)
 const notifLogRepo     = new NotificationLogRepository(pool)
 const airportsRepo     = new AirportsRepository(pool)
 const scrapingJobRepo  = new ScrapingJobRepository(pool)
+const scrapingBatchRepo = new ScrapingBatchRepository(pool)
 const flightFaresRepo  = new FlightFaresRepository(pool)
 const analysisRunsRepo = new AnalysisRunsRepository(pool)
 const alertStateRepo   = new TargetAlertStateRepository(pool)
@@ -97,13 +99,13 @@ const authSvc      = new AuthService(usersRepo, authRepo, refreshTokenRepo, emai
 const usersSvc     = new UsersService(usersRepo, emailSvc)
 const airlinesSvc  = new AirlinesService(airlinesRepo, routinesRepo)
 const routinesSvc  = new RoutinesService(routinesRepo, airlinesRepo, airportsRepo, flightFaresRepo)
-const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo, fxSvc, fareHistoryRepo)
+const scrapeSvc    = new ScrapeService(scrapingJobRepo, flightFaresRepo, analysisRunsRepo, fxSvc, fareHistoryRepo, scrapingBatchRepo)
 const unsubSvc     = new UnsubscribeService(unsubTokensRepo, routinesRepo, pool)
-const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo, scraperClient, workerGateway, airportsRepo, fareHistoryRepo)
+const schedulerSvc = new SchedulerService(scrapingJobRepo, flightFaresRepo, notifSvc, evaluationSvc, env, analysisRunsRepo, scraperClient, workerGateway, airportsRepo, fareHistoryRepo, scrapingBatchRepo, airlinesRepo)
 const airportsSvc  = new AirportsService(airportsRepo, airlinesRepo)
 const analysisRunsSvc = new AnalysisRunsService(routinesRepo, analysisRunsRepo)
 const adminSvc        = new AdminService(
-  scrapingJobRepo, analysisRunsRepo, workerGateway,
+  scrapingJobRepo, analysisRunsRepo, workerGateway, scrapingBatchRepo,
   routinesRepo, notifLogRepo, notifSvc, evaluationSvc, alertStateRepo,
   flightFaresRepo, fareHistoryRepo,
 )
@@ -122,6 +124,7 @@ export const container = {
   analysisRunsSvc,
   adminSvc,
   scrapingJobRepo,
+  scrapingBatchRepo,
   analysisRunsRepo,
   hubBus,
   workerGateway,

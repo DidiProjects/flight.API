@@ -28,6 +28,9 @@ const envSchema = z.object({
   // Ceiling of in-flight jobs (≈ scraper capacity). The API claims no more than this
   // — backpressure, so the scraper queue is not inflated.
   SCRAPE_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(6),
+  // Teto de tempo de UM lote, mandado ao worker no payload para que o numero viva
+  // num lugar so. MAX_RUN_MIN e o backstop deste valor, e fica acima dele.
+  SCRAPE_BATCH_DEADLINE_MS: z.coerce.number().int().positive().default(40 * 60_000),
   // Ceiling of in-flight jobs PER AIRLINE. Two automated sessions on the same site,
   // from the same IP, at the same time: on 2026-08-20 all nine LATAM failures had
   // another LATAM session in parallel, and the only collection that passed was the

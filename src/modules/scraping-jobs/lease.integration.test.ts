@@ -1,14 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { ScrapingJobRepository } from './ScrapingJobRepository'
+import { ScrapingBatchRepository } from '../scraping-batches/ScrapingBatchRepository'
 
 /**
  * The worker lease: who may take a running job back, and when.
  *
- * Runs against a real Postgres because the whole decision is in the SQL of
- * `claimNextJob` and `reclaimExpiredJobs` — the interval arithmetic and the NULL
- * handling are exactly what a mock would paper over. Skipped without
- * TEST_DATABASE_URL.
+ * Runs against a real Postgres because the whole decision is in the SQL of the claim
+ * and of `reclaimExpiredJobs` — the interval arithmetic and the NULL handling are
+ * exactly what a mock would paper over. Skipped without TEST_DATABASE_URL.
+ *
+ * The claim goes through `claimBatch` now: every dispatch is a batch, and a batch of
+ * one item is the previous behaviour. Asserting the lease reset here is what keeps the
+ * 2026-08-23/24 regression from coming back through the new claim path.
  *
  * Locally:  TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test
  */
@@ -27,6 +31,7 @@ const describeIt = DB_URL ? describe : describe.skip
 describeIt('lease do worker (integração / Postgres real)', () => {
   let pool: Pool
   let jobs: ScrapingJobRepository
+  let batches: ScrapingBatchRepository
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: DB_URL, options: `-c search_path=${SCHEMA},public` })
@@ -55,9 +60,26 @@ describeIt('lease do worker (integração / Postgres real)', () => {
         cancel_requested_at TIMESTAMPTZ,
         orphaned_at         TIMESTAMPTZ,
         started_at          TIMESTAMPTZ,
-        last_heartbeat_at   TIMESTAMPTZ
+        last_heartbeat_at   TIMESTAMPTZ,
+        batch_id            UUID
+      )`)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${SCHEMA}.scraping_batches (
+        id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        airline        VARCHAR(20) NOT NULL,
+        origin         VARCHAR(10) NOT NULL,
+        destination    VARCHAR(10) NOT NULL,
+        status         VARCHAR(20) NOT NULL DEFAULT 'dispatched',
+        item_count     INT NOT NULL,
+        received_count INT NOT NULL DEFAULT 0,
+        close_reason   TEXT,
+        superseded_by  UUID,
+        attempt        INT NOT NULL DEFAULT 1,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        closed_at      TIMESTAMPTZ
       )`)
     jobs = new ScrapingJobRepository(pool)
+    batches = new ScrapingBatchRepository(pool)
   })
 
   afterAll(async () => {
@@ -68,7 +90,7 @@ describeIt('lease do worker (integração / Postgres real)', () => {
   })
 
   beforeEach(async () => {
-    await pool.query(`TRUNCATE ${SCHEMA}.scraping_jobs`)
+    await pool.query(`TRUNCATE ${SCHEMA}.scraping_jobs, ${SCHEMA}.scraping_batches`)
   })
 
   /** A job that already ran once: it carries the heartbeat of THAT run. */
@@ -100,15 +122,15 @@ describeIt('lease do worker (integração / Postgres real)', () => {
   it('reivindicar zera o heartbeat da execução anterior', async () => {
     const id = await jobComHeartbeatVelho()
 
-    const claimed = await jobs.claimNextJob('britishairways')
+    const claimed = await batches.claimBatch('britishairways', 1)
 
-    expect(claimed?.id).toBe(id)
+    expect(claimed?.items[0]?.id).toBe(id)
     expect((await estado(id)).last_heartbeat_at).toBeNull()
   })
 
   it('job recém-reivindicado NÃO é retomado pelo ciclo de lease', async () => {
     const id = await jobComHeartbeatVelho()
-    await jobs.claimNextJob('britishairways')
+    await batches.claimBatch('britishairways', 1)
     await jobs.markRunning(id, '22222222-2222-2222-2222-222222222222')
 
     const { lost, hung } = await reclaim()
@@ -124,7 +146,7 @@ describeIt('lease do worker (integração / Postgres real)', () => {
   // A lease continua existindo: o que muda é de onde ela conta.
   it('sem heartbeat e passada a graça, o job é retomado', async () => {
     const id = await jobComHeartbeatVelho()
-    await jobs.claimNextJob('britishairways')
+    await batches.claimBatch('britishairways', 1)
     await jobs.markRunning(id, '33333333-3333-3333-3333-333333333333')
     await pool.query(
       `UPDATE ${SCHEMA}.scraping_jobs SET running_since = NOW() - INTERVAL '5 minutes' WHERE id = $1`, [id])
@@ -137,7 +159,7 @@ describeIt('lease do worker (integração / Postgres real)', () => {
 
   it('heartbeat do worker renova a lease e o job fica', async () => {
     const id = await jobComHeartbeatVelho()
-    await jobs.claimNextJob('britishairways')
+    await batches.claimBatch('britishairways', 1)
     await jobs.markRunning(id, '44444444-4444-4444-4444-444444444444')
     await pool.query(
       `UPDATE ${SCHEMA}.scraping_jobs SET running_since = NOW() - INTERVAL '5 minutes' WHERE id = $1`, [id])
@@ -151,7 +173,7 @@ describeIt('lease do worker (integração / Postgres real)', () => {
 
   it('heartbeat velho da execução em curso ainda expira a lease', async () => {
     const id = await jobComHeartbeatVelho()
-    await jobs.claimNextJob('britishairways')
+    await batches.claimBatch('britishairways', 1)
     await jobs.markRunning(id, '55555555-5555-5555-5555-555555555555')
     await pool.query(
       `UPDATE ${SCHEMA}.scraping_jobs
@@ -166,7 +188,7 @@ describeIt('lease do worker (integração / Postgres real)', () => {
 
   it('sucesso e falha não deixam heartbeat para trás', async () => {
     const id = await jobComHeartbeatVelho()
-    await jobs.claimNextJob('britishairways')
+    await batches.claimBatch('britishairways', 1)
     await jobs.markHeartbeat([])
     await jobs.markSuccess(id, new Date(Date.now() + 60_000))
     expect((await estado(id)).last_heartbeat_at).toBeNull()

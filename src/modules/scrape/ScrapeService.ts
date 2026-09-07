@@ -2,8 +2,9 @@ import { IScrapeService } from './interfaces/IScrapeService'
 import { IScrapingJobRepository, ScrapingJobRow } from '../scraping-jobs/interfaces/IScrapingJobRepository'
 import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresRepository'
 import { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
+import { IScrapingBatchRepository, ScrapingBatchRow } from '../scraping-batches/interfaces/IScrapingBatchRepository'
 import { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
-import { ScrapeCallback } from './schema'
+import { BatchCallback, ScrapeCallback } from './schema'
 import { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt } from '../../services/scheduler/SchedulerService'
 import { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import { logger } from '../../utils/logger'
@@ -13,6 +14,15 @@ const log = logger.child({ service: 'scrape' })
 // An IP/bot block affects the whole airline. Pause every job of that airline for
 // this long instead of retrying job-by-job (which only prolongs the block).
 const BLOCK_COOLDOWN_MS = 60 * 60 * 1000
+
+// Janela para os últimos callbacks de item chegarem depois do sinal de fechamento do
+// worker. Curta de propósito: o caminho normal é o fechamento vir DEPOIS do último
+// callback, pelo mesmo canal HTTP e na mesma sequência, então esta espera só existe
+// para o callback que se perdeu — e `ResultSender` engole falha de entrega, o que faz
+// disso um caso real e não hipotético.
+const BATCH_DRAIN_MS = 30_000
+
+const LIVE_BATCH = ['dispatched', 'running', 'closing']
 
 /**
  * Fallback for a callback with no `outcome` (an older scraper, or a failure
@@ -77,6 +87,7 @@ export class ScrapeService implements IScrapeService {
     private readonly analysisRunsRepo: IAnalysisRunsRepository,
     private readonly fx: IFxRateService,
     private readonly fareHistoryRepo: IFareHistoryRepository,
+    private readonly batchRepo: IScrapingBatchRepository,
   ) {}
 
   /**
@@ -159,8 +170,15 @@ export class ScrapeService implements IScrapeService {
       return
     }
 
+    // O item pertence a um lote que o worker ainda segura? Entao a reacao de
+    // AGENDAMENTO fica suspensa ate o lote fechar. As tarifas e a analysis_run seguem
+    // normalmente — o que espera e so o destino do job.
+    const batch = job.batch_id ? await this.batchRepo.findById(job.batch_id) : null
+    const emLoteVivo = batch != null && LIVE_BATCH.includes(batch.status)
+    if (batch) await this.registerBatchProgress(batch.id)
+
     if (coletaFalhou(data)) {
-      await this.applyFailurePolicy(data, job, { orphan: false })
+      await this.applyFailurePolicy(data, job, { orphan: false, emLoteVivo })
       return
     }
 
@@ -187,7 +205,7 @@ export class ScrapeService implements IScrapeService {
   private async applyFailurePolicy(
     data: ScrapeCallback,
     job: ScrapingJobRow | null,
-    { orphan }: { orphan: boolean },
+    { orphan, emLoteVivo = false }: { orphan: boolean; emLoteVivo?: boolean },
   ): Promise<void> {
     // A failure reported only through `outcome` carries no `error` text. Falling back to
     // "falha sem mensagem" would file the state that explains it — and its evidence —
@@ -202,7 +220,13 @@ export class ScrapeService implements IScrapeService {
     // block is the same block, and the airline is in the payload.
     if (isAirlineBlocked(data)) {
       const until = new Date(Date.now() + BLOCK_COOLDOWN_MS)
+      // Os lotes vivos da companhia fecham JUNTO com a pausa. `pauseAirlineForBlock`
+      // devolve todo job da companhia para 'pending' — inclusive os 'running' — e um
+      // lote que continuasse vivo trancaria esses itens para sempre: pendentes, com
+      // next_run_at vencido, e invisiveis ao claim.
+      const lotes = await this.batchRepo.closeLiveByAirline(data.airline, `bloqueio: ${error}`)
       const paused = await this.scrapingJobRepo.pauseAirlineForBlock(data.airline, until, error)
+      if (lotes.length) log.warn({ airline: data.airline, batches: lotes.map((b) => b.id) }, 'lotes encerrados pelo bloqueio da companhia')
       await this.analysisRunsRepo.markFinished(data.requestId, { status: 'blocked', errorMessage: error })
       log.warn({ jobId: job?.id, airline: data.airline, paused, until, orphan, evidence: data.outcome?.evidence }, 'scraping_airline_blocked: airline paused')
       return
@@ -215,6 +239,17 @@ export class ScrapeService implements IScrapeService {
     if (!job || jobMovedOn) {
       await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: error })
       log.warn({ requestId: data.requestId, jobId: job?.id, jobMovedOn }, 'orphan callback (erro): run fechada, job seguiu em outra corrida')
+      return
+    }
+
+    // Item de lote vivo: registra o erro, solta a lease e PARA. Quem decide retentativa
+    // e proximo horario e o fechamento do lote, com os irmaos dele na mao. Vale
+    // inclusive para SITE_ERROR: a pagina de erro da LATAM nao e bloqueio e nao pode
+    // derrubar o lote — ela e mais um item que falhou.
+    if (emLoteVivo) {
+      await this.scrapingJobRepo.holdForBatch(job.id, error)
+      await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: error })
+      log.warn({ jobId: job.id, batchId: job.batch_id, orphan }, 'scraping_job_failed_in_batch')
       return
     }
 
@@ -239,6 +274,134 @@ export class ScrapeService implements IScrapeService {
       await this.analysisRunsRepo.markFinished(data.requestId, { status: 'failed', errorMessage: error })
       log.warn({ jobId: job.id, orphan, retryCount: job.retry_count + 1 }, 'scraping_job_failed')
     }
+  }
+
+  /**
+   * The batch came back whole — the signal the API cannot deduce on its own.
+   *
+   * It is what keeps a fragment of a batch from being re-dispatched: while the batch
+   * is live its items are out of the claim pool entirely, and only here do they get
+   * their fate decided, together.
+   *
+   * Idempotent: a batch already closed just logs and returns. The worker may retry
+   * this delivery, and the time backstop in the scheduler may have closed it first.
+   */
+  async processBatchCallback(data: BatchCallback): Promise<void> {
+    const batch = await this.batchRepo.findById(data.batchId)
+    if (!batch) {
+      log.warn({ batchId: data.batchId, airline: data.airline }, 'batch callback: lote desconhecido')
+      return
+    }
+    if (!LIVE_BATCH.includes(batch.status)) {
+      log.info({ batchId: batch.id, status: batch.status }, 'batch callback: lote já fechado')
+      return
+    }
+
+    log.info({
+      batchId: batch.id, airline: batch.airline, reason: data.reason,
+      items: data.items.length, itemCount: batch.item_count, received: batch.received_count,
+    }, 'batch callback received')
+
+    await this.batchRepo.markClosing(batch.id, data.reason)
+
+    // Quantos itens ainda deviam entregar callback. Item não tentado nunca teve
+    // corrida, então não entra na conta — esperar por ele seguraria o lote por nada.
+    const naoTentados = data.items.filter((i) => i.state === 'not_attempted').length
+    const esperados = Math.max(batch.item_count - naoTentados, 0)
+    const atual = await this.batchRepo.findById(batch.id)
+    if (atual && atual.received_count >= esperados) {
+      await this.finalizeBatch(atual, data)
+      return
+    }
+
+    // Falta callback: espera a janela curta e fecha do mesmo jeito. O heartbeat é o
+    // backstop caso este processo morra no meio.
+    log.warn({ batchId: batch.id, esperados, recebidos: atual?.received_count }, 'batch callback: aguardando callbacks atrasados')
+    setTimeout(() => {
+      void this.batchRepo.findById(batch.id)
+        .then((b) => (b && LIVE_BATCH.includes(b.status) ? this.finalizeBatch(b, data) : undefined))
+        .catch((err) => log.error({ err, batchId: batch.id }, 'batch drain falhou'))
+    }, BATCH_DRAIN_MS).unref?.()
+  }
+
+  /**
+   * Decides what happens to every item the batch still holds.
+   *
+   * An item that succeeded has already left the batch (`markSuccess` clears
+   * `batch_id`), so whatever is still attached here either failed or never ran.
+   *
+   * The `penalise` split is the whole point: a block, a supersede and an item that was
+   * never attempted are not the item's fault, and none of them may escalate it towards
+   * 'dead'. With `max_retries = 3` and a batch of eight, counting a retry on all three
+   * of those would kill a whole route in three bad nights, where today one job dies
+   * alone.
+   */
+  private async finalizeBatch(batch: ScrapingBatchRow, data: BatchCallback): Promise<void> {
+    const status = data.reason === 'blocked' ? 'aborted'
+      : data.reason === 'superseded' ? 'superseded'
+      : data.reason === 'watchdog' ? 'aborted'
+      : data.reason === 'cancelled' ? 'aborted'
+      : 'completed'
+
+    const closed = await this.batchRepo.close(batch.id, status, data.reason)
+    if (!closed) return // outra corrida fechou primeiro
+
+    const naoTentados = new Set(
+      data.items.filter((i) => i.state === 'not_attempted').map((i) => i.requestId),
+    )
+    const erroPorRequest = new Map(
+      data.items.filter((i) => i.error).map((i) => [i.requestId, i.error!]),
+    )
+
+    // Supersede: o pedido foi explícito — descartar o que sobrou e dar a vez à análise
+    // nova. Sem penalidade e disponível já, porque o lote novo cobre as mesmas datas.
+    const superseded = data.reason === 'superseded'
+    // Bloqueio: `pauseAirlineForBlock` já empurrou tudo da companhia para depois do
+    // cooldown, então aqui só é preciso soltar o item sem culpa.
+    const bloqueado = data.reason === 'blocked'
+
+    const items = await this.batchRepo.listItems(batch.id)
+    let penalizados = 0
+    let liberados = 0
+
+    for (const job of items) {
+      const naoTentado = job.request_id != null && naoTentados.has(job.request_id)
+      const semCulpa = superseded || bloqueado || naoTentado
+
+      if (semCulpa) {
+        await this.scrapingJobRepo.settleBatchItem(job.id, {
+          penalise: false,
+          nextRunAt: superseded ? new Date() : calcBackoffNextRunAt(0),
+          error: erroPorRequest.get(job.request_id ?? '') ?? null,
+        })
+        liberados++
+        continue
+      }
+
+      // Backoff DE LOTE: a tentativa do lote, e não a do item, é o que cresce. É o que
+      // impede a falha de um item de voltar sozinha em 60s.
+      await this.scrapingJobRepo.settleBatchItem(job.id, {
+        penalise: true,
+        nextRunAt: calcBackoffNextRunAt(batch.attempt),
+        error: erroPorRequest.get(job.request_id ?? '') ?? `lote encerrado: ${data.reason}`,
+      })
+      penalizados++
+    }
+
+    log.info({
+      batchId: batch.id, airline: batch.airline, status, reason: data.reason,
+      penalizados, liberados, attempt: batch.attempt,
+    }, 'scraping_batch_closed')
+  }
+
+  /**
+   * Um callback de item chegou. Se ele fecha a conta de um lote que já recebeu o sinal
+   * do worker, o fechamento acontece aqui — as duas ordens de chegada funcionam.
+   */
+  private async registerBatchProgress(batchId: string): Promise<void> {
+    const batch = await this.batchRepo.registerReceived(batchId)
+    if (!batch) return
+    if (batch.status === 'dispatched') await this.batchRepo.markRunning(batchId)
   }
 
   // A callback whose request_id matches no job: the job was already recovered

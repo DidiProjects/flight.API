@@ -1,47 +1,10 @@
 import { Pool } from 'pg'
-import { AdminJobRow, IScrapingJobRepository, ResetJobsResult, ScrapingJobRow } from './interfaces/IScrapingJobRepository'
+import { AdminJobRow, IScrapingJobRepository, ResetJobsResult, ScrapingJobRow, SettleBatchItemOptions } from './interfaces/IScrapingJobRepository'
+import { belongsToRoutine, ORPHAN_PREDICATE } from './predicates'
 
-const ORPHAN_PREDICATE = `
-  NOT EXISTS (
-    SELECT 1 FROM routines r
-    JOIN routine_airlines ra ON ra.routine_id = r.id
-    WHERE r.is_active = true
-      AND r.outbound_end >= CURRENT_DATE
-      AND ra.airline     = j.airline
-      AND r.origin       = j.origin
-      AND r.destination  = j.destination
-      AND j.flight_date BETWEEN r.outbound_start AND r.outbound_end
-      -- Job RT só pertence a uma rotina RT cujo par de janelas o contém; job
-      -- one-way (return_date NULL) só pertence a rotina one_way.
-      AND (
-        (j.return_date IS NULL     AND r.trip_type = 'one_way')
-        OR
-        (j.return_date IS NOT NULL AND r.trip_type = 'round_trip'
-         AND j.return_date BETWEEN r.inbound_start AND r.inbound_end)
-      )
-  )`
-
-// A row belongs to a routine by ROUTE, not by ownership: same airline, same
-// trip, date inside the window — and, for round-trip, the pair of dates inside
-// the pair of windows. `alias` is a parameter because the same condition serves
-// scraping_jobs and analysis_runs, which carry the same four columns plus
-// return_date. Mirrors ORPHAN_PREDICATE above, narrowed to one routine.
-export const belongsToRoutine = (alias: string, routineIdComparison: string) => `
-  EXISTS (
-    SELECT 1 FROM routines r
-    JOIN routine_airlines ra ON ra.routine_id = r.id
-    WHERE r.id ${routineIdComparison}
-      AND ra.airline    = ${alias}.airline
-      AND r.origin      = ${alias}.origin
-      AND r.destination = ${alias}.destination
-      AND ${alias}.flight_date BETWEEN r.outbound_start AND r.outbound_end
-      AND (
-        (${alias}.return_date IS NULL     AND r.trip_type = 'one_way')
-        OR
-        (${alias}.return_date IS NOT NULL AND r.trip_type = 'round_trip'
-         AND ${alias}.return_date BETWEEN r.inbound_start AND r.inbound_end)
-      )
-  )`
+// Re-exportado: FlightFares e AnalysisRuns importam daqui desde antes de os
+// predicados ganharem arquivo proprio.
+export { belongsToRoutine }
 
 const OWNER_EMAILS_BY_ROUTE = `
   SELECT array_agg(DISTINCT u.email ORDER BY u.email) AS emails
@@ -84,7 +47,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
 
   async retireOrphans(): Promise<number> {
     // Retires jobs with no active routine: marks orphaned_at and PRESERVES the
-    // status of the last run (e.g. success). orphaned_at IS NULL in claimNextJob is
+    // status of the last run (e.g. success). orphaned_at IS NULL in JOB_IS_ELIGIBLE is
     // what takes the job out of the dispatch pool — it need not become 'dead'.
     const { rowCount } = await this.db.query(
       `UPDATE scraping_jobs j
@@ -225,70 +188,6 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     `)
   }
 
-  /**
-   * `last_heartbeat_at = NULL` is the whole point of this line.
-   *
-   * The column is the worker's lease. A row that already ran carries the
-   * heartbeat of THAT run, and `reclaimExpiredJobs` reads it as a lease expired
-   * ages ago — so the job was taken back seconds after being dispatched, the
-   * worker got a cancel mid-scrape, and the late callback landed as an orphan
-   * that leaves the job untouched: no retry counted, no backoff applied, the
-   * whole cycle again in five minutes. Measured on 2026-08-23 in development and
-   * seen in production on the 24th, where a failing BA route retried for hours
-   * without ever reaching `dead`.
-   *
-   * With it NULL, the reclaim falls to the grace path (`running_since` older
-   * than the grace), which is the window the worker has to send its first
-   * heartbeat — and its snapshot already includes queued jobs, so a job waiting
-   * in the scraper queue keeps its lease renewed.
-   */
-  async claimNextJob(airline: string): Promise<ScrapingJobRow | null> {
-    const { rows } = await this.db.query<ScrapingJobRow>(`
-      UPDATE scraping_jobs
-      SET status = 'running', running_since = NOW(), started_at = NULL,
-          last_heartbeat_at = NULL, updated_at = NOW()
-      WHERE id = (
-        SELECT id FROM scraping_jobs
-        WHERE airline = $1
-          AND status IN ('pending', 'failed', 'success')
-          AND orphaned_at IS NULL
-          AND next_run_at <= NOW()
-          AND retry_count < max_retries
-        ORDER BY priority DESC, next_run_at ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING *
-    `, [airline])
-    return rows[0] ?? null
-  }
-
-  /** Same lease reset as `claimNextJob` — see the note there. */
-  async claimNextJobForRoutine(routineId: string): Promise<ScrapingJobRow | null> {
-    const { rows } = await this.db.query<ScrapingJobRow>(`
-      UPDATE scraping_jobs
-      SET status = 'running', running_since = NOW(), started_at = NULL,
-          last_heartbeat_at = NULL, updated_at = NOW()
-      WHERE id = (
-        SELECT sj.id FROM scraping_jobs sj
-        JOIN routines r ON r.id = $1
-        JOIN routine_airlines ra ON ra.routine_id = r.id AND ra.airline = sj.airline
-        WHERE sj.origin = r.origin
-          AND sj.destination = r.destination
-          AND sj.flight_date BETWEEN r.outbound_start AND r.outbound_end
-          AND sj.status IN ('pending', 'failed', 'success')
-          AND sj.orphaned_at IS NULL
-          AND sj.next_run_at <= NOW()
-          AND sj.retry_count < sj.max_retries
-        ORDER BY sj.priority DESC, sj.next_run_at ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING *
-    `, [routineId])
-    return rows[0] ?? null
-  }
-
   async countInFlight(): Promise<number> {
     const { rows } = await this.db.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM scraping_jobs WHERE status = 'running'`,
@@ -315,7 +214,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     await this.db.query(`
       UPDATE scraping_jobs
       SET status = 'pending', running_since = NULL, request_id = NULL, started_at = NULL,
-          next_run_at = $2, updated_at = NOW()
+          batch_id = NULL, next_run_at = $2, updated_at = NOW()
       WHERE id = $1
     `, [id, nextRunAt])
   }
@@ -352,6 +251,9 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       UPDATE scraping_jobs
       SET status = 'success', last_success_at = NOW(), running_since = NULL,
           request_id = NULL, last_heartbeat_at = NULL, retry_count = 0, last_error = NULL,
+          -- Item coletado nao tem o que esperar do fechamento do lote: sai dele na
+          -- hora, com a cadencia normal, e para de segurar lease a toa.
+          batch_id = NULL,
           next_run_at = $2, updated_at = NOW()
       WHERE id = $1
     `, [id, nextRunAt])
@@ -373,7 +275,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
    * Not the job's fault — it is the airline search that did not respond — so it
    * must not escalate to 'dead'. But it cannot go unchecked either: the counter
    * rises so the backoff grows, and stops at `max_retries - 1` because
-   * `claimNextJob` requires `retry_count < max_retries`; stopping at `max_retries`
+   * `JOB_IS_ELIGIBLE` requires `retry_count < max_retries`; stopping at `max_retries`
    * would leave the job stuck forever, which is worse than dead.
    */
   async markSiteError(id: string, error: string, nextRunAt: Date): Promise<void> {
@@ -385,6 +287,51 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
           next_run_at = $3, updated_at = NOW()
       WHERE id = $1
     `, [id, error, nextRunAt])
+  }
+
+  // Ver a nota da interface: registra o erro e solta a lease, sem mexer em
+  // retry_count nem em next_run_at, e MANTENDO batch_id — e o batch_id vivo que
+  // segura o item fora do claim ate o lote fechar.
+  async holdForBatch(id: string, error: string): Promise<void> {
+    await this.db.query(`
+      UPDATE scraping_jobs
+      SET status = 'failed', last_failure_at = NOW(), last_error = $2,
+          running_since = NULL, request_id = NULL, last_heartbeat_at = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+    `, [id, error])
+  }
+
+  /**
+   * Libera um item quando o lote fecha.
+   *
+   * `penalise: false` e o caminho de bloqueio, supersede e item nunca tentado — nenhum
+   * dos tres e culpa do item, e nenhum deles pode escalar para 'dead'. Com `true` o
+   * contador sobe UMA vez por tentativa de lote, e o item morre no mesmo limite de
+   * sempre.
+   */
+  async settleBatchItem(id: string, opts: SettleBatchItemOptions): Promise<void> {
+    if (!opts.penalise) {
+      await this.db.query(`
+        UPDATE scraping_jobs
+        SET status = 'pending', running_since = NULL, request_id = NULL,
+            last_heartbeat_at = NULL, batch_id = NULL,
+            next_run_at = $2, last_error = COALESCE($3, last_error), updated_at = NOW()
+        WHERE id = $1
+      `, [id, opts.nextRunAt, opts.error ?? null])
+      return
+    }
+
+    await this.db.query(`
+      UPDATE scraping_jobs
+      SET retry_count = retry_count + 1,
+          status = CASE WHEN retry_count + 1 >= max_retries THEN 'dead' ELSE 'failed' END,
+          last_failure_at = NOW(),
+          last_error  = COALESCE($3, last_error),
+          running_since = NULL, request_id = NULL, last_heartbeat_at = NULL, batch_id = NULL,
+          next_run_at = $2, updated_at = NOW()
+      WHERE id = $1
+    `, [id, opts.nextRunAt, opts.error ?? null])
   }
 
   async markDead(id: string, error: string): Promise<void> {
@@ -409,10 +356,14 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
   // Cancellation confirmed: the job goes back to 'pending' with the normal cooldown
   // (reschedulable). 'cancelled' is terminal for the RUN only (analysis_runs); the
   // job does not die. Cancelling is NOT a failure — retry_count and 'dead' are untouched (§15.6).
+  // O item sai do lote junto: `batch_id` continuar apontando para um lote vivo
+  // deixaria o job fora do claim ate o lote fechar, e quem cancelou pediu o
+  // contrario. Quem ajusta o `item_count` do lote e o AdminService, que sabe se o
+  // cancelamento chegou a acontecer.
   async releaseCancelled(requestId: string, nextRunAt: Date): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs
-      SET status = 'pending', running_since = NULL, request_id = NULL,
+      SET status = 'pending', running_since = NULL, request_id = NULL, batch_id = NULL,
           last_heartbeat_at = NULL, cancel_requested_at = NULL, next_run_at = $2, updated_at = NOW()
       WHERE request_id = $1
     `, [requestId, nextRunAt])
@@ -458,6 +409,10 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
       SET status        = 'pending',
           running_since = NULL,
           request_id    = NULL,
+          -- Sem isto o item fica trancado para sempre: 'pending', com next_run_at
+          -- vencido, e invisivel ao claim porque o lote dele continua vivo. Quem
+          -- fecha os lotes e o ScrapeService, no mesmo passo desta pausa.
+          batch_id      = NULL,
           last_error    = $3,
           next_run_at   = GREATEST(next_run_at, $2),
           updated_at    = NOW()
@@ -587,6 +542,9 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
               orphaned_at     = NULL,
               updated_at      = NOW()
         WHERE j.status <> 'running'
+          -- Item de lote vivo fica de fora: o worker ainda o percorre, e o
+          -- fechamento do lote reagendaria por cima do que acabamos de zerar.
+          AND j.batch_id IS NULL
           AND ${belongsToRoutine('j', '= $1')}
           AND NOT ${belongsToRoutine('j', '<> $1')}`,
       [routineId],

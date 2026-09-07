@@ -10,7 +10,7 @@ export class AirlinesRepository implements IAirlinesRepository {
   // undefined, `!airline.has_roundtrip` is true for EVERY airline, and round-trip
   // routine creation gets rejected even for those with the flag on in the bank —
   // Azul included.
-  private readonly cols = `code, name, active, has_cash, has_pts, has_hyb, has_roundtrip`
+  private readonly cols = `code, name, active, has_cash, has_pts, has_hyb, has_roundtrip, batch_size`
 
   async findAll(): Promise<AirlineRow[]> {
     const { rows } = await this.db.query<AirlineRow>(
@@ -71,6 +71,17 @@ export class AirlinesRepository implements IAirlinesRepository {
       [code],
     )
     return rows[0] ?? null
+  }
+
+  async batchSizesForRoutine(routineId: string): Promise<number[]> {
+    const { rows } = await this.db.query<{ batch_size: number }>(
+      `SELECT a.batch_size
+         FROM routine_airlines ra
+         JOIN airlines a ON a.code = ra.airline
+        WHERE ra.routine_id = $1`,
+      [routineId],
+    )
+    return rows.map((r) => r.batch_size)
   }
 
   async create(code: string, name: string): Promise<AirlineRow> {

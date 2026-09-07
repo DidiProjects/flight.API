@@ -72,6 +72,7 @@ describeIt('reset de análises — exclusividade por rota (integração / Postgr
         last_heartbeat_at TIMESTAMPTZ,
         request_id UUID,
         orphaned_at TIMESTAMPTZ,
+        batch_id UUID,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`)
     await pool.query(`

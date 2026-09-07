@@ -34,6 +34,8 @@ export interface IAirlinesRepository {
    */
   findRecommendedForRoute(origin: string, destination: string): Promise<AirlineRecommendation[]>
   findByCode(code: string): Promise<AirlineRow | null>
+  /** `batch_size` of every airline attached to a routine. */
+  batchSizesForRoutine(routineId: string): Promise<number[]>
   create(code: string, name: string): Promise<AirlineRow>
   setActive(code: string, active: boolean): Promise<AirlineRow | null>
   updateFareTypes(code: string, hasCash: boolean, hasPts: boolean, hasHyb: boolean): Promise<AirlineRow | null>
