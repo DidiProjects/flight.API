@@ -84,6 +84,13 @@ describe('deep link de compra no e-mail — ida-e-volta', () => {
     expect(p.get('ond')).toBe('2')
   })
 
+  it('gol adiciona volta ao busca-parceiros, tipo continua DF', async () => {
+    const p = new URL((await linksDoEmail('gol', volta))[0]!).searchParams
+    expect(p.get('tipo')).toBe('DF')
+    expect(p.get('ida')).toBe('21-09-2026')
+    expect(p.get('volta')).toBe('25-09-2026')
+  })
+
   it('latam pede RT com a data de volta', async () => {
     const p = new URL((await linksDoEmail('latam', volta))[0]!).searchParams
     expect(p.get('trip')).toBe('RT')

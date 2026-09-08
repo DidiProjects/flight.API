@@ -95,7 +95,7 @@ export class EmailService implements IEmailService {
       case 'latam':          return this.buildLatamLink(offer, passengers, fareType, ret)
       case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers, ret)
       case 'ryanair':        return this.buildRyanairLink(offer, passengers, ret)
-      case 'gol':            return this.buildGolLink(offer, passengers)
+      case 'gol':            return this.buildGolLink(offer, passengers, ret)
       default:               return null
     }
   }
@@ -192,26 +192,27 @@ export class EmailService implements IEmailService {
   }
 
   /**
-   * Mirrors the scraper's voegol search URL. Cash only and one-way only — the
-   * GOL pilot never prices points (Smiles is a separate site) and its round-trip
-   * search was not observed, so `has_roundtrip=false` keeps `ret` always null
-   * here. `ida` is DD-MM-YYYY, unlike every other builder.
+   * Mirrors the scraper's voegol entry. Cash only (the GOL pilot never prices
+   * points — Smiles is a separate site). `ida`/`volta` are DD-MM-YYYY, unlike
+   * every other builder; `tipo` stays `DF` even round-trip — adding `volta` is
+   * what turns it into a round-trip search (`tipo=RT` bounces to an error).
    */
-  private buildGolLink(offer: OfferBlock, passengers: number): string {
-    const [y, m, d] = offer.date.split('-')
+  private buildGolLink(offer: OfferBlock, passengers: number, ret?: OfferBlock | null): string {
+    const br = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}-${m}-${y}` }
     const p = new URLSearchParams({
       pv:     'br',
       tipo:   'DF',
       lang:   'pt-BR',
       de:     offer.origin,
       para:   offer.destination,
-      ida:    `${d}-${m}-${y}`,
+      ida:    br(offer.date),
       ADT:    String(passengers),
       ADL:    '0',
       CHD:    '0',
       INF:    '0',
       voebiz: '0',
     })
+    if (ret) p.set('volta', br(ret.date))
     return `https://b2c.voegol.com.br/compra/busca-parceiros?${p.toString()}`
   }
 
