@@ -90,7 +90,24 @@ function calcSiteErrorNextRunAt(retryCount: number): Date {
   return new Date(Date.now() + delay)
 }
 
-export { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt }
+/**
+ * Pausa após bloqueio (IP/anti-bot), escalando com quantos bloqueios seguidos
+ * a companhia já teve. Uma rota bloqueada há dias não ganha nada sendo
+ * tentada de hora em hora — o anti-bot não cansa antes da sessão de navegador
+ * exclusiva da máquina, e cada tentativa é mais uma marca contra o mesmo IP.
+ *
+ * Dobra por bloqueio consecutivo (mesma forma dos outros backoffs desta
+ * dupla), mas parte de uma base de horas, não segundos: 1h, 2h, 4h, 8h...
+ * até o teto de 24h. `consecutiveBlocks` já vem incrementado pelo chamador —
+ * o primeiro bloqueio (1) dá a pausa de sempre, 1h.
+ */
+function calcBlockCooldownMs(consecutiveBlocks: number): number {
+  const BASE_MS = 60 * 60_000
+  const CAP_MS = 24 * 60 * 60_000
+  return Math.min(CAP_MS, BASE_MS * Math.pow(2, Math.max(consecutiveBlocks - 1, 0)))
+}
+
+export { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt, calcBlockCooldownMs }
 
 export class SchedulerService implements ISchedulerService {
   private readonly circuitBreakers = new Map<string, CircuitBreakerState>()

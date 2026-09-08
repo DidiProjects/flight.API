@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { SchedulerService } from './SchedulerService'
+import { SchedulerService, calcBlockCooldownMs } from './SchedulerService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import type { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
@@ -491,5 +491,30 @@ describe('SchedulerService — circuit breaker', () => {
     svc.recordSuccess('azul')
     expect(svc.isCircuitOpen('azul')).toBe(false)
     expect(svc.circuitBreakers.get('azul')?.failures).toBe(0)
+  })
+})
+
+describe('calcBlockCooldownMs', () => {
+  const HOUR = 60 * 60_000
+
+  it('primeiro bloqueio: a mesma pausa de sempre, 1h', () => {
+    expect(calcBlockCooldownMs(1)).toBe(1 * HOUR)
+  })
+
+  it('dobra a cada bloqueio consecutivo', () => {
+    expect(calcBlockCooldownMs(2)).toBe(2 * HOUR)
+    expect(calcBlockCooldownMs(3)).toBe(4 * HOUR)
+    expect(calcBlockCooldownMs(4)).toBe(8 * HOUR)
+    expect(calcBlockCooldownMs(5)).toBe(16 * HOUR)
+  })
+
+  it('nunca passa do teto de 24h, por mais que a sequência cresça', () => {
+    expect(calcBlockCooldownMs(6)).toBe(24 * HOUR)
+    expect(calcBlockCooldownMs(50)).toBe(24 * HOUR)
+  })
+
+  it('0 ou negativo (defensivo) se comporta como o primeiro bloqueio', () => {
+    expect(calcBlockCooldownMs(0)).toBe(1 * HOUR)
+    expect(calcBlockCooldownMs(-3)).toBe(1 * HOUR)
   })
 })

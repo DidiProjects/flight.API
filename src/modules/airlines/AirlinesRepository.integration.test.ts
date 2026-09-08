@@ -27,7 +27,7 @@ describeIt('AirlinesRepository.findRecommendedForRoute (integração / Postgres 
         active BOOLEAN NOT NULL DEFAULT true,
         has_cash BOOLEAN NOT NULL DEFAULT true, has_pts BOOLEAN NOT NULL DEFAULT false,
         has_hyb BOOLEAN NOT NULL DEFAULT false, has_roundtrip BOOLEAN NOT NULL DEFAULT false,
-        batch_size INT NOT NULL DEFAULT 1
+        batch_size INT NOT NULL DEFAULT 1, consecutive_blocks INT NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS ${SCHEMA}.airports (
         airline_code VARCHAR(20) NOT NULL, airport_code VARCHAR(10) NOT NULL,

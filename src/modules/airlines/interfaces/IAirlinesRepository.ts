@@ -40,4 +40,8 @@ export interface IAirlinesRepository {
   setActive(code: string, active: boolean): Promise<AirlineRow | null>
   updateFareTypes(code: string, hasCash: boolean, hasPts: boolean, hasHyb: boolean): Promise<AirlineRow | null>
   delete(code: string): Promise<boolean>
+  /** New block on top of a streak. Returns the count AFTER incrementing, for the cooldown formula. */
+  incrementConsecutiveBlocks(code: string): Promise<number>
+  /** The block is over: the next one starts the escalation from the beginning again. */
+  resetConsecutiveBlocks(code: string): Promise<void>
 }

@@ -10,7 +10,7 @@ export class AirlinesRepository implements IAirlinesRepository {
   // undefined, `!airline.has_roundtrip` is true for EVERY airline, and round-trip
   // routine creation gets rejected even for those with the flag on in the bank —
   // Azul included.
-  private readonly cols = `code, name, active, has_cash, has_pts, has_hyb, has_roundtrip, batch_size`
+  private readonly cols = `code, name, active, has_cash, has_pts, has_hyb, has_roundtrip, batch_size, consecutive_blocks`
 
   async findAll(): Promise<AirlineRow[]> {
     const { rows } = await this.db.query<AirlineRow>(
@@ -114,5 +114,20 @@ export class AirlinesRepository implements IAirlinesRepository {
       [code],
     )
     return (rowCount ?? 0) > 0
+  }
+
+  async incrementConsecutiveBlocks(code: string): Promise<number> {
+    const { rows } = await this.db.query<{ consecutive_blocks: number }>(
+      `UPDATE airlines SET consecutive_blocks = consecutive_blocks + 1 WHERE code = $1 RETURNING consecutive_blocks`,
+      [code],
+    )
+    return rows[0]?.consecutive_blocks ?? 1
+  }
+
+  async resetConsecutiveBlocks(code: string): Promise<void> {
+    await this.db.query(
+      `UPDATE airlines SET consecutive_blocks = 0 WHERE code = $1 AND consecutive_blocks <> 0`,
+      [code],
+    )
   }
 }

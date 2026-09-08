@@ -5,6 +5,7 @@ import type { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightF
 import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import type { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import type { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
+import type { IAirlinesRepository } from '../airlines/interfaces/IAirlinesRepository'
 import { batchCallbackSchema, type BatchCallback, type ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -109,6 +110,11 @@ function makeMocks() {
     cleanupNotSeenSince:  vi.fn().mockResolvedValue(0),
   } satisfies IFareHistoryRepository as IFareHistoryRepository
 
+  const mockAirlinesRepo = {
+    incrementConsecutiveBlocks: vi.fn().mockResolvedValue(1),
+    resetConsecutiveBlocks:     vi.fn().mockResolvedValue(undefined),
+  } satisfies Partial<IAirlinesRepository> as unknown as IAirlinesRepository
+
   // Sem lote vivo por padrão: os callbacks destes testes são de item solto, que é o
   // regime de `batch_size = 1`. Os testes de lote montam o seu próprio.
   const mockBatchRepo = {
@@ -121,7 +127,7 @@ function makeMocks() {
     listItems:           vi.fn().mockResolvedValue([]),
   }
 
-  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx, mockFareHistoryRepo, mockBatchRepo }
+  return { mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mockFx, mockFareHistoryRepo, mockBatchRepo, mockAirlinesRepo }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────────
@@ -132,6 +138,7 @@ describe('ScrapeService.processCallback', () => {
   let mockAnalysisRunsRepo: IAnalysisRunsRepository
   let mockFareHistoryRepo: IFareHistoryRepository
   let mockBatchRepo: ReturnType<typeof makeMocks>['mockBatchRepo']
+  let mockAirlinesRepo: IAirlinesRepository
   let svc: ScrapeService
 
   beforeEach(() => {
@@ -141,7 +148,8 @@ describe('ScrapeService.processCallback', () => {
     mockAnalysisRunsRepo = mocks.mockAnalysisRunsRepo
     mockFareHistoryRepo = mocks.mockFareHistoryRepo
     mockBatchRepo = mocks.mockBatchRepo
-    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx, mockFareHistoryRepo, mockBatchRepo as never)
+    mockAirlinesRepo = mocks.mockAirlinesRepo
+    svc = new ScrapeService(mockScrapingJobRepo, mockFlightFaresRepo, mockAnalysisRunsRepo, mocks.mockFx, mockFareHistoryRepo, mockBatchRepo as never, mockAirlinesRepo)
   })
 
   it('requestId desconhecido — retorna sem chamar insertMany', async () => {
@@ -180,6 +188,45 @@ describe('ScrapeService.processCallback', () => {
     expect(mockScrapingJobRepo.pauseAirlineForBlock).toHaveBeenCalledWith('azul', expect.any(Date), expect.stringContaining('bot/IP block'))
     expect(mockScrapingJobRepo.markDead).not.toHaveBeenCalled()
     expect(mockScrapingJobRepo.markFailed).not.toHaveBeenCalled()
+  })
+
+  it('bloqueio incrementa o contador da companhia ANTES de calcular a pausa', async () => {
+    const job = makeJob()
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    vi.mocked(mockAirlinesRepo.incrementConsecutiveBlocks).mockResolvedValue(1)
+
+    await svc.processCallback(makeCallback({ flights: [], outcome: { state: 'BLOCKED', reason: 'marcador de anti-bot' } }))
+
+    expect(mockAirlinesRepo.incrementConsecutiveBlocks).toHaveBeenCalledWith('azul')
+    // Primeiro bloqueio: a mesma pausa de sempre, ~1h — não o teto nem o dobro.
+    const until = vi.mocked(mockScrapingJobRepo.pauseAirlineForBlock).mock.calls[0][1] as Date
+    const deltaMin = (until.getTime() - Date.now()) / 60_000
+    expect(deltaMin).toBeGreaterThan(55)
+    expect(deltaMin).toBeLessThan(65)
+  })
+
+  it('bloqueios seguidos escalam a pausa — o quinto pausa bem mais que o primeiro', async () => {
+    const job = makeJob()
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+    // O contador já vinha de 4 bloqueios seguidos; este é o 5º.
+    vi.mocked(mockAirlinesRepo.incrementConsecutiveBlocks).mockResolvedValue(5)
+
+    await svc.processCallback(makeCallback({ flights: [], outcome: { state: 'BLOCKED', reason: 'marcador de anti-bot' } }))
+
+    const until = vi.mocked(mockScrapingJobRepo.pauseAirlineForBlock).mock.calls[0][1] as Date
+    const deltaHours = (until.getTime() - Date.now()) / (60 * 60_000)
+    // calcBlockCooldownMs(5) = 16h — bem acima da 1h fixa de antes.
+    expect(deltaHours).toBeGreaterThan(15)
+    expect(deltaHours).toBeLessThan(17)
+  })
+
+  it('coleta bem-sucedida zera o contador de bloqueios da companhia', async () => {
+    const job = makeJob({ retry_count: 0 })
+    vi.mocked(mockScrapingJobRepo.findByRequestId).mockResolvedValue(job)
+
+    await svc.processCallback(makeCallback({ flights: [makeFlightOffer()] }))
+
+    expect(mockAirlinesRepo.resetConsecutiveBlocks).toHaveBeenCalledWith('azul')
   })
 
   it('o estado terminal manda, mesmo quando o texto do erro fala em bloqueio', async () => {
@@ -695,7 +742,7 @@ describe('ScrapeService — lote', () => {
     mocks.mockBatchRepo.listItems.mockResolvedValue(over.items ?? [])
     const svc = new ScrapeService(
       mocks.mockScrapingJobRepo, mocks.mockFlightFaresRepo, mocks.mockAnalysisRunsRepo,
-      mocks.mockFx, mocks.mockFareHistoryRepo, mocks.mockBatchRepo as never,
+      mocks.mockFx, mocks.mockFareHistoryRepo, mocks.mockBatchRepo as never, mocks.mockAirlinesRepo,
     )
     return { svc, ...mocks, batch }
   }

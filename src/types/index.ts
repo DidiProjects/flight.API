@@ -27,6 +27,11 @@ export interface AirlineRow {
    * still makes an extra points pass), so this rises one airline at a time.
    */
   batch_size: number
+  /**
+   * Bloqueios seguidos, para a pausa pós-bloqueio escalar em vez de ficar
+   * fixa. Zera na primeira coleta bem-sucedida da companhia (`ScrapeService`).
+   */
+  consecutive_blocks: number
 }
 
 export interface CcEmail {
