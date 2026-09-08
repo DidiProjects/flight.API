@@ -687,15 +687,21 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
       expect(Number(best.best_cash)).toBe(900)
     })
 
-    it('calendário pega a MAIS BARATA entre companhias, por data', async () => {
+    it('calendário devolve uma linha POR COMPANHIA, não a mais barata fundida', async () => {
+      // A fusão entre companhias é responsabilidade do service (FlightFaresService.
+      // getByDate), não mais do repositório: o calendário por companhia precisa da
+      // linha de CADA uma, e fundir aqui as apagaria antes de chegarem lá.
       await repo.insertMany(JOB_ID, REQ_1, [fare('AD1', 900.00, { flight_date: '2026-07-12' })])
       await new Promise((r) => setTimeout(r, 15))
       await repo.insertMany(JOB_LA, REQ_3, [latam('LA1', 1500.00, { flight_date: '2026-07-12' })])
 
       const datas = await repo.getPriceByDate(['azul', 'latam'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
 
-      expect(datas).toHaveLength(1)
-      expect(Number(datas[0].best_cash)).toBe(900)
+      expect(datas).toHaveLength(2)
+      const azulRow = datas.find((d) => d.airline === 'azul')
+      const latamRow = datas.find((d) => d.airline === 'latam')
+      expect(Number(azulRow?.best_cash)).toBe(900)
+      expect(Number(latamRow?.best_cash)).toBe(1500)
     })
 
     // A régua de 30 dias diz se o preço de hoje é bom. Feita só de quem raspou
@@ -728,8 +734,11 @@ describeIt('FlightFaresRepository (integração / Postgres real)', () => {
 
       const datas = await repo.getPriceByDate(['britishairways', 'latam'], 'CNF', 'VCP', '2026-07-01', '2026-07-31')
 
-      expect(datas).toHaveLength(1)
-      expect(Number(datas[0].best_cash)).toBe(4900)
+      expect(datas).toHaveLength(2)
+      const baRow = datas.find((d) => d.airline === 'britishairways')
+      const latamRow = datas.find((d) => d.airline === 'latam')
+      expect(Number(baRow?.best_cash)).toBe(5110)
+      expect(Number(latamRow?.best_cash)).toBe(4900)
     })
 
     it('total do par pega a companhia mais barata, não a mais recente', async () => {

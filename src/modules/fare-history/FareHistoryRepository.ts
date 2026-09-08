@@ -260,6 +260,13 @@ export class FareHistoryRepository implements IFareHistoryRepository {
       ORDER BY b.bucket_start
     `, params)
 
+    // Uma curva por companhia é só útil quando há disputa. Com uma companhia
+    // só, ela seria idêntica ao merge acima — uma segunda query pra desenhar a
+    // mesma linha duas vezes.
+    const byAirline = query.airlines.length > 1
+      ? await this.getSeriesByAirline(query, params, tripFilter)
+      : []
+
     return {
       currency: rows[0]?.currency ?? null,
       buckets: rows.map((r) => ({
@@ -270,7 +277,82 @@ export class FareHistoryRepository implements IFareHistoryRepository {
         min_hyb_cash: r.min_hyb_cash,
         samples: r.samples,
       })),
+      byAirline,
     }
+  }
+
+  /**
+   * Same window and buckets as `getSeries`, split by airline instead of merged.
+   *
+   * A separate query, not a GROUP BY added to the one above: the merged curve
+   * must keep emitting the full bucket list (all-null) even when NO itinerary
+   * exists yet for the route — crossing buckets with an empty airline list would
+   * drop every bucket instead, and the chart indexes `buckets[i]` assuming the
+   * full list is always there.
+   */
+  private async getSeriesByAirline(
+    query: FareHistoryQuery,
+    params: unknown[],
+    tripFilter: string,
+  ): Promise<{ airline: string; buckets: FareHistoryBucket[] }[]> {
+    const { rows } = await this.db.query<FareHistoryBucket & { airline: string }>(`
+      WITH bounds AS (
+        SELECT date_trunc('hour', NOW()) - $6::interval AS from_ts, NOW() AS to_ts
+      ),
+      itins AS (
+        SELECT i.id, i.airline
+        FROM fare_itineraries i
+        WHERE i.airline = ANY($1::text[])
+          AND i.origin = $2 AND i.destination = $3
+          AND i.outbound_date BETWEEN $4 AND $5
+          ${tripFilter}
+      ),
+      distinct_airlines AS (SELECT DISTINCT airline FROM itins),
+      segs AS (
+        SELECT h.id, i.airline, h.amount_cash_brl AS amount_cash, h.amount_pts, h.amount_hyb_pts,
+               h.amount_hyb_cash_brl AS amount_hyb_cash, h.observed_from, h.last_seen_at
+        FROM fare_price_history h
+        JOIN itins i ON i.id = h.itinerary_id
+        WHERE h.last_seen_at >= (SELECT from_ts FROM bounds)
+      ),
+      buckets AS (
+        SELECT gs AS bucket_start
+        FROM bounds, generate_series(bounds.from_ts, bounds.to_ts, $7::interval) gs
+      ),
+      bucket_airline AS (
+        SELECT b.bucket_start, a.airline FROM buckets b CROSS JOIN distinct_airlines a
+      )
+      SELECT
+        ba.bucket_start,
+        ba.airline,
+        MIN(s.amount_cash)     AS min_cash,
+        MIN(s.amount_pts)      AS min_pts,
+        MIN(s.amount_hyb_pts)  AS min_hyb_pts,
+        MIN(s.amount_hyb_cash) AS min_hyb_cash,
+        COUNT(s.id)::int       AS samples
+      FROM bucket_airline ba
+      LEFT JOIN segs s
+        ON  s.airline        = ba.airline
+        AND s.observed_from  < ba.bucket_start + $7::interval
+        AND s.last_seen_at  >= ba.bucket_start
+      GROUP BY ba.bucket_start, ba.airline
+      ORDER BY ba.airline, ba.bucket_start
+    `, params)
+
+    const byAirline = new Map<string, FareHistoryBucket[]>()
+    for (const r of rows) {
+      const list = byAirline.get(r.airline) ?? []
+      list.push({
+        bucket_start: r.bucket_start,
+        min_cash: r.min_cash,
+        min_pts: r.min_pts,
+        min_hyb_pts: r.min_hyb_pts,
+        min_hyb_cash: r.min_hyb_cash,
+        samples: r.samples,
+      })
+      byAirline.set(r.airline, list)
+    }
+    return [...byAirline.entries()].map(([airline, buckets]) => ({ airline, buckets }))
   }
 
   async recordRun(requestId: string): Promise<number> {
