@@ -190,7 +190,7 @@ export class SchedulerService implements ISchedulerService {
       const claimed = await this.batchRepo.claimBatchForRoutine(routineId, size)
       if (!claimed) break
 
-      const result = await this.dispatchBatch(claimed)
+      const result = await this.dispatchBatch(claimed, true)
       if (result !== 'dispatched') break
       dispatched++
 
@@ -220,6 +220,25 @@ export class SchedulerService implements ISchedulerService {
       await this.batchRepo.markClosing(batch.id, 'superseded: nova analise pedida para a rota')
       const delivery = await this.cancelDispatcher.requestBatchCancel(batch.id, 'drain')
       log.info({ batchId: batch.id, airline: batch.airline, delivery }, 'batch superseded: aguardando o worker encerrar')
+
+      // No worker connected, or the one that answered has never heard of this batch
+      // (typically: it restarted and lost its in-memory registry) — nobody is ever
+      // going to send the callback that closes it, and without this it sits in
+      // 'closing' (LIVE, blocking the route) until the 50min watchdog
+      // (`expireStaleBatches`) sweeps it. Safe to close right here instead: not_found
+      // means the worker never opened a browser for it, so there is no live session
+      // to race against — the two-sessions-of-the-same-airline risk the drain wait
+      // exists for (see this method's own doc comment) does not apply.
+      if (delivery.delivery === 'no_worker' || delivery.result === 'not_found') {
+        const items = await this.batchRepo.listItems(batch.id)
+        await this.batchRepo.close(batch.id, 'superseded', 'superseded: worker sem registro do lote')
+        for (const job of items) {
+          if (job.status === 'running') continue // o reclaim de lease ja cuidou
+          await this.scrapingJobRepo.deferJob(job.id, calcBackoffNextRunAt(batch.attempt - 1))
+        }
+        log.warn({ batchId: batch.id, airline: batch.airline, items: items.length },
+          'batch superseded: worker sem registro do lote, fechado direto')
+      }
     }
   }
 
@@ -337,7 +356,10 @@ export class SchedulerService implements ISchedulerService {
    * default to 1 and the whole ecosystem migrate onto this path before any airline
    * actually collects more than one item per session.
    */
-  private async dispatchBatch(claimed: ClaimedBatch): Promise<'dispatched' | 'busy' | 'error'> {
+  private async dispatchBatch(
+    claimed: ClaimedBatch,
+    manual = false,
+  ): Promise<'dispatched' | 'busy' | 'error'> {
     const { batch, items } = claimed
 
     const [originCountry, destinationCountry] = await Promise.all([
@@ -361,6 +383,7 @@ export class SchedulerService implements ISchedulerService {
       originCountry:      originCountry ?? undefined,
       destinationCountry: destinationCountry ?? undefined,
       deadlineMs:  this.env.SCRAPE_BATCH_DEADLINE_MS,
+      manual,
       items: prepared.map((p) => ({
         requestId:    p.requestId,
         jobId:        p.job.id,
