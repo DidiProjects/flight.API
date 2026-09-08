@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { ISchedulerService } from './interfaces/ISchedulerService'
-import { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
+import { AirlineBacklog, IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import { IAirportsRepository } from '../../modules/airports/interfaces/IAirportsRepository'
 import { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
@@ -24,6 +24,13 @@ interface CircuitBreakerState {
 
 const CIRCUIT_THRESHOLD = 5
 const CIRCUIT_COOLDOWN_MS = 15 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
+// Alarme de fila que não drena: quantos ticks seguidos de backlog crescente antes de
+// logar, piso pra não alarmar por uma fila de poucos itens, e idade máxima que um job
+// elegível pode esperar antes de ser sintoma por si só (independente de tendência).
+const BACKLOG_ALERT_TICKS = 3
+const BACKLOG_MIN_PENDING = 5
+const BACKLOG_MAX_AGE_MS = 6 * HOUR_MS
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000
 const EVALUATION_INTERVAL_MS = 5 * 60 * 1000
 const DAILY_TICK_INTERVAL_MS = 60_000
@@ -107,10 +114,34 @@ function calcBlockCooldownMs(consecutiveBlocks: number): number {
   return Math.min(CAP_MS, BASE_MS * Math.pow(2, Math.max(consecutiveBlocks - 1, 0)))
 }
 
-export { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt, calcBlockCooldownMs }
+/**
+ * Decisão pura de `checkBacklog`, separada pra ser testável sem precisar
+ * interceptar o log do pino: dado o histórico já atualizado (as últimas
+ * `BACKLOG_ALERT_TICKS` medições, a mais recente por último) e a idade do job
+ * elegível mais velho, diz se algum dos dois sintomas está presente.
+ */
+function backlogNeedsAlert(
+  pending: number,
+  history: number[],
+  oldestAgeMs: number,
+): { growingTrend: boolean; tooOld: boolean } {
+  const growingTrend =
+    history.length === BACKLOG_ALERT_TICKS &&
+    pending >= BACKLOG_MIN_PENDING &&
+    history.every((v, i) => i === 0 || v >= history[i - 1]) &&
+    history[history.length - 1] > history[0]
+  const tooOld = oldestAgeMs > BACKLOG_MAX_AGE_MS
+  return { growingTrend, tooOld }
+}
+
+export { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt, calcBlockCooldownMs, backlogNeedsAlert }
 
 export class SchedulerService implements ISchedulerService {
   private readonly circuitBreakers = new Map<string, CircuitBreakerState>()
+  // Últimas `BACKLOG_ALERT_TICKS` medições de pendentes por companhia — só em
+  // memória, perdida no restart, o que é aceitável: um restart já reduziu o
+  // backlog observado e a tendência recomeça a ser medida do zero, honestamente.
+  private readonly backlogHistory = new Map<string, number[]>()
   // Daily bucket already processed by maintenance (aggregation/cleanup). Allows
   // catch-up: if the exact 02:00 tick is missed, it runs on the next tick.
   private lastMaintenanceBucket: string | null = null
@@ -285,6 +316,8 @@ export class SchedulerService implements ISchedulerService {
 
         const retired = await this.scrapingJobRepo.retireOrphans()
         if (retired > 0) log.info({ retired }, 'orphan jobs retired')
+
+        this.checkBacklog(await this.scrapingJobRepo.getBacklogStats())
       } catch (err) {
         log.error({ err }, 'job derivation error')
       } finally {
@@ -295,6 +328,39 @@ export class SchedulerService implements ISchedulerService {
     }
     const initial = this.env.SCRAPE_INTERVAL_MS + Math.random() * this.env.SCRAPE_INTERVAL_JITTER_MS
     this.arm(tick, initial)
+  }
+
+  /**
+   * Loga (não envia e-mail — o Grafana/Loki já coleta o `pino` daqui) quando o
+   * backlog dispatchável de uma companhia dá sinal de que a vazão não está
+   * dando conta da demanda: `pending` crescendo tick a tick, ou um job
+   * elegível esperando há tempo demais mesmo sem tendência clara.
+   *
+   * A tendência crescente já É o sintoma de "chegada > drenagem" — não precisa
+   * de uma segunda métrica de vazão pra provar o que o próprio crescimento
+   * do backlog já mostra.
+   */
+  private checkBacklog(stats: AirlineBacklog[]): void {
+    for (const s of stats) {
+      const history = this.backlogHistory.get(s.airline) ?? []
+      history.push(s.pending)
+      if (history.length > BACKLOG_ALERT_TICKS) history.shift()
+      this.backlogHistory.set(s.airline, history)
+
+      const oldestAgeMs = s.oldest_eligible ? Date.now() - s.oldest_eligible.getTime() : 0
+      const { growingTrend, tooOld } = backlogNeedsAlert(s.pending, history, oldestAgeMs)
+
+      if (growingTrend || tooOld) {
+        log.warn({
+          airline: s.airline,
+          pending: s.pending,
+          oldestEligibleAgeHours: Math.round(oldestAgeMs / HOUR_MS * 10) / 10,
+          trend: history,
+          growingTrend,
+          tooOld,
+        }, 'scraping_queue_backlog')
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -346,6 +412,15 @@ export class SchedulerService implements ISchedulerService {
         const naCompanhia = await this.batchRepo.countLiveByAirline(airline)
         if (naCompanhia >= perAirline) {
           log.info({ airline, naCompanhia, perAirline }, 'dispatch skipped: per-airline cap reached')
+          break
+        }
+        // Concorrência (acima) limita quantos rodam AO MESMO TEMPO; isto limita
+        // quantos COMEÇAM por hora — sem ele, o instante em que um lote termina
+        // já reivindica o próximo, e um grid grande bate na companhia sem folga.
+        const maxPorHora = (await this.airlinesRepo.findByCode(airline))?.max_dispatches_per_hour ?? 2
+        const despachadosNaHora = await this.batchRepo.countCreatedSince(airline, new Date(Date.now() - HOUR_MS))
+        if (despachadosNaHora >= maxPorHora) {
+          log.info({ airline, despachadosNaHora, maxPorHora }, 'dispatch skipped: hourly cap reached')
           break
         }
         const result = await this.dispatchNextBatch(airline)

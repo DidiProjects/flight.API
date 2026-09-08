@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { SchedulerService, calcBlockCooldownMs } from './SchedulerService'
+import { SchedulerService, calcBlockCooldownMs, backlogNeedsAlert } from './SchedulerService'
 import type { IScrapingJobRepository, ScrapingJobRow } from '../../modules/scraping-jobs/interfaces/IScrapingJobRepository'
 import type { IFlightFaresRepository } from '../../modules/flight-fares/interfaces/IFlightFaresRepository'
 import type { IAnalysisRunsRepository } from '../../modules/analysis-runs/interfaces/IAnalysisRunsRepository'
@@ -93,6 +93,7 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     cleanupDeadJobs:     vi.fn().mockResolvedValue(0),
     findRunningOrphans:  vi.fn().mockResolvedValue([]),
     retireOrphans:     vi.fn().mockResolvedValue(0),
+    getBacklogStats:   vi.fn().mockResolvedValue([]),
   } as unknown as IScrapingJobRepository
 }
 
@@ -177,14 +178,17 @@ function makeBatchRepoMock(job: ScrapingJobRow | null = null) {
     markSuperseded:       vi.fn().mockResolvedValue(undefined),
     countLive:            vi.fn().mockResolvedValue(0),
     countLiveByAirline:   vi.fn().mockResolvedValue(0),
+    // Alto de propósito: os testes de despacho já existentes não devem esbarrar
+    // no teto por hora sem pedir por isso — quem quer testar o teto passa 0/1.
+    countCreatedSince:    vi.fn().mockResolvedValue(0),
     findLiveOlderThan:    vi.fn().mockResolvedValue([]),
     closeLiveByAirline:   vi.fn().mockResolvedValue([]),
   }
 }
 
-function makeAirlinesRepoMock(batchSize = 1) {
+function makeAirlinesRepoMock(batchSize = 1, maxDispatchesPerHour = 100) {
   return {
-    findByCode:            vi.fn().mockResolvedValue({ code: 'azul', batch_size: batchSize }),
+    findByCode:            vi.fn().mockResolvedValue({ code: 'azul', batch_size: batchSize, max_dispatches_per_hour: maxDispatchesPerHour }),
     batchSizesForRoutine:  vi.fn().mockResolvedValue([batchSize]),
   }
 }
@@ -311,6 +315,34 @@ describe('SchedulerService — dispatch loop', () => {
 
     expect(batchRepo.claimBatch).not.toHaveBeenCalled()
     expect(scraperClient.dispatchBatch).not.toHaveBeenCalled()
+  })
+
+  it('não reivindica lote de companhia que já bateu o teto de despachos por hora', async () => {
+    // Concorrência (countLiveByAirline) e frequência (countCreatedSince) são
+    // tetos diferentes: aqui NENHUMA sessão está em voo, só já houve despachos
+    // demais na última hora.
+    const job = makeJob()
+    const batchRepo = makeBatchRepoMock(job)
+    batchRepo.countCreatedSince = vi.fn().mockResolvedValue(2)
+    const airlinesRepo = makeAirlinesRepoMock(1, 2)
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(job), undefined, undefined, batchRepo, airlinesRepo)
+
+    await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
+
+    expect(batchRepo.claimBatch).not.toHaveBeenCalled()
+    expect(scraperClient.dispatchBatch).not.toHaveBeenCalled()
+  })
+
+  it('despacha normalmente enquanto o teto por hora não foi atingido', async () => {
+    const job = makeJob()
+    const batchRepo = makeBatchRepoMock(job)
+    batchRepo.countCreatedSince = vi.fn().mockResolvedValue(1)
+    const airlinesRepo = makeAirlinesRepoMock(1, 2)
+    const { svc, scraperClient } = makeSvc(makeScrapingJobRepoMock(job), undefined, undefined, batchRepo, airlinesRepo)
+
+    await (svc as never as { dispatchForAirlines(n: number): Promise<void> }).dispatchForAirlines(5)
+
+    expect(scraperClient.dispatchBatch).toHaveBeenCalledOnce()
   })
 
   it('o disparo manual para no teto por companhia, em vez de mandar a rotina inteira de uma vez', async () => {
@@ -516,5 +548,46 @@ describe('calcBlockCooldownMs', () => {
   it('0 ou negativo (defensivo) se comporta como o primeiro bloqueio', () => {
     expect(calcBlockCooldownMs(0)).toBe(1 * HOUR)
     expect(calcBlockCooldownMs(-3)).toBe(1 * HOUR)
+  })
+})
+
+describe('backlogNeedsAlert', () => {
+  const HOUR = 60 * 60_000
+
+  it('histórico crescente, acima do piso, 3 medições — alarma por tendência', () => {
+    const { growingTrend, tooOld } = backlogNeedsAlert(9, [5, 7, 9], 0)
+    expect(growingTrend).toBe(true)
+    expect(tooOld).toBe(false)
+  })
+
+  it('histórico estável não alarma, mesmo com 3 medições', () => {
+    const { growingTrend } = backlogNeedsAlert(5, [5, 5, 5], 0)
+    expect(growingTrend).toBe(false)
+  })
+
+  it('histórico caindo não alarma', () => {
+    const { growingTrend } = backlogNeedsAlert(3, [9, 6, 3], 0)
+    expect(growingTrend).toBe(false)
+  })
+
+  it('backlog pequeno não alarma mesmo crescendo — abaixo do piso', () => {
+    const { growingTrend } = backlogNeedsAlert(3, [1, 2, 3], 0)
+    expect(growingTrend).toBe(false)
+  })
+
+  it('menos de 3 medições ainda (processo acabou de subir) não alarma por tendência', () => {
+    const { growingTrend } = backlogNeedsAlert(9, [7, 9], 0)
+    expect(growingTrend).toBe(false)
+  })
+
+  it('job elegível esperando há mais de 6h alarma por idade, mesmo sem tendência', () => {
+    const { growingTrend, tooOld } = backlogNeedsAlert(5, [5, 5, 5], 7 * HOUR)
+    expect(growingTrend).toBe(false)
+    expect(tooOld).toBe(true)
+  })
+
+  it('dentro do limiar de idade não alarma por esse motivo', () => {
+    const { tooOld } = backlogNeedsAlert(5, [5, 5, 5], 5 * HOUR)
+    expect(tooOld).toBe(false)
   })
 })
