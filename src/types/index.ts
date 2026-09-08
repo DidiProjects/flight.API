@@ -27,6 +27,18 @@ export interface AirlineRow {
    * still makes an extra points pass), so this rises one airline at a time.
    */
   batch_size: number
+  /**
+   * Bloqueios seguidos, para a pausa pós-bloqueio escalar em vez de ficar
+   * fixa. Zera na primeira coleta bem-sucedida da companhia (`ScrapeService`).
+   */
+  consecutive_blocks: number
+  /**
+   * Teto de lotes despachados por hora, para esta companhia. Concorrência
+   * (`SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE`) limita quantos rodam AO MESMO TEMPO;
+   * isto limita quantos COMEÇAM por hora — sem ele, o instante em que um
+   * termina já reivindica o próximo (`SchedulerService.dispatchForAirlines`).
+   */
+  max_dispatches_per_hour: number
 }
 
 export interface CcEmail {

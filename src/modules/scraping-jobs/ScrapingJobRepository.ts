@@ -1,6 +1,6 @@
 import { Pool } from 'pg'
-import { AdminJobRow, IScrapingJobRepository, ResetJobsResult, ScrapingJobRow, SettleBatchItemOptions } from './interfaces/IScrapingJobRepository'
-import { belongsToRoutine, ORPHAN_PREDICATE } from './predicates'
+import { AdminJobRow, AirlineBacklog, IScrapingJobRepository, ResetJobsResult, ScrapingJobRow, SettleBatchItemOptions } from './interfaces/IScrapingJobRepository'
+import { belongsToRoutine, JOB_IS_ELIGIBLE, ORPHAN_PREDICATE } from './predicates'
 
 // Re-exportado: FlightFares e AnalysisRuns importam daqui desde antes de os
 // predicados ganharem arquivo proprio.
@@ -504,6 +504,16 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
         AND flight_date >= CURRENT_DATE
     `)
     return rows.map((r) => r.airline)
+  }
+
+  async getBacklogStats(): Promise<AirlineBacklog[]> {
+    const { rows } = await this.db.query<{ airline: string; pending: string; oldest_eligible: Date | null }>(`
+      SELECT j.airline, count(*)::text AS pending, min(j.next_run_at) AS oldest_eligible
+      FROM scraping_jobs j
+      WHERE ${JOB_IS_ELIGIBLE('j')}
+      GROUP BY j.airline
+    `)
+    return rows.map((r) => ({ airline: r.airline, pending: Number(r.pending), oldest_eligible: r.oldest_eligible }))
   }
 
   async cleanupDeadJobs(): Promise<number> {

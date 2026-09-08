@@ -64,6 +64,12 @@ export interface IScrapingBatchRepository {
 
   countLive(): Promise<number>
   countLiveByAirline(airline: string): Promise<number>
+  /**
+   * Lotes CRIADOS desde `since`, qualquer status — inclusive já terminados. É a
+   * janela deslizante do teto de despachos por hora: conta tentativas feitas,
+   * não sessões ainda vivas (isso já é `countLiveByAirline`).
+   */
+  countCreatedSince(airline: string, since: Date): Promise<number>
   /** Live batches older than `maxRunMin` — the backstop of the closing rules. */
   findLiveOlderThan(maxRunMin: number): Promise<ScrapingBatchRow[]>
   /** Closes every live batch of an airline. Used when a block pauses the airline. */

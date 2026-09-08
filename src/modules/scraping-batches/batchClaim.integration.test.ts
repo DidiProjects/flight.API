@@ -219,4 +219,77 @@ describeIt('claim de lote (integração / Postgres real)', () => {
 
     expect(depois?.item_count).toBe(1)
   })
+
+  describe('countCreatedSince', () => {
+    // A janela do teto de despachos por hora: conta LOTES criados, qualquer
+    // status — inclusive já fechado. Não é o mesmo que countLiveByAirline.
+    it('conta lotes de qualquer status dentro da janela, de uma companhia só', async () => {
+      const id1 = await criaJob({ date: '2026-12-11' })
+      const c1 = await batches.claimBatch('britishairways', 1)
+      await batches.close(c1!.batch.id, 'completed', 'completed')
+      void id1
+      const id2 = await criaJob({ date: '2026-12-12' })
+      await batches.claimBatch('britishairways', 1)
+      void id2
+      await criaJob({ airline: 'latam', date: '2026-12-11' })
+      await batches.claimBatch('latam', 1)
+
+      const umaHoraAtras = new Date(Date.now() - 60 * 60_000)
+
+      expect(await batches.countCreatedSince('britishairways', umaHoraAtras)).toBe(2)
+      expect(await batches.countCreatedSince('latam', umaHoraAtras)).toBe(1)
+    })
+
+    it('não conta lote criado antes do início da janela', async () => {
+      await criaJob({ date: '2026-12-11' })
+      await batches.claimBatch('britishairways', 1)
+
+      const daqui1h = new Date(Date.now() + 60 * 60_000)
+
+      expect(await batches.countCreatedSince('britishairways', daqui1h)).toBe(0)
+    })
+  })
+
+  describe('getBacklogStats (ScrapingJobRepository)', () => {
+    // A mesma regra de elegibilidade do claim (JOB_IS_ELIGIBLE) — job dentro de
+    // um lote vivo não conta como pendente, senão o alarme de backlog dispara
+    // sobre um lote que já está rodando.
+    it('conta só os elegíveis por companhia, e ignora quem está num lote vivo', async () => {
+      await criaJob({ airline: 'britishairways', date: '2026-12-11' })
+      await criaJob({ airline: 'britishairways', date: '2026-12-12' })
+      const presoNoLote = await criaJob({ airline: 'britishairways', date: '2026-12-13' })
+      await batches.claimBatch('britishairways', 1) // segura o mais prioritário
+      void presoNoLote
+      await criaJob({ airline: 'latam', date: '2026-12-11' })
+
+      const stats = await jobs.getBacklogStats()
+
+      const ba = stats.find((s) => s.airline === 'britishairways')
+      const latam = stats.find((s) => s.airline === 'latam')
+      expect(ba?.pending).toBe(2)
+      expect(latam?.pending).toBe(1)
+    })
+
+    it('oldest_eligible é o next_run_at mais antigo entre os pendentes da companhia', async () => {
+      await pool.query(
+        `INSERT INTO ${SCHEMA}.scraping_jobs (airline, origin, destination, flight_date, next_run_at)
+         VALUES ('britishairways', 'LHR', 'GRU', '2026-12-11', now() - interval '10 hours'),
+                ('britishairways', 'LHR', 'GRU', '2026-12-12', now() - interval '2 hours')`,
+      )
+
+      const stats = await jobs.getBacklogStats()
+
+      const ba = stats.find((s) => s.airline === 'britishairways')
+      expect(ba?.pending).toBe(2)
+      const idadeHoras = (Date.now() - ba!.oldest_eligible!.getTime()) / (60 * 60_000)
+      expect(idadeHoras).toBeGreaterThan(9)
+      expect(idadeHoras).toBeLessThan(11)
+    })
+
+    it('companhia sem nenhum job elegível não aparece no resultado', async () => {
+      const stats = await jobs.getBacklogStats()
+
+      expect(stats.find((s) => s.airline === 'britishairways')).toBeUndefined()
+    })
+  })
 })

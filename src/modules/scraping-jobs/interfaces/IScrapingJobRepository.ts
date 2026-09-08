@@ -39,6 +39,14 @@ export interface SettleBatchItemOptions {
   error?: string | null
 }
 
+/** One airline's backlog right now: how many jobs are dispatchable, and since when the oldest has waited. */
+export interface AirlineBacklog {
+  airline: string
+  pending: number
+  /** `next_run_at` of the oldest eligible job — null when there is no backlog at all. */
+  oldest_eligible: Date | null
+}
+
 /** Balance of the reset: what went back to zero and what was preserved, and why. */
 export interface ResetJobsResult {
   reset: number
@@ -87,5 +95,7 @@ export interface IScrapingJobRepository {
   findRunningOrphans(): Promise<ScrapingJobRow[]>
   retireOrphans(): Promise<number>
   countForRoutine(routineId: string): Promise<number>
+  /** Backlog dispatchável agora, por companhia — a base do alarme de fila que não drena. */
+  getBacklogStats(): Promise<AirlineBacklog[]>
   resetExclusiveToRoutine(routineId: string): Promise<ResetJobsResult>
 }
