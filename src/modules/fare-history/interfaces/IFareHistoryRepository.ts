@@ -44,10 +44,21 @@ export interface FareHistoryBucket {
   samples: number
 }
 
+/** One airline's own curve, for the chart to show the dispute behind the highlight. */
+export interface FareHistoryAirlineSeries {
+  airline: string
+  buckets: FareHistoryBucket[]
+}
+
 export interface FareHistorySeries {
   /** Currency of the most recent segment — the one the card is showing. */
   currency: string | null
   buckets: FareHistoryBucket[]
+  /**
+   * One curve per airline that had a price in the window — empty on a
+   * single-airline routine, where it would be identical to `buckets`.
+   */
+  byAirline: FareHistoryAirlineSeries[]
 }
 
 /** Route and windows of a routine. With `inbound`, the series is of pair TOTALS. */

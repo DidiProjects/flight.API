@@ -470,6 +470,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       -- companhia nunca ofereceu.
       per_combo AS (
         SELECT
+          lp.airline,
           lp.scraped_at,
           o.currency,
           o.inbound_unavailable,
@@ -515,15 +516,15 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          AND NOT (i.origin = o.origin AND i.destination = o.destination)
          -- paired_outbound_flight NULL = coleta anterior ao vínculo 1-para-N.
          AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
-        GROUP BY lp.scraped_at, o.id
+        GROUP BY lp.airline, lp.scraped_at, o.id
       ),
       -- As parcelas têm de vir da MESMA combinação que ganhou cada dimensão.
       -- Pegar o menor out e o menor in separadamente descreveria um par que a
       -- companhia não vendeu — a volta barata pode pertencer a outra ida.
-      win_cash     AS (SELECT out_cash,     in_cash,     scraped_at FROM per_combo WHERE total_cash     IS NOT NULL ORDER BY total_cash,     scraped_at DESC LIMIT 1),
-      win_pts      AS (SELECT out_pts,      in_pts,      scraped_at FROM per_combo WHERE total_pts      IS NOT NULL ORDER BY total_pts,      scraped_at DESC LIMIT 1),
-      win_hyb_pts  AS (SELECT out_hyb_pts,  in_hyb_pts,  scraped_at FROM per_combo WHERE total_hyb_pts  IS NOT NULL ORDER BY total_hyb_pts,  scraped_at DESC LIMIT 1),
-      win_hyb_cash AS (SELECT out_hyb_cash, in_hyb_cash, scraped_at FROM per_combo WHERE total_hyb_cash IS NOT NULL ORDER BY total_hyb_cash, scraped_at DESC LIMIT 1)
+      win_cash     AS (SELECT airline, out_cash,     in_cash,     scraped_at FROM per_combo WHERE total_cash     IS NOT NULL ORDER BY total_cash,     scraped_at DESC LIMIT 1),
+      win_pts      AS (SELECT airline, out_pts,      in_pts,      scraped_at FROM per_combo WHERE total_pts      IS NOT NULL ORDER BY total_pts,      scraped_at DESC LIMIT 1),
+      win_hyb_pts  AS (SELECT airline, out_hyb_pts,  in_hyb_pts,  scraped_at FROM per_combo WHERE total_hyb_pts  IS NOT NULL ORDER BY total_hyb_pts,  scraped_at DESC LIMIT 1),
+      win_hyb_cash AS (SELECT airline, out_hyb_cash, in_hyb_cash, scraped_at FROM per_combo WHERE total_hyb_cash IS NOT NULL ORDER BY total_hyb_cash, scraped_at DESC LIMIT 1)
       SELECT
         -- Total de par é sempre em Real (017): a conversão já aconteceu na
         -- coleta, então não há moeda a eleger entre as pernas.
@@ -545,6 +546,11 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         (SELECT scraped_at FROM win_pts)      AS best_pts_at,
         (SELECT scraped_at FROM win_hyb_pts)  AS best_hyb_pts_at,
         (SELECT scraped_at FROM win_hyb_cash) AS best_hyb_cash_at,
+        -- Companhia da combinação vencedora de cada dimensão (ver getCurrentBest).
+        (SELECT airline FROM win_cash)     AS best_cash_airline,
+        (SELECT airline FROM win_pts)      AS best_pts_airline,
+        (SELECT airline FROM win_hyb_pts)  AS best_hyb_pts_airline,
+        (SELECT airline FROM win_hyb_cash) AS best_hyb_cash_airline,
         MAX(scraped_at)     AS scraped_at,
         -- Só quando NENHUMA dimensão fechou total e existe ida com volta
         -- indefinida: aí o "sem total" tem motivo conhecido, e a rotina exibe
@@ -559,6 +565,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       currency: null, best_cash: null, best_pts: null,
       best_hyb_pts: null, best_hyb_cash: null, scraped_at: null,
       best_cash_at: null, best_pts_at: null, best_hyb_pts_at: null, best_hyb_cash_at: null,
+      best_cash_airline: null, best_pts_airline: null, best_hyb_pts_airline: null, best_hyb_cash_airline: null,
       inbound_unavailable: false,
       best_cash_outbound: null, best_cash_inbound: null,
       best_pts_outbound: null, best_pts_inbound: null,
@@ -613,7 +620,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         -- sumia da régua sem deixar rastro. Em Real todas cabem na mesma coluna.
         -- fare_cash_brl NULL (linha anterior à 017, ou sem cotação confiável)
         -- sai sozinha do MIN, que ignora NULL.
-        SELECT f.fare_cash_brl AS fare_cash, f.fare_pts, f.fare_hyb_pts,
+        SELECT f.airline, f.fare_cash_brl AS fare_cash, f.fare_pts, f.fare_hyb_pts,
                f.fare_hyb_cash_brl AS fare_hyb_cash, lpd.scraped_at
         FROM flight_fares f
         INNER JOIN latest_per_date lpd
@@ -637,6 +644,12 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         (SELECT scraped_at FROM coletado WHERE fare_pts      IS NOT NULL ORDER BY fare_pts,      scraped_at DESC LIMIT 1) AS best_pts_at,
         (SELECT scraped_at FROM coletado WHERE fare_hyb_pts  IS NOT NULL ORDER BY fare_hyb_pts,  scraped_at DESC LIMIT 1) AS best_hyb_pts_at,
         (SELECT scraped_at FROM coletado WHERE fare_hyb_cash IS NOT NULL ORDER BY fare_hyb_cash, scraped_at DESC LIMIT 1) AS best_hyb_cash_at,
+        -- Companhia dona do preço vencedor NAQUELA dimensão — não é a mesma em
+        -- todas quando a rotina compara mais de uma (ver RoutineCard).
+        (SELECT airline FROM coletado WHERE fare_cash     IS NOT NULL ORDER BY fare_cash,     scraped_at DESC LIMIT 1) AS best_cash_airline,
+        (SELECT airline FROM coletado WHERE fare_pts      IS NOT NULL ORDER BY fare_pts,      scraped_at DESC LIMIT 1) AS best_pts_airline,
+        (SELECT airline FROM coletado WHERE fare_hyb_pts  IS NOT NULL ORDER BY fare_hyb_pts,  scraped_at DESC LIMIT 1) AS best_hyb_pts_airline,
+        (SELECT airline FROM coletado WHERE fare_hyb_cash IS NOT NULL ORDER BY fare_hyb_cash, scraped_at DESC LIMIT 1) AS best_hyb_cash_airline,
         MAX(scraped_at)       AS scraped_at
       FROM coletado
     `, [airlines, origin, destination, dateFrom, dateTo, maxAgeHours])
@@ -652,6 +665,10 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       best_pts_at: null,
       best_hyb_pts_at: null,
       best_hyb_cash_at: null,
+      best_cash_airline: null,
+      best_pts_airline: null,
+      best_hyb_pts_airline: null,
+      best_hyb_cash_airline: null,
     }
   }
 
@@ -698,6 +715,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
       -- barata de OUTRA ida descreveria um par que a companhia não vende.
       per_combo AS (
         SELECT
+          o.airline,
           o.flight_date,
           -- Em Real, pela taxa congelada na coleta (017). Esta query somava as
           -- duas pernas na moeda de origem sem exigir que coincidissem — era ela
@@ -723,17 +741,22 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          -- errada da tela; volta em outro aeroporto da cidade é legítima.
          AND NOT (i.origin = o.origin AND i.destination = o.destination)
          AND (i.paired_outbound_flight = o.flight_number OR i.paired_outbound_flight IS NULL)
-        GROUP BY o.id, o.flight_date
+        GROUP BY o.id, o.airline, o.flight_date
       )
+      -- Por (data, companhia): o merge entre companhias acontece no service, a
+      -- partir destas mesmas linhas — um único ponto de verdade para o
+      -- calendário combinado e para o calendário por companhia (ver
+      -- FlightFaresService.getByDate).
       SELECT
+        airline,
         flight_date,
         MIN(total_cash)     AS best_cash,
         MIN(total_pts)      AS best_pts,
         MIN(total_hyb_pts)  AS best_hyb_pts,
         MIN(total_hyb_cash) AS best_hyb_cash
       FROM per_combo
-      GROUP BY flight_date
-      ORDER BY flight_date
+      GROUP BY airline, flight_date
+      ORDER BY flight_date, airline
     `, [airlines, origin, destination, outFrom, outTo, inbound.from, inbound.to, maxAgeHours])
     return rows
   }
@@ -765,6 +788,7 @@ export class FlightFaresRepository implements IFlightFaresRepository {
         ORDER BY airline, flight_date, scraped_at DESC
       )
       SELECT
+        f.airline,
         f.flight_date,
         -- Em Real, como o card e a variante de par. Ficou de fora do "todo valor
         -- em Real" e só doía com uma companhia; com duas, o MIN elegeria £730
@@ -781,8 +805,8 @@ export class FlightFaresRepository implements IFlightFaresRepository {
          = COALESCE(lpd.request_id::text, lpd.scraping_job_id::text)
       WHERE f.airline = ANY($1::text[]) AND f.origin = $2 AND f.destination = $3
         AND f.return_date IS NULL
-      GROUP BY f.flight_date
-      ORDER BY f.flight_date
+      GROUP BY f.airline, f.flight_date
+      ORDER BY f.flight_date, f.airline
     `, [airlines, origin, destination, dateFrom, dateTo, maxAgeHours])
     return rows
   }
