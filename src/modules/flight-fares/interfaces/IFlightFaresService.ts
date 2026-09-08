@@ -41,9 +41,23 @@ export type FlightFaresCurrent = PriceHistory & CurrentBest & {
   journeys: Journey[]
 }
 
+/** One date's prices — no `airline`: on `dates` it is already the cross-airline best. */
+export type PriceByDateEntry = Omit<PriceByDate, 'airline'>
+
+/**
+ * `dates` is the merge across every airline of the routine — what the calendar
+ * showed before this existed. `byAirline` is the same rows regrouped, one list
+ * per airline, so the card can show a calendar per company instead of only the
+ * cross-airline best.
+ */
+export interface PriceByDateResult {
+  dates: PriceByDateEntry[]
+  byAirline: { airline: string; dates: PriceByDateEntry[] }[]
+}
+
 export interface IFlightFaresService {
   getHistory(airline: string, origin: string, destination: string, flightDate: string): Promise<PriceHistory>
   getSummary(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceHistory>
   getCurrent(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<FlightFaresCurrent>
-  getByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceByDate[]>
+  getByDate(airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string, inbound?: { from: string; to: string }): Promise<PriceByDateResult>
 }

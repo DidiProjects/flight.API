@@ -95,6 +95,15 @@ export interface CurrentBest {
   best_hyb_pts_at: Date | null
   best_hyb_cash_at: Date | null
   /**
+   * Airline behind the winning fare of EACH dimension — not always the same one:
+   * comparing more than one airline, the cheapest in cash need not be the
+   * cheapest in points. `null` when nothing was collected in that dimension.
+   */
+  best_cash_airline: string | null
+  best_pts_airline: string | null
+  best_hyb_pts_airline: string | null
+  best_hyb_cash_airline: string | null
+  /**
    * Round-trip with no total because the return is undefined (a known airline
    * limitation). Tells "the trip has no total" from "nothing was collected" — the
    * outbound exists, it is just not the price of the trip.
@@ -120,6 +129,8 @@ export interface CurrentBest {
 }
 
 export interface PriceByDate {
+  /** One row per (date, airline): the merge across airlines happens in the service. */
+  airline: string
   flight_date: string
   best_cash: number | null
   best_pts: number | null

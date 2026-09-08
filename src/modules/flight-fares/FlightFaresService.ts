@@ -1,4 +1,4 @@
-import { FlightFaresCurrent, IFlightFaresService, Journey } from './interfaces/IFlightFaresService'
+import { FlightFaresCurrent, IFlightFaresService, Journey, PriceByDateEntry, PriceByDateResult } from './interfaces/IFlightFaresService'
 import { CurrentBest, IFlightFaresRepository, PriceByDate, PriceHistory } from './interfaces/IFlightFaresRepository'
 
 /**
@@ -106,10 +106,68 @@ export class FlightFaresService implements IFlightFaresService {
     }]
   }
 
-  getByDate(
+  async getByDate(
     airlines: string[], origin: string, destination: string, dateFrom: string, dateTo: string,
     inbound?: { from: string; to: string },
-  ): Promise<PriceByDate[]> {
-    return this.repo.getPriceByDate(airlines, origin, destination, dateFrom, dateTo, inbound)
+  ): Promise<PriceByDateResult> {
+    const rows = await this.repo.getPriceByDate(airlines, origin, destination, dateFrom, dateTo, inbound)
+
+    const byAirline = airlines
+      .map((airline) => ({
+        airline,
+        dates: rows
+          .filter((r) => r.airline === airline)
+          .map((r) => ({
+            flight_date:   this.dateKey(r.flight_date),
+            best_cash:     this.num(r.best_cash),
+            best_pts:      this.num(r.best_pts),
+            best_hyb_pts:  this.num(r.best_hyb_pts),
+            best_hyb_cash: this.num(r.best_hyb_cash),
+          })),
+      }))
+      .filter((s) => s.dates.length > 0)
+
+    return { dates: this.mergeByDate(rows), byAirline }
+  }
+
+  /**
+   * `flight_date` is a `date` column: pg hands it back as a `Date` object, not
+   * the string the type says — a NEW instance per row, so using it raw as a Map
+   * key groups nothing across airlines, and `.localeCompare` does not exist on
+   * it. Normalising once here is what makes `mergeByDate`'s grouping actually
+   * group.
+   */
+  private dateKey(v: unknown): string {
+    return v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
+  }
+
+  /**
+   * Cross-airline calendar: the same rows `getByDate` groups per company,
+   * collapsed to one entry per date. Kept in the service, not in SQL, so both
+   * views come from the exact same source and can never disagree.
+   */
+  private mergeByDate(rows: PriceByDate[]): PriceByDateEntry[] {
+    const byDate = new Map<string, PriceByDate[]>()
+    for (const r of rows) {
+      const key = this.dateKey(r.flight_date)
+      const list = byDate.get(key) ?? []
+      list.push(r)
+      byDate.set(key, list)
+    }
+
+    const min = (values: (number | string | null)[]): number | null => {
+      const nums = values.map((v) => this.num(v)).filter((v): v is number => v != null)
+      return nums.length ? Math.min(...nums) : null
+    }
+
+    return [...byDate.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([flight_date, entries]) => ({
+        flight_date,
+        best_cash:     min(entries.map((e) => e.best_cash)),
+        best_pts:      min(entries.map((e) => e.best_pts)),
+        best_hyb_pts:  min(entries.map((e) => e.best_hyb_pts)),
+        best_hyb_cash: min(entries.map((e) => e.best_hyb_cash)),
+      }))
   }
 }

@@ -49,7 +49,7 @@ export function flightFaresRoute(flightFaresSvc: IFlightFaresService) {
 
     app.get('/by-date', async (req, reply) => {
       const q = summaryQuerySchema.parse(req.query)
-      reply.send({ dates: await flightFaresSvc.getByDate(q.airlines, q.origin, q.destination, q.date_from, q.date_to, inboundOf(q)) })
+      reply.send(await flightFaresSvc.getByDate(q.airlines, q.origin, q.destination, q.date_from, q.date_to, inboundOf(q)))
     })
   }
 }
