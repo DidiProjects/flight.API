@@ -22,6 +22,13 @@ export interface ScrapeBatchDispatch {
   destinationCountry?: string
   /** Time ceiling for the whole batch. Decided here so the number lives in one place. */
   deadlineMs: number
+  /**
+   * Admin's explicit "analyse this now" (`dispatchOne`), not the scheduler's own loop.
+   * Lets `SerializedRateLimitedScraper` on the worker side skip the anti-bot
+   * inter-session wait for BA — an operator watching the dispatch does not want to sit
+   * through the cooldown for a session they asked for by hand.
+   */
+  manual?: boolean
   items: ScrapeBatchItem[]
 }
 

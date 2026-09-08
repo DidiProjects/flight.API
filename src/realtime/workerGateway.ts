@@ -84,16 +84,40 @@ export class WorkerGateway implements ICancelDispatcher {
 
   /**
    * Broadcast, unlike `requestCancel`: the batch is addressed by its own id and the
-   * worker holding it is not tracked per batch. Workers that do not own it ignore the
-   * command, which is cheaper than keeping a second routing table in sync.
+   * worker holding it is not tracked per batch. A worker that does not own it does not
+   * act on the command, but it does ack with `not_found` — same as `requestCancel`,
+   * every live worker's ack is awaited (same `cmd.id`, one shared resolver taking all
+   * of them) up to `CANCEL_ACK_TIMEOUT_MS`, so the caller can tell "nobody has this
+   * batch" from "someone does, wait for its own callback" instead of the broadcast
+   * resolving blind the instant it is sent.
    */
   requestBatchCancel(batchId: string, mode: 'drain' | 'now'): Promise<CancelDispatch> {
     const live = [...this.workers.values()].filter((ws) => ws.readyState === WebSocket.OPEN)
     if (live.length === 0) return Promise.resolve({ delivery: 'no_worker' })
 
     const cmd = envelope('batch.cancel', { batchId, mode })
-    for (const ws of live) ws.send(JSON.stringify(cmd))
-    return Promise.resolve({ delivery: 'dispatched' })
+    return new Promise<CancelDispatch>((resolve) => {
+      const results: CancelResult[] = []
+      let awaiting = live.length
+      let settled = false
+
+      const finish = () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.pendingCancels.delete(cmd.id)
+        // Any worker that actually owns it wins over the rest saying not_found.
+        const owned = results.find((r) => r !== 'not_found')
+        resolve({ delivery: 'dispatched', result: owned ?? results[0] })
+      }
+
+      const timer = setTimeout(finish, CANCEL_ACK_TIMEOUT_MS)
+      this.pendingCancels.set(cmd.id, (result) => {
+        results.push(result)
+        if (--awaiting <= 0) finish()
+      })
+      for (const ws of live) ws.send(JSON.stringify(cmd))
+    })
   }
 
   attach(server: Server): void {
