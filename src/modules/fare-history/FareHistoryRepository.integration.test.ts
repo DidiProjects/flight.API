@@ -410,6 +410,52 @@ describeIt('FareHistoryRepository (integração / Postgres real)', () => {
       const filled = series.buckets.filter((b) => b.samples > 0)
       expect(filled.every((b) => b.min_cash === '700.00')).toBe(true)
     })
+
+    /** Same shape as `seedSegment`, for a different airline than ROUTE's default. */
+    async function seedSegmentFor(airline: string, cash: number, fromHoursAgo: number, toHoursAgo: number): Promise<void> {
+      const { rows } = await pool.query(
+        `INSERT INTO fare_itineraries
+           (airline, trip_type, origin, destination, outbound_flight_number, outbound_date,
+            inbound_flight_number, inbound_date, currency)
+         VALUES ($1,'round_trip','GRU','CNF',$2,'2027-01-09','LA200','2027-01-15','BRL')
+         ON CONFLICT (airline, trip_type, origin, destination, outbound_flight_number,
+                      outbound_date, inbound_flight_number, inbound_date)
+         DO UPDATE SET currency = EXCLUDED.currency
+         RETURNING id`,
+        [airline, `${airline.slice(0, 2).toUpperCase()}${100 + cash}`],
+      )
+      await pool.query(
+        `INSERT INTO fare_price_history
+           (itinerary_id, currency, amount_cash, amount_cash_brl, observed_from, last_seen_at)
+         VALUES ($1,'BRL',$2,$2, NOW() - ($3 || ' hours')::interval, NOW() - ($4 || ' hours')::interval)`,
+        [rows[0].id, cash, fromHoursAgo, toHoursAgo],
+      )
+    }
+
+    it('byAirline vem vazio com uma companhia só — seria a mesma curva do destaque', async () => {
+      await seedSegment(700, 5, 1)
+
+      const series = await repo.getSeries(ROUTE, 'day')
+
+      expect(series.byAirline).toEqual([])
+    })
+
+    it('byAirline traz a curva de CADA companhia, sem fundir com a das outras', async () => {
+      const route = { ...ROUTE, airlines: ['azul', 'latam'] }
+      await seedSegment(700, 5, 1)
+      await seedSegmentFor('latam', 500, 5, 1)
+
+      const series = await repo.getSeries(route, 'day')
+
+      const azul = series.byAirline.find((s) => s.airline === 'azul')
+      const latam = series.byAirline.find((s) => s.airline === 'latam')
+      expect(azul?.buckets.some((b) => b.min_cash === '700.00')).toBe(true)
+      expect(latam?.buckets.some((b) => b.min_cash === '500.00')).toBe(true)
+      // O destaque (buckets do topo) continua o MENOR entre as duas — a curva
+      // por companhia não pode fazer o número principal do card discordar dele.
+      const filled = series.buckets.filter((b) => b.samples > 0)
+      expect(filled.every((b) => b.min_cash === '500.00')).toBe(true)
+    })
   })
 
   it('a limpeza apaga o itinerário parado e leva o histórico junto', async () => {
