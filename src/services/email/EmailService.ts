@@ -95,6 +95,7 @@ export class EmailService implements IEmailService {
       case 'latam':          return this.buildLatamLink(offer, passengers, fareType, ret)
       case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers, ret)
       case 'ryanair':        return this.buildRyanairLink(offer, passengers, ret)
+      case 'gol':            return this.buildGolLink(offer, passengers)
       default:               return null
     }
   }
@@ -188,6 +189,30 @@ export class EmailService implements IEmailService {
       tpDestinationIata:   offer.destination,
     })
     return `https://www.ryanair.com/gb/en/trip/flights/select?${p.toString()}`
+  }
+
+  /**
+   * Mirrors the scraper's voegol search URL. Cash only and one-way only — the
+   * GOL pilot never prices points (Smiles is a separate site) and its round-trip
+   * search was not observed, so `has_roundtrip=false` keeps `ret` always null
+   * here. `ida` is DD-MM-YYYY, unlike every other builder.
+   */
+  private buildGolLink(offer: OfferBlock, passengers: number): string {
+    const [y, m, d] = offer.date.split('-')
+    const p = new URLSearchParams({
+      pv:     'br',
+      tipo:   'DF',
+      lang:   'pt-BR',
+      de:     offer.origin,
+      para:   offer.destination,
+      ida:    `${d}-${m}-${y}`,
+      ADT:    String(passengers),
+      ADL:    '0',
+      CHD:    '0',
+      INF:    '0',
+      voebiz: '0',
+    })
+    return `https://b2c.voegol.com.br/compra/busca-parceiros?${p.toString()}`
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {

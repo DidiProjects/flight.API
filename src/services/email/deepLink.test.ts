@@ -51,6 +51,15 @@ describe('deep link de compra no e-mail — só-ida', () => {
     expect((await linksDoEmail('britishairways', null))[0]).toContain('trip=oneWay')
     expect((await linksDoEmail('ryanair', null))[0]).toContain('isReturn=false')
   })
+
+  it('gol vai para a busca do voegol, com a data em DD-MM-AAAA', async () => {
+    const url = (await linksDoEmail('gol', null))[0]!
+    expect(url).toContain('b2c.voegol.com.br/compra/busca-parceiros')
+    expect(url).toContain('de=GRU')
+    expect(url).toContain('para=LHR')
+    expect(url).toContain('ida=21-09-2026')
+    expect(url).not.toContain('volta')
+  })
 })
 
 describe('deep link de compra no e-mail — ida-e-volta', () => {
