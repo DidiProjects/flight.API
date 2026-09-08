@@ -4,16 +4,13 @@ import { IFlightFaresRepository } from '../flight-fares/interfaces/IFlightFaresR
 import { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnalysisRunsRepository'
 import { IScrapingBatchRepository, ScrapingBatchRow } from '../scraping-batches/interfaces/IScrapingBatchRepository'
 import { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
+import { IAirlinesRepository } from '../airlines/interfaces/IAirlinesRepository'
 import { BatchCallback, ScrapeCallback } from './schema'
-import { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt } from '../../services/scheduler/SchedulerService'
+import { calcNextRunAt, calcBackoffNextRunAt, calcSiteErrorNextRunAt, calcBlockCooldownMs } from '../../services/scheduler/SchedulerService'
 import { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import { logger } from '../../utils/logger'
 
 const log = logger.child({ service: 'scrape' })
-
-// An IP/bot block affects the whole airline. Pause every job of that airline for
-// this long instead of retrying job-by-job (which only prolongs the block).
-const BLOCK_COOLDOWN_MS = 60 * 60 * 1000
 
 // Janela para os últimos callbacks de item chegarem depois do sinal de fechamento do
 // worker. Curta de propósito: o caminho normal é o fechamento vir DEPOIS do último
@@ -88,6 +85,7 @@ export class ScrapeService implements IScrapeService {
     private readonly fx: IFxRateService,
     private readonly fareHistoryRepo: IFareHistoryRepository,
     private readonly batchRepo: IScrapingBatchRepository,
+    private readonly airlinesRepo: IAirlinesRepository,
   ) {}
 
   /**
@@ -189,6 +187,10 @@ export class ScrapeService implements IScrapeService {
     const nextRunAt = calcNextRunAt(job.flight_date)
     await this.scrapingJobRepo.markSuccess(job.id, nextRunAt)
     await this.analysisRunsRepo.markFinished(data.requestId, { status: 'success', faresFound: data.flights.length })
+    // A companhia respondeu de novo: o bloqueio passou, e a próxima vez que
+    // bloquear volta a escalar do início — não continua de onde a sequência
+    // anterior parou.
+    await this.airlinesRepo.resetConsecutiveBlocks(data.airline)
 
     log.info({ jobId: job.id, faresCount: count }, 'scraping_job_success')
   }
@@ -219,7 +221,11 @@ export class ScrapeService implements IScrapeService {
     // The pause is by AIRLINE, so it does not depend on identifying the job: an orphan
     // block is the same block, and the airline is in the payload.
     if (isAirlineBlocked(data)) {
-      const until = new Date(Date.now() + BLOCK_COOLDOWN_MS)
+      // Escalona com quantos bloqueios seguidos: a segunda vez pausa mais que a
+      // primeira, e assim por diante — sem isso a companhia continuava sendo
+      // tentada de hora em hora indefinidamente contra um bloqueio de dias.
+      const streak = await this.airlinesRepo.incrementConsecutiveBlocks(data.airline)
+      const until = new Date(Date.now() + calcBlockCooldownMs(streak))
       // Os lotes vivos da companhia fecham JUNTO com a pausa. `pauseAirlineForBlock`
       // devolve todo job da companhia para 'pending' — inclusive os 'running' — e um
       // lote que continuasse vivo trancaria esses itens para sempre: pendentes, com
@@ -228,7 +234,7 @@ export class ScrapeService implements IScrapeService {
       const paused = await this.scrapingJobRepo.pauseAirlineForBlock(data.airline, until, error)
       if (lotes.length) log.warn({ airline: data.airline, batches: lotes.map((b) => b.id) }, 'lotes encerrados pelo bloqueio da companhia')
       await this.analysisRunsRepo.markFinished(data.requestId, { status: 'blocked', errorMessage: error })
-      log.warn({ jobId: job?.id, airline: data.airline, paused, until, orphan, evidence: data.outcome?.evidence }, 'scraping_airline_blocked: airline paused')
+      log.warn({ jobId: job?.id, airline: data.airline, paused, streak, until, orphan, evidence: data.outcome?.evidence }, 'scraping_airline_blocked: airline paused')
       return
     }
 

@@ -244,6 +244,15 @@ export class ScrapingBatchRepository implements IScrapingBatchRepository {
     return Number(rows[0]?.count ?? 0)
   }
 
+  async countCreatedSince(airline: string, since: Date): Promise<number> {
+    const { rows } = await this.db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM scraping_batches
+        WHERE airline = $1 AND created_at > $2`,
+      [airline, since],
+    )
+    return Number(rows[0]?.count ?? 0)
+  }
+
   async findLiveOlderThan(maxRunMin: number): Promise<ScrapingBatchRow[]> {
     const { rows } = await this.db.query<ScrapingBatchRow>(
       `SELECT * FROM scraping_batches
