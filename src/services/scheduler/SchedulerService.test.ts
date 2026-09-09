@@ -67,6 +67,8 @@ function makeEnv(): Env {
     API_BASE_URL:              'http://localhost:3011/flight',
     FRONTEND_URL:              'http://localhost:3001',
     LOG_LEVEL:                 'info',
+    SCRAPE_PRIORITY_FAIRNESS_WEIGHT:    40,
+    SCRAPE_PRIORITY_FAIRNESS_CAP_HOURS: 48,
   } as Env
 }
 
@@ -76,6 +78,7 @@ function makeScrapingJobRepoMock(job: ScrapingJobRow | null = null): IScrapingJo
     upsertFromRoutine:   vi.fn().mockResolvedValue(undefined),
     expireOldJobs:       vi.fn().mockResolvedValue(0),
     updatePriorities:    vi.fn().mockResolvedValue(undefined),
+    stampRoutineDispatch: vi.fn().mockResolvedValue(undefined),
     countInFlight:       vi.fn().mockResolvedValue(0),
     countInFlightByAirline: vi.fn().mockResolvedValue(0),
     holdForBatch:        vi.fn().mockResolvedValue(undefined),

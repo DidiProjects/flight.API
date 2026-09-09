@@ -312,7 +312,10 @@ export class SchedulerService implements ISchedulerService {
         const upserted = await this.scrapingJobRepo.upsertFromRoutines()
         if (upserted > 0) log.info({ upserted }, 'scraping jobs upserted from routines')
 
-        await this.scrapingJobRepo.updatePriorities()
+        await this.scrapingJobRepo.updatePriorities(
+          this.env.SCRAPE_PRIORITY_FAIRNESS_WEIGHT,
+          this.env.SCRAPE_PRIORITY_FAIRNESS_CAP_HOURS,
+        )
 
         const retired = await this.scrapingJobRepo.retireOrphans()
         if (retired > 0) log.info({ retired }, 'orphan jobs retired')
@@ -530,6 +533,19 @@ export class SchedulerService implements ISchedulerService {
       })
     }
     this.recordSuccess(batch.airline)
+
+    // Routine-fairness stamp. Scheduled dispatch only — a manual dispatch is an
+    // explicit "analyse now" that already bypasses the circuit breaker and the
+    // hourly cap, so it does not spend the routine's fairness budget either.
+    // Never fails the dispatch: the scraper already has the payload.
+    if (!manual) {
+      try {
+        await this.scrapingJobRepo.stampRoutineDispatch(batch.airline, prepared.map((p) => p.job.id))
+      } catch (err) {
+        log.warn({ batchId: batch.id, err }, 'routine_airline_dispatch stamp failed')
+      }
+    }
+
     log.info({
       batchId: batch.id, airline: batch.airline, origin: batch.origin,
       destination: batch.destination, items: prepared.length,
