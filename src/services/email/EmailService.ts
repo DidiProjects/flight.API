@@ -95,6 +95,7 @@ export class EmailService implements IEmailService {
       case 'latam':          return this.buildLatamLink(offer, passengers, fareType, ret)
       case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers, ret)
       case 'ryanair':        return this.buildRyanairLink(offer, passengers, ret)
+      case 'gol':            return this.buildGolLink(offer, passengers, ret)
       default:               return null
     }
   }
@@ -188,6 +189,31 @@ export class EmailService implements IEmailService {
       tpDestinationIata:   offer.destination,
     })
     return `https://www.ryanair.com/gb/en/trip/flights/select?${p.toString()}`
+  }
+
+  /**
+   * Mirrors the scraper's voegol entry. Cash only (the GOL pilot never prices
+   * points — Smiles is a separate site). `ida`/`volta` are DD-MM-YYYY, unlike
+   * every other builder; `tipo` stays `DF` even round-trip — adding `volta` is
+   * what turns it into a round-trip search (`tipo=RT` bounces to an error).
+   */
+  private buildGolLink(offer: OfferBlock, passengers: number, ret?: OfferBlock | null): string {
+    const br = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}-${m}-${y}` }
+    const p = new URLSearchParams({
+      pv:     'br',
+      tipo:   'DF',
+      lang:   'pt-BR',
+      de:     offer.origin,
+      para:   offer.destination,
+      ida:    br(offer.date),
+      ADT:    String(passengers),
+      ADL:    '0',
+      CHD:    '0',
+      INF:    '0',
+      voebiz: '0',
+    })
+    if (ret) p.set('volta', br(ret.date))
+    return `https://b2c.voegol.com.br/compra/busca-parceiros?${p.toString()}`
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {
