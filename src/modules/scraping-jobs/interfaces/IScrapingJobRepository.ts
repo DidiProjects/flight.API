@@ -60,7 +60,18 @@ export interface IScrapingJobRepository {
   upsertFromRoutines(): Promise<number>
   upsertFromRoutine(routineId: string): Promise<void>
   expireOldJobs(): Promise<number>
-  updatePriorities(): Promise<void>
+  /**
+   * Recalculates `priority` = staleness·0.6 + proximity·0.4 + routine-fairness.
+   * The fairness term is `LEAST(hours_since_the_most_starved_routine_of_this_job
+   * _was_dispatched_for_this_airline, capHours) / capHours * weight`. weight = 0
+   * (default) drops the term and reproduces the pre-fairness formula.
+   */
+  updatePriorities(fairnessWeight?: number, fairnessCapHours?: number): Promise<void>
+  /**
+   * Stamps `routine_airline_dispatch` for every routine the given jobs serve.
+   * Called on a scheduled batch dispatch (not manual). Feeds the fairness term.
+   */
+  stampRoutineDispatch(airline: string, jobIds: string[]): Promise<void>
   countInFlight(): Promise<number>
   countInFlightByAirline(airline: string): Promise<number>
   deferJob(id: string, nextRunAt: Date): Promise<void>

@@ -169,7 +169,7 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
     return rowCount ?? 0
   }
 
-  async updatePriorities(): Promise<void> {
+  async updatePriorities(fairnessWeight = 0, fairnessCapHours = 48): Promise<void> {
     await this.db.query(`
       UPDATE scraping_jobs
       SET priority = (
@@ -182,10 +182,42 @@ export class ScrapingJobRepository implements IScrapingJobRepository {
           WHEN flight_date - CURRENT_DATE <= 60 THEN 30
           ELSE 10
         END * 0.4
+        +
+        -- Routine fairness: hours since the MOST-starved routine this job serves
+        -- last got a dispatch for this airline (its own created_at until the first
+        -- one), capped and scaled. A wide routine's jobs share one routine row, so
+        -- one dispatch drops the bonus for the whole grid at once, and the
+        -- competing routine's job goes next. $1 = 0 removes the term entirely.
+        LEAST(
+          COALESCE((
+            SELECT MAX(EXTRACT(EPOCH FROM (
+                     NOW() - COALESCE(rad.last_dispatched_at, r.created_at)
+                   )) / 3600)
+              FROM job_routine_membership jrm
+              JOIN routines r ON r.id = jrm.routine_id
+              LEFT JOIN routine_airline_dispatch rad
+                ON rad.routine_id = jrm.routine_id
+               AND rad.airline = scraping_jobs.airline
+             WHERE jrm.job_id = scraping_jobs.id
+          ), 0),
+          $2::numeric
+        ) / $2::numeric * $1::numeric
       )::int
       WHERE status IN ('pending', 'failed', 'success')
         AND flight_date >= CURRENT_DATE
-    `)
+    `, [fairnessWeight, fairnessCapHours])
+  }
+
+  async stampRoutineDispatch(airline: string, jobIds: string[]): Promise<void> {
+    if (jobIds.length === 0) return
+    await this.db.query(`
+      INSERT INTO routine_airline_dispatch (routine_id, airline, last_dispatched_at)
+      SELECT DISTINCT jrm.routine_id, $1, NOW()
+        FROM job_routine_membership jrm
+       WHERE jrm.job_id = ANY($2::uuid[])
+      ON CONFLICT (routine_id, airline)
+        DO UPDATE SET last_dispatched_at = EXCLUDED.last_dispatched_at
+    `, [airline, jobIds])
   }
 
   async countInFlight(): Promise<number> {
