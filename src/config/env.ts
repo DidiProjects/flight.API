@@ -38,6 +38,18 @@ const envSchema = z.object({
   // limiting to 1 per airline does not cut throughput when routes span airlines — it
   // cuts only when the whole queue is one airline, which is exactly the case to avoid.
   SCRAPE_MAX_IN_FLIGHT_PER_AIRLINE: z.coerce.number().int().positive().default(1),
+
+  // Routine-fairness term of scraping_jobs.priority. `priority` alone is fair
+  // between JOBS (deduped by route), not ROUTINES — a routine with a wide window
+  // fields dozens of jobs and holds the top of the queue, draining an airline's
+  // whole hourly cap. The term adds "hours since this routine last got a dispatch
+  // for this airline", capped, so once the wide routine gets one dispatch every
+  // job of it loses the bonus at once and the competing routine goes next.
+  // WEIGHT 0 reproduces the previous behaviour. 40 ≈ the proximity term's full
+  // swing; 48h cap so a routine one dispatch behind gets a nudge, not a takeover.
+  SCRAPE_PRIORITY_FAIRNESS_WEIGHT: z.coerce.number().min(0).default(40),
+  SCRAPE_PRIORITY_FAIRNESS_CAP_HOURS: z.coerce.number().positive().default(48),
+
   EVALUATION_INTERVAL_MS: z.coerce.number().default(5 * 60 * 1000),
 
   // Exchange. The timeout is short on purpose: the evaluation cycle cannot hang on a
