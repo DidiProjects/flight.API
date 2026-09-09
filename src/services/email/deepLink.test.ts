@@ -51,6 +51,15 @@ describe('deep link de compra no e-mail — só-ida', () => {
     expect((await linksDoEmail('britishairways', null))[0]).toContain('trip=oneWay')
     expect((await linksDoEmail('ryanair', null))[0]).toContain('isReturn=false')
   })
+
+  it('gol vai para a busca do voegol, com a data em DD-MM-AAAA', async () => {
+    const url = (await linksDoEmail('gol', null))[0]!
+    expect(url).toContain('b2c.voegol.com.br/compra/busca-parceiros')
+    expect(url).toContain('de=GRU')
+    expect(url).toContain('para=LHR')
+    expect(url).toContain('ida=21-09-2026')
+    expect(url).not.toContain('volta')
+  })
 })
 
 describe('deep link de compra no e-mail — ida-e-volta', () => {
@@ -73,6 +82,13 @@ describe('deep link de compra no e-mail — ida-e-volta', () => {
     const p = new URL(url).searchParams
     expect(p.get('onds')).toBe('GRU-LHR_2026-09-21,LHR-GRU_2026-09-25')
     expect(p.get('ond')).toBe('2')
+  })
+
+  it('gol adiciona volta ao busca-parceiros, tipo continua DF', async () => {
+    const p = new URL((await linksDoEmail('gol', volta))[0]!).searchParams
+    expect(p.get('tipo')).toBe('DF')
+    expect(p.get('ida')).toBe('21-09-2026')
+    expect(p.get('volta')).toBe('25-09-2026')
   })
 
   it('latam pede RT com a data de volta', async () => {
