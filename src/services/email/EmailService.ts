@@ -96,6 +96,7 @@ export class EmailService implements IEmailService {
       case 'britishairways': return this.buildBritishAirwaysLink(offer, passengers, ret)
       case 'ryanair':        return this.buildRyanairLink(offer, passengers, ret)
       case 'gol':            return this.buildGolLink(offer, passengers, ret)
+      case 'easyjet':        return this.buildEasyJetLink(offer, passengers, ret)
       default:               return null
     }
   }
@@ -214,6 +215,28 @@ export class EmailService implements IEmailService {
     })
     if (ret) p.set('volta', br(ret.date))
     return `https://b2c.voegol.com.br/compra/busca-parceiros?${p.toString()}`
+  }
+
+  /**
+   * easyJet's `/deeplink` endpoint, checked against the site on 2026-09-23:
+   * LTN→AMS with `rd` opened "Return, 20 - 24 Nov | 2 Passengers", MAN→GVA
+   * without it "One way, 3 Dec". The `/en/buy/flights?dep=…` form of the URL is
+   * NOT a deep link — it ignores the parameters and reopens the browser's last
+   * search. Cash only, like the scraper.
+   */
+  private buildEasyJetLink(offer: OfferBlock, passengers: number, ret?: OfferBlock | null): string {
+    const p = new URLSearchParams({
+      lang:       'EN',
+      dep:        offer.origin,
+      dest:       offer.destination,
+      dd:         offer.date,
+      apax:       String(passengers),
+      cpax:       '0',
+      ipax:       '0',
+      SearchFrom: 'SearchPod',
+    })
+    if (ret) p.set('rd', ret.date)
+    return `https://www.easyjet.com/deeplink?${p.toString()}`
   }
 
   private buildAlertHtml(params: FlightAlertEmailParams, unsubLink: string): string {

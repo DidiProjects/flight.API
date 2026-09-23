@@ -60,6 +60,15 @@ describe('deep link de compra no e-mail — só-ida', () => {
     expect(url).toContain('ida=21-09-2026')
     expect(url).not.toContain('volta')
   })
+
+  it('easyjet vai para o /deeplink, sem data de volta', async () => {
+    const url = (await linksDoEmail('easyjet', null))[0]!
+    expect(url).toContain('www.easyjet.com/deeplink')
+    const p = new URL(url).searchParams
+    expect(p.get('dep')).toBe('GRU')
+    expect(p.get('dd')).toBe('2026-09-21')
+    expect(p.has('rd')).toBe(false)
+  })
 })
 
 describe('deep link de compra no e-mail — ida-e-volta', () => {
@@ -89,6 +98,12 @@ describe('deep link de compra no e-mail — ida-e-volta', () => {
     expect(p.get('tipo')).toBe('DF')
     expect(p.get('ida')).toBe('21-09-2026')
     expect(p.get('volta')).toBe('25-09-2026')
+  })
+
+  it('easyjet põe a volta em rd', async () => {
+    const p = new URL((await linksDoEmail('easyjet', volta))[0]!).searchParams
+    expect(p.get('dd')).toBe('2026-09-21')
+    expect(p.get('rd')).toBe('2026-09-25')
   })
 
   it('latam pede RT com a data de volta', async () => {
