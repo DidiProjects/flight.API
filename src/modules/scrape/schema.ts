@@ -47,9 +47,15 @@ export type FlightOfferInput = z.infer<typeof flightOfferSchema>
  */
 const outcomeSchema = z.object({
   state: z.enum(['OFFERS', 'EMPTY', 'BLOCKED', 'LOGIN_REQUIRED', 'SITE_ERROR', 'LAYOUT_CHANGED']),
-  reason: z.string().max(300).optional(),
-  /** The DOM excerpt (or the URL) backing the state. Truncated: it is proof, not a file. */
-  evidence: z.string().max(2000).optional(),
+  reason: z.string().transform((v) => v.slice(0, 300)).optional(),
+  /**
+   * The DOM excerpt (or the URL) backing the state. Truncated, never refused — the
+   * same trade as the batch close below: a `max()` here rejected the WHOLE item
+   * callback, so the `analysis_run` it should have closed stayed `running` until the
+   * stale heartbeat. On 2026-09-28 a LATAM evidence of 15k characters (a tracking
+   * pixel URL) was answered with 422 four times.
+   */
+  evidence: z.string().transform((v) => v.slice(0, 2000)).optional(),
 })
 
 export type ScrapeOutcome = z.infer<typeof outcomeSchema>
