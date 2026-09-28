@@ -374,12 +374,16 @@ export class ScrapeService implements IScrapeService {
     for (const job of items) {
       const naoTentado = job.request_id != null && naoTentados.has(job.request_id)
       const semCulpa = superseded || bloqueado || naoTentado
+      const erroDoItem = erroPorRequest.get(job.request_id ?? '')
+
+      await this.closeRunOfSettledItem(job.request_id, erroDoItem
+        ?? (naoTentado ? `não tentado — lote encerrado: ${data.reason}` : `lote encerrado: ${data.reason}`))
 
       if (semCulpa) {
         await this.scrapingJobRepo.settleBatchItem(job.id, {
           penalise: false,
           nextRunAt: superseded ? new Date() : calcBackoffNextRunAt(0),
-          error: erroPorRequest.get(job.request_id ?? '') ?? null,
+          error: erroDoItem ?? null,
         })
         liberados++
         continue
@@ -390,7 +394,7 @@ export class ScrapeService implements IScrapeService {
       await this.scrapingJobRepo.settleBatchItem(job.id, {
         penalise: true,
         nextRunAt: calcBackoffNextRunAt(batch.attempt),
-        error: erroPorRequest.get(job.request_id ?? '') ?? `lote encerrado: ${data.reason}`,
+        error: erroDoItem ?? `lote encerrado: ${data.reason}`,
       })
       penalizados++
     }
@@ -399,6 +403,21 @@ export class ScrapeService implements IScrapeService {
       batchId: batch.id, airline: batch.airline, status, reason: data.reason,
       penalizados, liberados, attempt: batch.attempt,
     }, 'scraping_batch_closed')
+  }
+
+  /**
+   * Closes the `analysis_run` of an item the batch close is settling.
+   *
+   * An item still attached at close time is one whose own callback never landed: never
+   * attempted, or delivered and refused. Only that callback used to close the run, so it
+   * stayed `running` until the 45-min stale heartbeat, blaming a timeout. Measured
+   * 2026-09-28: ~45 such runs a day on Azul (sessions dying before the first item) and a
+   * LATAM run whose callback got 422 four times. `markFinished` only touches `running`,
+   * so a run its callback already closed is left as it is.
+   */
+  private async closeRunOfSettledItem(requestId: string | null, errorMessage: string): Promise<void> {
+    if (!requestId) return
+    await this.analysisRunsRepo.markFinished(requestId, { status: 'failed', errorMessage })
   }
 
   /**

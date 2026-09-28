@@ -6,7 +6,7 @@ import type { IAnalysisRunsRepository } from '../analysis-runs/interfaces/IAnaly
 import type { IFxRateService } from '../../services/fx/interfaces/IFxRateService'
 import type { IFareHistoryRepository } from '../fare-history/interfaces/IFareHistoryRepository'
 import type { IAirlinesRepository } from '../airlines/interfaces/IAirlinesRepository'
-import { batchCallbackSchema, type BatchCallback, type ScrapeCallback } from './schema'
+import { batchCallbackSchema, scrapeCallbackSchema, type BatchCallback, type ScrapeCallback } from './schema'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -860,6 +860,46 @@ describe('ScrapeService — lote', () => {
     )
   })
 
+  // 2026-09-28: the batch close released the job, but only the item callback closed the
+  // analysis_run — a refused (422) or never-sent callback left it `running` until the
+  // 45-min heartbeat, with "Sem retorno do scraper (timeout)".
+  it('fechamento do lote encerra a analysis_run do item cujo callback não chegou', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
+    const { svc, mockAnalysisRunsRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({
+      reason: 'blocked',
+      items: [{ requestId: 'req-1', state: 'failed', error: 'LATAM: site error page' }],
+    }))
+
+    expect(mockAnalysisRunsRepo.markFinished).toHaveBeenCalledWith(
+      'req-1', { status: 'failed', errorMessage: 'LATAM: site error page' },
+    )
+  })
+
+  it('item nunca tentado tem a run encerrada dizendo por quê', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
+    const { svc, mockAnalysisRunsRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({
+      reason: 'watchdog',
+      items: [{ requestId: 'req-1', state: 'not_attempted', why: 'batch_deadline' }],
+    }))
+
+    expect(mockAnalysisRunsRepo.markFinished).toHaveBeenCalledWith(
+      'req-1', { status: 'failed', errorMessage: 'não tentado — lote encerrado: watchdog' },
+    )
+  })
+
+  it('item já segurado pelo próprio callback (request_id nulo) não é tocado de novo', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: null })
+    const { svc, mockAnalysisRunsRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({ reason: 'completed', items: [] }))
+
+    expect(mockAnalysisRunsRepo.markFinished).not.toHaveBeenCalled()
+  })
+
   it('bloqueio não penaliza nenhum item do lote', async () => {
     const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
     const { svc, mockScrapingJobRepo } = makeSvcComLote({ items: [job] })
@@ -920,6 +960,22 @@ describe('batchCallbackSchema — o fechamento nunca é recusado por tamanho', (
     })
 
     expect(parsed.items[0]!.error).toHaveLength(500)
+  })
+
+  it('callback de item: evidence gigante é truncada, não recusada', () => {
+    // 2026-09-28: a 15k-character tracking-pixel URL as LATAM evidence got the item
+    // callback 422 four times, and its analysis_run stayed `running`.
+    const parsed = scrapeCallbackSchema.parse({
+      requestId: '22222222-2222-4222-8222-222222222222',
+      airline: 'latam',
+      origin: 'GRU',
+      destination: 'CNF',
+      scrapedAt: new Date().toISOString(),
+      outcome: { state: 'BLOCKED', reason: 'r'.repeat(1_000), evidence: 'e'.repeat(15_000) },
+    })
+
+    expect(parsed.outcome!.evidence).toHaveLength(2000)
+    expect(parsed.outcome!.reason).toHaveLength(300)
   })
 
   it('trunca o `why` do item não tentado pelo mesmo motivo', () => {
