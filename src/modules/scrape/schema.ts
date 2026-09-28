@@ -103,8 +103,11 @@ export const batchCallbackSchema = z.object({
    * Why the session ended. Only `blocked` aborts a batch — a LATAM `SITE_ERROR` must
    * not: calling the airline's own error page a block paused LATAM for an hour, three
    * times on 2026-08-20, and with batches it would take every remaining item with it.
+   *
+   * `error` is the worker's own code failing outside any item. It arrived as `watchdog`
+   * until 2026-09-28, when an Azul session dying on `addCookies` was read as a timeout.
    */
-  reason: z.enum(['completed', 'blocked', 'watchdog', 'superseded', 'cancelled']),
+  reason: z.enum(['completed', 'blocked', 'watchdog', 'superseded', 'cancelled', 'error']),
   items: z.array(batchItemResultSchema).default([]),
 })
 
