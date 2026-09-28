@@ -842,6 +842,24 @@ describe('ScrapeService — lote', () => {
     )
   })
 
+  // 2026-09-28: the Azul session died on `addCookies` before any item, and the close
+  // arrived as `watchdog`. The items never ran, so they go back unpenalised — but as
+  // `aborted`, with the worker's message on each job.
+  it('erro do worker fora de item: lote abortado, item solto sem penalidade e com a mensagem', async () => {
+    const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
+    const { svc, mockScrapingJobRepo, mockBatchRepo } = makeSvcComLote({ items: [job] })
+
+    await svc.processBatchCallback(fechamento({
+      reason: 'error',
+      items: [{ requestId: 'req-1', state: 'not_attempted', why: 'error', error: 'Invalid cookie fields' }],
+    }))
+
+    expect(mockBatchRepo.close).toHaveBeenCalledWith(LOTE, 'aborted', 'error')
+    expect(mockScrapingJobRepo.settleBatchItem).toHaveBeenCalledWith(
+      job.id, expect.objectContaining({ penalise: false, error: 'Invalid cookie fields' }),
+    )
+  })
+
   it('bloqueio não penaliza nenhum item do lote', async () => {
     const job = makeJob({ batch_id: LOTE, request_id: 'req-1' })
     const { svc, mockScrapingJobRepo } = makeSvcComLote({ items: [job] })
