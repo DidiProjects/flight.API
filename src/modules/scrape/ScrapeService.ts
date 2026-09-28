@@ -347,6 +347,7 @@ export class ScrapeService implements IScrapeService {
       : data.reason === 'superseded' ? 'superseded'
       : data.reason === 'watchdog' ? 'aborted'
       : data.reason === 'cancelled' ? 'aborted'
+      : data.reason === 'error' ? 'aborted'
       : 'completed'
 
     const closed = await this.batchRepo.close(batch.id, status, data.reason)
